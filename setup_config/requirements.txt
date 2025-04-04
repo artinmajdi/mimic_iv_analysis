@@ -1,0 +1,14 @@
+streamlit
+pandas
+numpy
+matplotlib
+seaborn
+plotly
+scikit-learn
+xgboost
+tensorflow
+shap
+lifelines
+networkx
+mlxtend
+watchdog
