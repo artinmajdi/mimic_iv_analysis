@@ -52,18 +52,15 @@ class MIMICDashboard:
         """Initialize the dashboard application."""
         self.configure_page()
         self.display_app_header()
-        self.path_valid, self.app_mode, self.data, self.mimic_path = self.setup_sidebar_navigation()
+        self.path_valid, self.app_mode, self.mimic_path = self.setup_sidebar_navigation()
+
+        # Initialize empty data structures
+        self.data = {}
+        self.data_loader = None
 
         # Display demo mode warning if path is not valid
         if not self.path_valid:
             self.display_demo_mode_warning()
-
-        # Initialize data loader if path is valid
-        self.data_loader = None
-        if self.path_valid and all(df is not None for df in self.data.values()):
-            self.data_loader = MIMICDataLoader(self.mimic_path)
-            self.data_loader.data = self.data
-            self.data_loader.preprocess_all()
 
     def configure_page(self):
         """Configure Streamlit page settings."""
@@ -135,10 +132,10 @@ class MIMICDashboard:
         """, unsafe_allow_html=True)
 
     def setup_sidebar_navigation(self):
-        """Set up sidebar navigation and data loading.
+        """Set up sidebar navigation and validate dataset path.
 
         Returns:
-            tuple: Contains path_valid (bool), app_mode (str), data (dict), and mimic_path (str)
+            tuple: Contains path_valid (bool), app_mode (str), and mimic_path (str)
         """
         st.sidebar.title("Navigation")
 
@@ -153,29 +150,31 @@ class MIMICDashboard:
         # Validate the path
         path_valid = self.validate_mimic_path(mimic_path)
 
+        # Add Load Dataset button
+        if path_valid:
+            if st.sidebar.button("Load Dataset", key="load_dataset_button", help="Click to load the MIMIC-IV dataset"):
+                with st.sidebar.spinner("Loading dataset..."):
+                    self.data = self.load_all_data(mimic_path)
+
+                    if all(df is not None for df in self.data.values()):
+                        st.sidebar.success("Dataset loaded successfully!")
+                        # Initialize data loader
+                        self.data_loader = MIMICDataLoader(mimic_path)
+                        self.data_loader.data = self.data
+                        self.data_loader.preprocess_all()
+                    else:
+                        st.sidebar.error("Some data files could not be loaded. Check the path and file structure.")
+        else:
+            st.sidebar.warning("Please provide a valid path to the MIMIC-IV dataset.")
+            st.sidebar.info("You can continue exploring the application interface, but data analysis features will be limited.")
+
         # Navigation options
         app_mode = st.sidebar.radio(
             "Select Section",
             ["Home", "Data Explorer", "Order Pattern Analysis", "Patient Trajectory", "Predictive Modeling", "Clinical Interpretation"]
         )
 
-        # Load data if path is valid
-        data = {}
-        if path_valid:
-            # Use st.spinner instead of st.sidebar.spinner
-            spinner_placeholder = st.sidebar.empty()
-            spinner_placeholder.info("Loading data...")
-            data = self.load_all_data(mimic_path)
-
-            if all(df is not None for df in data.values()):
-                spinner_placeholder.success("Data loaded successfully!")
-            else:
-                spinner_placeholder.error("Some data files could not be loaded. Check the path and file structure.")
-        else:
-            st.sidebar.warning("Please provide a valid path to the MIMIC-IV dataset.")
-            st.sidebar.info("You can continue exploring the application interface, but data analysis features will be limited.")
-
-        return path_valid, app_mode, data, mimic_path
+        return path_valid, app_mode, mimic_path
 
     def validate_mimic_path(self, path):
         """Check if the path exists and contains required files.
@@ -410,21 +409,28 @@ class MIMICDashboard:
 
         with col2:
             st.subheader("Dataset Information")
-            if self.path_valid and all(df is not None for df in self.data.values()):
+            if self.path_valid and self.data and all(df is not None for df in self.data.values()):
                 st.metric("Patients", f"{len(self.data['patients']):,}")
                 st.metric("Admissions", f"{len(self.data['admissions']):,}")
                 st.metric("Transfers", f"{len(self.data['transfers']):,}")
                 st.metric("Provider Orders", f"{len(self.data['poe']):,}")
                 st.metric("Order Details", f"{len(self.data['poe_detail']):,}")
             else:
-                st.info("Dataset statistics will be displayed once a valid MIMIC-IV dataset path is provided.")
+                if self.path_valid:
+                    st.info("Click the 'Load Dataset' button in the sidebar to load and display dataset statistics.")
+                else:
+                    st.info("Dataset statistics will be displayed once a valid MIMIC-IV dataset path is provided and data is loaded.")
 
     def render_data_explorer(self):
         """Render the data explorer page."""
         st.header("Data Explorer")
 
-        if not self.path_valid or not all(self.data.get(key) is not None for key in ['patients', 'admissions', 'transfers']):
+        if not self.path_valid:
             st.warning("Please provide a valid path to the MIMIC-IV dataset to enable data exploration.")
+            return
+
+        if not self.data or not all(self.data.get(key) is not None for key in ['patients', 'admissions', 'transfers']):
+            st.warning("Please click the 'Load Dataset' button in the sidebar to load the data before exploring.")
             return
 
         # Create tabs for different analysis sections
@@ -519,8 +525,12 @@ class MIMICDashboard:
         """Render the order pattern analysis page."""
         st.header("Order Pattern Analysis")
 
-        if not self.path_valid or not all(self.data.get(key) is not None for key in ['poe', 'poe_detail']):
+        if not self.path_valid:
             st.warning("Please provide a valid path to the MIMIC-IV dataset to enable order pattern analysis.")
+            return
+
+        if not self.data or not all(self.data.get(key) is not None for key in ['poe', 'poe_detail']):
+            st.warning("Please click the 'Load Dataset' button in the sidebar to load the data before analyzing order patterns.")
             return
 
         # Create tabs for different analysis sections
@@ -586,8 +596,12 @@ class MIMICDashboard:
         """Render the patient trajectory analysis page."""
         st.header("Patient Trajectory Analysis")
 
-        if not self.path_valid or not all(self.data.get(key) is not None for key in ['patients', 'admissions', 'transfers']):
+        if not self.path_valid:
             st.warning("Please provide a valid path to the MIMIC-IV dataset to enable patient trajectory analysis.")
+            return
+
+        if not self.data or not all(self.data.get(key) is not None for key in ['patients', 'admissions', 'transfers']):
+            st.warning("Please click the 'Load Dataset' button in the sidebar to load the data before analyzing patient trajectories.")
             return
 
         # Create tabs for different analysis sections
@@ -613,8 +627,12 @@ class MIMICDashboard:
         """Render the predictive modeling page."""
         st.header("Predictive Modeling Interface")
 
-        if not self.path_valid or not all(self.data.get(key) is not None for key in ['patients', 'admissions', 'transfers', 'poe', 'poe_detail']):
+        if not self.path_valid:
             st.warning("Please provide a valid path to the MIMIC-IV dataset to enable predictive modeling.")
+            return
+
+        if not self.data or not all(self.data.get(key) is not None for key in ['patients', 'admissions', 'transfers', 'poe', 'poe_detail']):
+            st.warning("Please click the 'Load Dataset' button in the sidebar to load the data before building predictive models.")
             return
 
         # Create tabs for different analysis sections
@@ -640,8 +658,12 @@ class MIMICDashboard:
         """Render the clinical interpretation page."""
         st.header("Clinical Interpretation")
 
-        if not self.path_valid or not all(self.data.get(key) is not None for key in ['poe', 'poe_detail']):
+        if not self.path_valid:
             st.warning("Please provide a valid path to the MIMIC-IV dataset to enable clinical interpretation.")
+            return
+
+        if not self.data or not all(self.data.get(key) is not None for key in ['poe', 'poe_detail']):
+            st.warning("Please click the 'Load Dataset' button in the sidebar to load the data before interpreting clinical patterns.")
             return
 
         # Create tabs for different analysis sections
@@ -661,6 +683,10 @@ class MIMICDashboard:
 
     def run(self):
         """Run the dashboard application based on the selected mode."""
+        # Display data loading status
+        if self.path_valid and not self.data:
+            st.sidebar.info("⚠️ Dataset not loaded. Click the 'Load Dataset' button to load the data.")
+
         # Render the selected page based on app_mode
         if self.app_mode == "Home":
             self.render_home_page()
