@@ -21,7 +21,7 @@ def read_file(filename: str) -> str:
         return f.read()
 
 # Package metadata
-PACKAGE_NAME = "mimic-iv-analysis"
+PACKAGE_NAME = "mimic_iv_analysis"
 VERSION      = "1.0.0"
 AUTHOR       = "Artin Majdi"
 AUTHOR_EMAIL = "msm2024@gmail.com"
@@ -46,7 +46,7 @@ CLASSIFIERS = [
 ]
 
 PACKAGE_DATA = {
-    "": [
+    "src": [
         "**/*.py",
         "**/*.json",
         "**/*.yaml",
@@ -115,7 +115,7 @@ setup(
     zip_safe=False,
     entry_points={
         "console_scripts": [
-            "mimic-iv-analysis=visualization.app:main",
+            "mimic-iv-analysis=mimic_iv_analysis.visualization.app:main",
         ],
     },
     keywords=KEYWORDS,

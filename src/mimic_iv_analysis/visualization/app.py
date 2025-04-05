@@ -1,4 +1,6 @@
 import streamlit as st
+if not hasattr(st, 'cache_data'):
+    st.cache_data = st.cache
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -67,9 +69,10 @@ st.markdown("""
 st.sidebar.title("Navigation")
 
 # Data path input
+default_mimic_path = os.environ.get("DEMO_MIMIC_PATH", "mimic-iv-3.1")
 mimic_path = st.sidebar.text_input(
     "MIMIC-IV Dataset Path",
-    value="mimic-iv-3.1",
+    value=default_mimic_path,
     help="Enter the path to the MIMIC-IV dataset directory"
 )
 
@@ -88,6 +91,18 @@ def validate_mimic_path(path):
 
 # Validate the path
 path_valid = validate_mimic_path(mimic_path)
+
+if not path_valid:
+    st.warning("⚠️ MIMIC-IV dataset not found at the specified path.")
+    st.info("""
+    ### Demo Mode
+    This application is running in demo mode. Some features may be limited.
+
+    To use with the actual MIMIC-IV dataset:
+    1. Download the MIMIC-IV dataset from [PhysioNet](https://physionet.org/content/mimiciv/)
+    2. Extract the files to a directory on your computer
+    3. Enter the path to that directory in the sidebar
+    """)
 
 # Navigation options
 app_mode = st.sidebar.radio(
@@ -527,3 +542,12 @@ elif app_mode == "Clinical Interpretation":
     # Key Order Sequences tab
     with tabs[2]:
         clinical_interpretation.key_order_sequences()
+
+# Add main function at the end of the file
+def main():
+    """Entry point function for the Streamlit application."""
+    # The app is already defined above, so we don't need to do anything extra here
+    pass
+
+if __name__ == "__main__":
+    main()

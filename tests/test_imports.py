@@ -30,7 +30,6 @@ if __name__ == "__main__":
         "mimic_iv_analysis",
         "mimic_iv_analysis.data",
         "mimic_iv_analysis.core",
-        "mimic_iv_analysis.analysis",
         "mimic_iv_analysis.visualization",
         "mimic_iv_analysis.utils"
     ]
@@ -47,7 +46,6 @@ if __name__ == "__main__":
             "src",
             "src.data",
             "src.core",
-            "src.analysis",
             "src.visualization",
             "src.utils"
         ]

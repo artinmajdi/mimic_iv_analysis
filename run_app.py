@@ -1,32 +1,39 @@
 #!/usr/bin/env python
 """
-Launch script for the MIMIC-IV Analysis Dashboard.
-This script sets up the proper import path before running the app.
+Simplified launcher for the MIMIC-IV Analysis Streamlit app.
 """
 
 import os
 import sys
 import subprocess
 
-# Add the current directory to Python path for package resolution
+# Get the absolute path to the app.py file
 current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
+app_path = os.path.join(current_dir, "src", "mimic_iv_analysis", "visualization", "app.py")
 
-# Launch the Streamlit app
-if __name__ == "__main__":
-    # Confirm Python paths
-    print("Python paths:")
-    for p in sys.path:
-        print(f"  - {p}")
+if not os.path.exists(app_path):
+    print(f"Error: Could not find app at {app_path}")
+    sys.exit(1)
 
-    # Try to import the module to verify it works
-    try:
-        from mimic_iv_analysis.visualization import app
-        print("Successfully imported app module!")
-    except ImportError as e:
-        print(f"Error importing app module: {e}")
-        sys.exit(1)
+print(f"Starting Streamlit app from: {app_path}")
+print(f"Python executable: {sys.executable}")
+print(f"Current directory: {current_dir}")
 
-    # Launch Streamlit
-    subprocess.run(["streamlit", "run", os.path.join("src", "visualization", "app.py")])
+# Run streamlit with the proper PYTHONPATH
+env = os.environ.copy()
+env["PYTHONPATH"] = current_dir + ":" + env.get("PYTHONPATH", "")
+
+try:
+    # Use the system installed streamlit to run the app
+    result = subprocess.run(
+        ["streamlit", "run", app_path],
+        env=env,
+        check=True
+    )
+    sys.exit(result.returncode)
+except subprocess.CalledProcessError as e:
+    print(f"Error running Streamlit: {e}")
+    sys.exit(e.returncode)
+except FileNotFoundError:
+    print("Streamlit not found. Please install it with 'pip install streamlit'")
+    sys.exit(1)

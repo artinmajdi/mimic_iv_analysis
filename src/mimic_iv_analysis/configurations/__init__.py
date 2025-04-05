@@ -1,4 +1,4 @@
-"""Utility functions for MIMIC-IV Analysis."""
+"""Configuration management for MIMIC-IV Analysis."""
 
 import os
 import yaml
