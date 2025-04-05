@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: setup_config/docker/Dockerfile
+    ports:
+      - "8501:8501"  # Streamlit port
+      - "8000:8000"  # API port (if used)
+    volumes:
+      - ../../mimic_iv_data:/app/mimic_iv_data
+      - ../../output:/app/output
+      - ../../models:/app/models
+      - ../../logs:/app/logs
+    environment:
+      - PYTHONPATH=/app
+      # Add your environment variables below
+      - DB_HOST=${DB_HOST:-localhost}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME:-mimic_iv}
+    restart: unless-stopped
+    # Default command is to run the Streamlit app
+    command: streamlit run src/visualization/app.py
+
+  # Development service with hot-reload capabilities
+  dev:
+    build:
+      context: ../..
+      dockerfile: setup_config/docker/Dockerfile
+    ports:
+      - "8501:8501"
+      - "8000:8000"
+    volumes:
+      - ../..:/app
+    environment:
+      - PYTHONPATH=/app
+      - DEVELOPMENT=true
+      # Database connection
+      - DB_HOST=${DB_HOST:-localhost}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME:-mimic_iv}
+    # For development with auto-reload
+    command: streamlit run src/visualization/app.py
+    profiles:
+      - dev
+
+  # Command-line interface for data processing
+  cli:
+    build:
+      context: ../..
+      dockerfile: setup_config/docker/Dockerfile
+    volumes:
+      - ../../mimic_iv_data:/app/mimic_iv_data
+      - ../../output:/app/output
+      - ../../models:/app/models
+      - ../../logs:/app/logs
+    environment:
+      - PYTHONPATH=/app
+      # Database connection
+      - DB_HOST=${DB_HOST:-localhost}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME:-mimic_iv}
+    # CLI command for data processing or analysis
+    command: python -m src.data.process
+    profiles:
+      - cli
+
+  # Test runner service
+  test:
+    build:
+      context: ../..
+      dockerfile: setup_config/docker/Dockerfile
+    volumes:
+      - ../..:/app
+    environment:
+      - PYTHONPATH=/app
+      - TESTING=true
+      # Test database connection (could use a different database for testing)
+      - DB_HOST=${DB_HOST:-localhost}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME:-mimic_iv_test}
+    command: pytest
+    profiles:
+      - test

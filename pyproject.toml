@@ -7,16 +7,17 @@ name = "mimic_iv_analysis"
 version = "0.1.0"
 description = "A comprehensive toolkit for analyzing MIMIC-IV clinical database"
 readme = "README.md"
-requires-python = ">=3.12"
-license = {file = "LICENSE"}
+requires-python = ">=3.10,<3.13"
+license = "MIT"
 authors = [
-    {name = "Artin Majdi", email = "your.email@example.com"}
+    {name = "Artin Majdi", email = "msm2024@gmail.com"}
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
@@ -43,15 +44,31 @@ dev = [
     "isort>=5.0",
     "flake8>=3.9",
     "mypy>=0.9",
+    "sphinx>=4.0",
+    "sphinx-rtd-theme>=1.0",
+]
+test = [
+    "pytest>=6.0",
+    "pytest-cov>=2.0",
+]
+docs = [
+    "sphinx>=4.0",
+    "sphinx-rtd-theme>=1.0",
+    "sphinx-autodoc-typehints>=1.12",
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/mimic_iv_analysis"
+Homepage      = "https://github.com/artinmajdi/mimic_iv_analysis"
 Documentation = "https://mimic-iv-analysis.readthedocs.io/"
-Repository = "https://github.com/yourusername/mimic_iv_analysis.git"
+Repository    = "https://github.com/artinmajdi/mimic_iv_analysis.git"
+Issues        = "https://github.com/artinmajdi/mimic_iv_analysis/issues"
 
-[tool.setuptools]
-packages = ["mimic_iv_analysis"]
+[project.scripts]
+mimic-iv = "visualization.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+exclude = ["tests*", "docs*"]
 
 [tool.black]
 line-length = 88

@@ -24,10 +24,12 @@ command_exists() {
 
 # Function to determine which Python command to use
 get_python_command() {
-	if command_exists python; then
-		echo "python"
+	if command_exists python3.12; then
+		echo "python3.12"
 	elif command_exists python3; then
 		echo "python3"
+	elif command_exists python; then
+		echo "python"
 	else
 		echo -e "${RED}Error: Python is not installed. Please install Python and try again.${NC}" >&2
 		exit 1
@@ -150,27 +152,61 @@ setup_venv() {
         ln -s "$PROJECT_ROOT/.venv/bin/python3" "$PROJECT_ROOT/.venv/bin/python"
     fi
 
-    # Install uv if not already installed
-    if install_uv; then
-        echo -e "${GREEN}Using uv for package installation...${NC}"
-        if uv pip install -r "$PROJECT_ROOT/config/requirements.txt"; then
-            echo -e "${GREEN}Dependencies installed successfully using uv pip.${NC}"
+    # Activate the virtual environment
+    source "$PROJECT_ROOT/.venv/bin/activate"
+
+    # Check if setup.py exists
+    if [ -f "$PROJECT_ROOT/setup.py" ]; then
+        echo -e "${GREEN}Found setup.py, installing package in development mode...${NC}"
+
+        # Install uv if not already installed
+        if install_uv; then
+            echo -e "${GREEN}Using uv for package installation...${NC}"
+            if uv pip install -e .; then
+                echo -e "${GREEN}Package installed successfully using uv pip.${NC}"
+            else
+                echo -e "${RED}Error: Failed to install package using uv pip. Falling back to regular pip...${NC}" >&2
+                if pip install -e .; then
+                    echo -e "${GREEN}Package installed successfully using pip.${NC}"
+                else
+                    echo -e "${RED}Error: Failed to install package.${NC}" >&2
+                    exit 1
+                fi
+            fi
         else
-            echo -e "${RED}Error: Failed to install dependencies using uv pip. Falling back to regular pip...${NC}" >&2
-            if "$PROJECT_ROOT/.venv/bin/pip" install -r "$PROJECT_ROOT/config/requirements.txt"; then
+            echo -e "${YELLOW}Using regular pip for package installation...${NC}"
+            if pip install -e .; then
+                echo -e "${GREEN}Package installed successfully using pip.${NC}"
+            else
+                echo -e "${RED}Error: Failed to install package.${NC}" >&2
+                exit 1
+            fi
+        fi
+    else
+        echo -e "${YELLOW}No setup.py found, installing requirements directly...${NC}"
+
+        # Install uv if not already installed
+        if install_uv; then
+            echo -e "${GREEN}Using uv for package installation...${NC}"
+            if uv pip install -r "$PROJECT_ROOT/setup_config/requirements.txt"; then
+                echo -e "${GREEN}Dependencies installed successfully using uv pip.${NC}"
+            else
+                echo -e "${RED}Error: Failed to install dependencies using uv pip. Falling back to regular pip...${NC}" >&2
+                if pip install -r "$PROJECT_ROOT/setup_config/requirements.txt"; then
+                    echo -e "${GREEN}Dependencies installed successfully using pip.${NC}"
+                else
+                    echo -e "${RED}Error: Failed to install dependencies.${NC}" >&2
+                    exit 1
+                fi
+            fi
+        else
+            echo -e "${YELLOW}Using regular pip for package installation...${NC}"
+            if pip install -r "$PROJECT_ROOT/setup_config/requirements.txt"; then
                 echo -e "${GREEN}Dependencies installed successfully using pip.${NC}"
             else
                 echo -e "${RED}Error: Failed to install dependencies.${NC}" >&2
                 exit 1
             fi
-        fi
-    else
-        echo -e "${YELLOW}Using regular pip for package installation...${NC}"
-        if "$PROJECT_ROOT/.venv/bin/pip" install -r "$PROJECT_ROOT/config/requirements.txt"; then
-            echo -e "${GREEN}Dependencies installed successfully using pip.${NC}"
-        else
-            echo -e "${RED}Error: Failed to install dependencies.${NC}" >&2
-            exit 1
         fi
     fi
 }
@@ -224,13 +260,13 @@ setup_conda() {
     # Install dependencies using mamba/conda
     echo -e "${GREEN}Installing dependencies using ${mamba_cmd}...${NC}"
     # First try to install with conda/mamba directly
-    if $mamba_cmd install -n $ENV_NAME -y --file "$PROJECT_ROOT/config/requirements.txt" 2>/dev/null; then
+    if $mamba_cmd install -n $ENV_NAME -y --file "$PROJECT_ROOT/setup_config/requirements.txt" 2>/dev/null; then
         echo -e "${GREEN}Dependencies installed successfully using ${mamba_cmd}.${NC}"
     else
         # If that fails, activate the environment and use pip
         echo -e "${YELLOW}Could not install all dependencies with ${mamba_cmd}. Trying with pip...${NC}"
         # Activate the conda environment and use pip
-        if $mamba_cmd run -n $ENV_NAME pip install -r "$PROJECT_ROOT/config/requirements.txt"; then
+        if $mamba_cmd run -n $ENV_NAME pip install -r "$PROJECT_ROOT/setup_config/requirements.txt"; then
             echo -e "${GREEN}Dependencies installed successfully using pip in the conda environment.${NC}"
         else
             echo -e "${RED}Error: Failed to install dependencies.${NC}" >&2
@@ -293,21 +329,18 @@ PYTHON_VERSION=$($PYTHON_CMD -c "import sys; print(f'{sys.version_info.major}.{s
 PYTHON_MAJOR_VERSION=$($PYTHON_CMD -c "import sys; print(sys.version_info.major)")
 
 if [ "$PYTHON_MAJOR_VERSION" -lt 3 ]; then
-	echo -e "${RED}Error: Python 3.12 or higher is required, but Python $PYTHON_VERSION was found.${NC}"
-	echo -e "${YELLOW}Please install Python 3.12 or higher before continuing.${NC}"
+	echo -e "${RED}Error: Python 3.10 or higher is required, but Python $PYTHON_VERSION was found.${NC}"
+	echo -e "${YELLOW}Please install Python 3.10 or higher before continuing.${NC}"
 	echo -e "${YELLOW}Visit https://www.python.org/downloads/ for installation instructions.${NC}"
 	exit 1
 fi
 
 PYTHON_MINOR_VERSION=$($PYTHON_CMD -c "import sys; print(sys.version_info.minor)")
-if [ "$PYTHON_MAJOR_VERSION" -eq 3 ] && [ "$PYTHON_MINOR_VERSION" -lt 8 ]; then
-	echo -e "${YELLOW}Warning: Python 3.12 or higher is required, but Python $PYTHON_VERSION was found.${NC}"
-	echo -e "${YELLOW}Some features may not work correctly.${NC}"
-	read -p "Do you want to continue anyway? (y/n): " continue_anyway
-	if [[ ! "$continue_anyway" =~ ^[Yy]$ ]]; then
-		echo -e "${YELLOW}Installation aborted.${NC}"
-		exit 1
-	fi
+if [ "$PYTHON_MAJOR_VERSION" -eq 3 ] && [ "$PYTHON_MINOR_VERSION" -lt 10 ]; then
+	echo -e "${RED}Error: Python 3.10 or higher is required, but Python $PYTHON_VERSION was found.${NC}"
+	echo -e "${YELLOW}Please install Python 3.10 or higher before continuing.${NC}"
+	echo -e "${YELLOW}Visit https://www.python.org/downloads/ for installation instructions.${NC}"
+	exit 1
 fi
 echo -e "${GREEN}Using Python $PYTHON_VERSION${NC}"
 
@@ -332,7 +365,11 @@ if [ "$ENV_TYPE" = "docker" ]; then
     echo -e "${GREEN}    http://localhost:8501${NC}\n"
 else
     echo -e "\n${BLUE}To run the MIMIC-IV Analysis app, activate your environment and run:${NC}"
-    echo -e "${GREEN}    streamlit run app.py${NC}\n"
+    if [ -f "$PROJECT_ROOT/setup.py" ]; then
+        echo -e "${GREEN}    streamlit run src/visualization/app.py${NC}\n"
+    else
+        echo -e "${GREEN}    streamlit run src/visualization/app.py${NC}\n"
+    fi
     echo -e "${YELLOW}This will start the Streamlit server at http://localhost:8501${NC}"
 fi
 

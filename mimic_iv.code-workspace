@@ -6,6 +6,7 @@
 	],
 	"settings": {
 		"hide-files.files": [],
-		"editor.fontSize": 14
+		"editor.fontSize": 14,
+		"python.languageServer": "None"
 	}
 }

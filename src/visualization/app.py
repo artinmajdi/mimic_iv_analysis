@@ -14,12 +14,12 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Import custom modules
-from src.data.data_loader import MIMICDataLoader
-from src.core.eda_module import ExploratoryDataAnalysis
-from src.core.order_pattern_module import OrderPatternAnalysis
-from src.core.patient_trajectory_module import PatientTrajectoryAnalysis
-from src.core.predictive_modeling_module import PredictiveModeling
-from src.core.clinical_interpretation_module import ClinicalInterpretation
+from mimic_iv_analysis.data.data_loader import MIMICDataLoader
+from mimic_iv_analysis.core.eda_module import ExploratoryDataAnalysis
+from mimic_iv_analysis.core.order_pattern_module import OrderPatternAnalysis
+from mimic_iv_analysis.core.patient_trajectory_module import PatientTrajectoryAnalysis
+from mimic_iv_analysis.core.predictive_modeling_module import PredictiveModeling
+from mimic_iv_analysis.core.clinical_interpretation_module import ClinicalInterpretation
 
 # Set page configuration
 st.set_page_config(

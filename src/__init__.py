@@ -3,7 +3,7 @@
 A comprehensive toolkit for analyzing MIMIC-IV clinical database.
 """
 
-from src.data import (
+from mimic_iv_analysis.data import (
     load_patient_data,
     load_admissions,
     load_diagnoses,
@@ -12,7 +12,7 @@ from src.data import (
     load_lab_results,
 )
 
-from src.analysis import (
+from mimic_iv_analysis.analysis import (
     perform_eda,
     analyze_demographics,
     analyze_temporal_patterns,
@@ -22,14 +22,14 @@ from src.analysis import (
     analyze_clinical_outcomes,
 )
 
-from src.core import (
+from mimic_iv_analysis.core import (
     train_model,
     evaluate_model,
     predict,
     cross_validate,
 )
 
-from src.visualization import (
+from mimic_iv_analysis.visualization import (
     plot_patient_trajectory,
     visualize_timeline,
     create_sankey_diagram,

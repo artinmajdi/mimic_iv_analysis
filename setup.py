@@ -20,6 +20,74 @@ def read_file(filename: str) -> str:
     with open(filename, 'r', encoding='utf-8') as f:
         return f.read()
 
+# Package metadata
+PACKAGE_NAME = "mimic-iv-analysis"
+VERSION      = "1.0.0"
+AUTHOR       = "Artin Majdi"
+AUTHOR_EMAIL = "msm2024@gmail.com"
+DESCRIPTION  = "A comprehensive toolkit for analyzing MIMIC-IV clinical database"
+URL          = "https://github.com/artinmajdi/mimic_iv_analysis"
+LICENSE      = "MIT License"
+
+CLASSIFIERS = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Healthcare Industry",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+PACKAGE_DATA = {
+    "": [
+        "**/*.py",
+        "**/*.json",
+        "**/*.yaml",
+        "**/*.csv"
+    ]
+}
+
+DEV_REQUIREMENTS = [
+    "pytest>=6.0",
+    "pytest-cov>=2.0",
+    "black>=22.0",
+    "isort>=5.0",
+    "flake8>=3.9",
+    "mypy>=0.9",
+    "sphinx>=4.0",
+    "sphinx-rtd-theme>=1.0",
+]
+
+KEYWORDS = [
+        "healthcare",
+        "clinical-data",
+        "mimic-iv",
+        "data-analysis",
+        "machine-learning",
+        "medical-research",
+]
+
+
+EXTRA_REQUIRES = {
+    "dev": DEV_REQUIREMENTS,
+    "test": [
+        "pytest>=6.0",
+        "pytest-cov>=2.0",
+    ],
+    "docs": [
+        "sphinx>=4.0",
+        "sphinx-rtd-theme>=1.0",
+        "sphinx-autodoc-typehints>=1.12",
+    ],
+}
+
 # Read requirements
 requirements = read_requirements('setup_config/requirements.txt')
 
@@ -27,71 +95,33 @@ requirements = read_requirements('setup_config/requirements.txt')
 long_description = read_file('README.md')
 
 setup(
-    name="mimic_iv_analysis",
-    version="0.1.0",
-    description="A comprehensive toolkit for analyzing MIMIC-IV clinical database",
+    name=PACKAGE_NAME,
+    version=VERSION,
+    author=AUTHOR,
+    author_email=AUTHOR_EMAIL,
+    description=DESCRIPTION,
     long_description=long_description,
     long_description_content_type="text/markdown",
-    author="Artin Majdi",
-    author_email="your.email@example.com",  # Replace with your email
-    url="https://github.com/yourusername/mimic_iv_analysis",  # Replace with your repo URL
-    packages=find_packages(exclude=["tests*", "docs*"]),
-    install_requires=requirements,
+    url=URL,
+    license=LICENSE,
+    classifiers=CLASSIFIERS,
     python_requires=">=3.10,<3.13",
-    entry_points={
-        "console_scripts": [
-            "mimic-iv=mimic_iv_analysis.app:main",
-        ],
-    },
-    classifiers=[
-        "Development Status :: 3 - Alpha",
-        "Intended Audience :: Science/Research",
-        "Intended Audience :: Healthcare Industry",
-        "License :: OSI Approved :: MIT License",
-        "Operating System :: OS Independent",
-        "Programming Language :: Python",
-        "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.10",
-        "Programming Language :: Python :: 3.11",
-        "Programming Language :: Python :: 3.12",
-        "Topic :: Scientific/Engineering",
-        "Topic :: Scientific/Engineering :: Medical Science Apps.",
-        "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    ],
-    keywords=[
-        "healthcare",
-        "clinical-data",
-        "mimic-iv",
-        "data-analysis",
-        "machine-learning",
-        "medical-research",
-    ],
-    project_urls={
-        "Documentation": "https://mimic-iv-analysis.readthedocs.io/",
-        "Source": "https://github.com/yourusername/mimic_iv_analysis",
-        "Issue Tracker": "https://github.com/yourusername/mimic_iv_analysis/issues",
-    },
+    install_requires=requirements,
+    extras_require=EXTRA_REQUIRES,
+    packages=find_packages(where="src", exclude=["tests*", "docs*"]),
+    package_dir={"": "src"},
+    package_data=PACKAGE_DATA,
     include_package_data=True,
     zip_safe=False,
-    extras_require={
-        "dev": [
-            "pytest>=6.0",
-            "pytest-cov>=2.0",
-            "black>=22.0",
-            "isort>=5.0",
-            "flake8>=3.9",
-            "mypy>=0.9",
-            "sphinx>=4.0",
-            "sphinx-rtd-theme>=1.0",
+    entry_points={
+        "console_scripts": [
+            "mimic-iv-analysis=visualization.app:main",
         ],
-        "test": [
-            "pytest>=6.0",
-            "pytest-cov>=2.0",
-        ],
-        "docs": [
-            "sphinx>=4.0",
-            "sphinx-rtd-theme>=1.0",
-            "sphinx-autodoc-typehints>=1.12",
-        ],
+    },
+    keywords=KEYWORDS,
+    project_urls={
+        "Issue Tracker": f"{URL}/issues",
+        "Documentation": f"{URL}/blob/main/docs/README.md",
+        "Source": URL,
     },
 )

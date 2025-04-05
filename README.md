@@ -79,28 +79,26 @@ pytest --cov=mimic_iv_analysis tests/  # With coverage
 
 ```
 mimic_iv_analysis/
-├── mimic_iv_analysis/        # Main package
-│   ├── __init__.py          # Package initialization
-│   ├── analysis/            # Analysis modules
-│   ├── data/                # Data handling modules
-│   ├── models/              # ML models
-│   ├── utils/               # Utility functions
-│   └── visualization/       # Visualization modules
-├── tests/                   # Test suite
-│   ├── unit/               # Unit tests
-│   └── integration/        # Integration tests
-├── docs/                    # Documentation
-│   └── README.md           # Documentation home
-├── scripts/                 # Utility scripts
-│   └── install.sh          # Installation script
-├── config/                  # Configuration files
-│   └── config.yaml         # Main config
-├── .env.example            # Example environment variables
-├── .gitignore              # Git ignore rules
-├── LICENSE                 # Project license
-├── pyproject.toml          # Project configuration
-├── README.md               # Project documentation
-└── setup.py                # Legacy setup file
+├── src/                     # Source code directory
+│   ├── __init__.py         # Package initialization
+│   ├── analysis/           # Analysis modules
+│   ├── data/               # Data handling modules
+│   ├── core/               # Core functionality
+│   ├── utils/              # Utility functions
+│   └── visualization/      # Visualization modules
+├── tests/                  # Test suite
+│   ├── unit/              # Unit tests
+│   └── integration/       # Integration tests
+├── docs/                   # Documentation
+├── scripts/                # Utility scripts
+│   └── install.sh         # Installation script
+├── setup_config/          # Configuration files
+├── .env.example           # Example environment variables
+├── .gitignore             # Git ignore rules
+├── LICENSE                # Project license
+├── pyproject.toml         # Project configuration
+├── README.md              # Project documentation
+└── setup.py               # Setup configuration
 ```
 
 ## Usage
@@ -108,7 +106,11 @@ mimic_iv_analysis/
 Run the Streamlit dashboard:
 
 ```bash
-streamlit run mimic_iv_analysis/app.py
+# If installed with pip:
+mimic-iv
+
+# Or directly:
+streamlit run src/visualization/app.py
 ```
 
 ## Contributing
