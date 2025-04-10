@@ -4,12 +4,11 @@
 			"path": "."
 		},
 		{
-			"path": "../dataset"
+			"path": "../dataset/mimic-iv-3.1"
 		}
 	],
 	"settings": {
 		"hide-files.files": [],
-		"editor.fontSize": 14,
 		"python.languageServer": "None"
 	}
 }

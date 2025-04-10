@@ -1,0 +1,15 @@
+streamlit
+dask
+pandas
+numpy
+scikit-learn
+plotly
+altair
+statsmodels
+pyarrow
+tensorflow
+umap-learn
+scipy
+matplotlib
+seaborn
+watchdog

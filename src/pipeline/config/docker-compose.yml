@@ -1,0 +1,17 @@
+version: '3'
+
+services:
+  mimic-iv-pipeline:
+    build:
+      context: ..
+      dockerfile: config/Dockerfile
+    image: mimic-iv-data-pipeline
+    container_name: mimic-iv-pipeline
+    volumes:
+      - .:/app
+      - ./data:/app/data
+    ports:
+      - "8888:8888"
+    env_file:
+      - ../.env
+    restart: unless-stopped
