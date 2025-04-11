@@ -1,12 +1,11 @@
-"""MIMIC-IV Analysis Configuration Module.
+"""MIMIC-IV Configuration Module.
 
-This module provides configuration management utilities for the MIMIC-IV
-analysis package, enabling consistent settings across different components.
-
-Features:
-- Configuration loading from YAML files
-- Default configuration management
-- Configuration validation
+This module provides configuration management for MIMIC-IV data analysis.
+It includes:
+- Configuration loading utilities
+- Default configuration settings
+- Environment variable management
+- Configuration validation utilities
 """
 
 from __future__ import absolute_import
@@ -26,7 +25,7 @@ def load_config(config_path=None):
         dict: Configuration settings
     """
     if config_path is None:
-        # Default to looking for config in the utils directory
+        # Default to looking for config in the current directory
         current_dir = os.path.dirname(os.path.abspath(__file__))
         config_path = os.path.join(current_dir, 'config.yaml')
 
@@ -38,6 +37,4 @@ def load_config(config_path=None):
 
     return config
 
-__all__ = [
-    'load_config',
-]
+__all__ = ['load_config']

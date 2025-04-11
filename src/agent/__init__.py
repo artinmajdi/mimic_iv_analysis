@@ -1,35 +1,45 @@
-"""MIMIC-IV Analysis Package.
+"""MIMIC-IV Analysis Agent Module.
 
 A comprehensive toolkit for analyzing MIMIC-IV clinical database.
+This module provides:
+- Data loading and preprocessing utilities
+- Core analytical functions for predictive modeling
+- Patient trajectory analysis
+- Order pattern detection
+- Clinical interpretation tools
+- Exploratory data analysis capabilities
+- Visualization components
 """
 
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 # Import submodules to make them available when importing the package
-from .data import data_loader
+from .data import MIMICDataLoader
 from .core import (
-    predictive_modeling_module,
-    patient_trajectory_module,
-    order_pattern_module,
-    clinical_interpretation_module,
-    eda_module
+    PredictiveModeling,
+    PatientTrajectory,
+    OrderPattern,
+    ClinicalInterpretation,
+    EDA
 )
 from .configurations import load_config
-from .visualization import app
-from .utils import *
 from .app import StreamlitApp
 
 __all__ = [
     # Data modules
-    'data_loader',
+    'MIMICDataLoader',
 
     # Configuration
     'load_config',
 
     # Core analytical modules
-    'predictive_modeling_module',
-    'patient_trajectory_module',
-    'order_pattern_module',
-    'clinical_interpretation_module',
-    'eda_module',
+    'PredictiveModeling',
+    'PatientTrajectory',
+    'OrderPattern',
+    'ClinicalInterpretation',
+    'EDA',
 
     # Visualization
     'StreamlitApp'

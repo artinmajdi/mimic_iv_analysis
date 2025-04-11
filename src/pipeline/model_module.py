@@ -13,9 +13,9 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Import project modules
 try:
-    from model.dl_train import DL_models
-    from model.evaluation import Loss
-    from model.fairness import fairness_evaluation
+    from .model.dl_train import DL_models
+    from .model.evaluation import Loss
+    from .model.fairness import fairness_evaluation
     MODEL_AVAILABLE = True
 except ImportError:
     MODEL_AVAILABLE = False

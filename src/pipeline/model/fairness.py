@@ -1,9 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[ ]:
-
-
 import pandas as pd
 import numpy as np
 import pickle
@@ -12,11 +9,14 @@ import random
 import os
 import sys
 from pathlib import Path
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + './../..')
+
 if not os.path.exists("./data/output"):
     os.makedirs("./data/output")
 
 def fairness_evaluation(inputFile, outputFile):
+
     if os.path.isfile('./data/output/'+inputFile):
         output_dict = pickle.load(open('./data/output/'+inputFile,"rb"))
     else:
@@ -73,7 +73,7 @@ def fairness_evaluation(inputFile, outputFile):
             tmp_dct = {"sensitive_attribute": sens_col}
             tp, tn, fp, fn, tpr, tnr, fpr, fnr, pr, nr, acc = get_cm_parameters(list(aggregate.Labels), list(aggregate.Predicted))
             tmp_dct.update(dict(
-                group=group,tp=tp, tn=tn, fp=fp, fn=fn, tpr=tpr, tnr=tnr, fpr= fpr, fnr=fnr, pr=pr, nr=nr, accuracy=acc    
+                group=group,tp=tp, tn=tn, fp=fp, fn=fn, tpr=tpr, tnr=tnr, fpr= fpr, fnr=fnr, pr=pr, nr=nr, accuracy=acc
                 )
             )
             report_list.append(tmp_dct)
