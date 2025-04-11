@@ -18,16 +18,16 @@ from __future__ import print_function
 
 # Import core modules
 from .predictive_modeling_module import PredictiveModeling
-from .patient_trajectory_module import PatientTrajectory
-from .order_pattern_module import OrderPattern
+from .patient_trajectory_module import PatientTrajectoryAnalysis
+from .order_pattern_module import OrderPatternAnalysis
 from .clinical_interpretation_module import ClinicalInterpretation
-from .eda_module import EDA
+from .eda_module import ExploratoryDataAnalysis
 
 __all__ = [
     # Modules
     'PredictiveModeling',
-    'PatientTrajectory',
-    'OrderPattern',
+    'PatientTrajectoryAnalysis',
+    'OrderPatternAnalysis',
     'ClinicalInterpretation',
-    'EDA',
+    'ExploratoryDataAnalysis',
 ]

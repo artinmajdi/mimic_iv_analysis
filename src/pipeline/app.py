@@ -8,34 +8,35 @@ from pathlib import Path
 from abc import ABC, abstractmethod
 import traceback
 import logging
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 # Add project root to path for imports
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-# Import the MimicPreprocessor class
-from src.preprocessing.mimic_preprocessor import MimicPreprocessor
 
 # Set up logging
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Configure Streamlit page
-st.set_page_config(
-    page_title="MIMIC-IV Analysis Pipeline",
-    page_icon="🏥",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
 
-# Prepare session state
-if 'pipeline_steps' not in st.session_state:
-    st.session_state.pipeline_steps = []
-if 'current_step' not in st.session_state:
-    st.session_state.current_step = 0
-if 'step_completed' not in st.session_state:
-    st.session_state.step_completed = {}
+# Initialize session state
+def init_session_state():
+    """Initialize all session state variables"""
+    if 'pipeline_steps' not in st.session_state:
+        st.session_state.pipeline_steps = []
+    if 'current_step' not in st.session_state:
+        st.session_state.current_step = 0
+    if 'step_completed' not in st.session_state:
+        st.session_state.step_completed = {}
+    if 'preprocessing_module' not in st.session_state:
+        st.session_state.preprocessing_module = None
+    if 'model_module' not in st.session_state:
+        st.session_state.model_module = None
+    if 'dataset_loaded' not in st.session_state:
+        st.session_state.dataset_loaded = False
+    if 'mimic_path' not in st.session_state:
+        st.session_state.mimic_path = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1"
 
 # Add the project root to Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -86,6 +87,18 @@ except ImportError as e:
     import_error_for_ui = f"Failed to import required modules: {str(e)}"
 
 
+class Config:
+    """Configuration class for the MIMIC-IV preprocessor"""
+    def __init__(self, data_path: str, output_dir: str = "./data"):
+        self.data_path = data_path
+        self.output_dir = output_dir
+        self.use_icu = False
+        self.remove_outliers = True
+        self.impute_missing = True
+        self.outlier_threshold = 95
+        self.left_threshold = 5
+
+
 # Define a MimicPreprocessor class to encapsulate the preprocessing functionality
 class MimicPreprocessor:
     """
@@ -93,10 +106,11 @@ class MimicPreprocessor:
     This class serves as a bridge between the existing preprocessing code and the dashboard.
     """
 
-    def __init__(self, mimic_path, output_dir="./data"):
+    def __init__(self, mimic_path: str = None, output_dir: str = "./data"):
         """Initialize the preprocessing module"""
-        self.mimic_path = mimic_path
+        self.mimic_path = mimic_path or st.session_state.get('mimic_path')
         self.output_dir = output_dir
+        self.config = Config(self.mimic_path, output_dir)
 
         # Create output directories if they don't exist
         os.makedirs(f"{output_dir}/cohort", exist_ok=True)
@@ -119,6 +133,25 @@ class MimicPreprocessor:
             "features": {},
             "warnings": []
         }
+
+    def get_available_features(self) -> List[str]:
+        """Return list of available features"""
+        return [
+            "diagnoses",
+            "procedures",
+            "medications",
+            "lab_tests",
+            "vital_signs",
+            "demographics"
+        ]
+
+    def get_available_outcomes(self) -> List[str]:
+        """Return list of available outcome variables"""
+        return [
+            "mortality",
+            "length_of_stay",
+            "readmission"
+        ]
 
     def read_patient_data(self):
         """Read patient data from MIMIC-IV"""
@@ -468,556 +501,571 @@ class MimicPreprocessor:
             }
 
 
-# PipelineStep Base Class
-class PipelineStep:
-    def __init__(self, name: str, order: int, description: str = ""):
-        self.name = name
-        self.order = order
-        self.description = description
-        self.status = "Not Started"
-        self.result = None
+class PipelineStep(ABC):
+    """Abstract base class for pipeline steps"""
+    @abstractmethod
+    def run(self):
+        """Run the pipeline step"""
+        pass
 
-    def validate(self) -> bool:
-        """Validate that the step can be executed"""
-        raise NotImplementedError("Subclasses must implement validate()")
+    @abstractmethod
+    def render(self):
+        """Render the UI for this step"""
+        pass
 
-    def execute(self) -> Any:
-        """Execute the pipeline step"""
-        raise NotImplementedError("Subclasses must implement execute()")
+class DatasetLoadingStep(PipelineStep):
+    """Step for loading and validating the MIMIC-IV dataset"""
+    def __init__(self):
+        self.preprocessor = None
+        self.status = "not_started"
+        self.error = None
+
+    def run(self):
+        """Run the dataset loading step"""
+        try:
+            # Initialize preprocessor
+            self.preprocessor = MimicPreprocessor()
+
+            # Validate MIMIC-IV path
+            if not os.path.exists(self.preprocessor.mimic_path):
+                raise FileNotFoundError(f"MIMIC-IV dataset not found at {self.preprocessor.mimic_path}")
+
+            # Check for required subdirectories
+            required_dirs = ['hosp', 'icu']  # Updated required directories
+            for dir_name in required_dirs:
+                dir_path = os.path.join(self.preprocessor.mimic_path, dir_name)
+                if not os.path.exists(dir_path):
+                    raise FileNotFoundError(f"Required directory '{dir_name}' not found in MIMIC-IV dataset")
+
+            # Check for essential files
+            required_files = {
+                'hosp/admissions.csv.gz': 'admissions data',
+                'icu/icustays.csv.gz': 'ICU stays data',
+                'hosp/patients.csv.gz': 'patient data'
+            }
+
+            for file_path, description in required_files.items():
+                full_path = os.path.join(self.preprocessor.mimic_path, file_path)
+                if not os.path.exists(full_path):
+                    raise FileNotFoundError(f"Required {description} file not found: {file_path}")
+
+            st.session_state.preprocessing_module = self.preprocessor
+            st.session_state.dataset_loaded = True
+            self.status = "completed"
+            return True
+        except Exception as e:
+            self.error = str(e)
+            self.status = "error"
+            logger.error(f"Dataset loading failed: {str(e)}")
+            return False
 
     def render(self):
-        """Render the pipeline step in the Streamlit UI"""
-        st.subheader(f"Step {self.order}: {self.name}")
+        """Render the dataset loading UI"""
+        st.header("Step 1: Dataset Loading")
 
-        if self.description:
-            st.write(self.description)
+        # Show MIMIC-IV path input
+        mimic_path = st.text_input(
+            "MIMIC-IV Dataset Path",
+            value=st.session_state.get('mimic_path', ''),
+            help="Path to the MIMIC-IV dataset directory"
+        )
 
-        # If this step has not been completed yet
-        if self.status != "Completed":
-            execute_button = st.button(f"Execute {self.name}", key=f"execute_{self.name}")
-            if execute_button:
-                try:
-                    if self.validate():
-                        with st.spinner(f"Executing {self.name}..."):
-                            self.result = self.execute()
-                            self.status = "Completed"
-                            st.session_state.step_completed[self.order] = True
-                            st.success(f"{self.name} completed successfully!")
-                    else:
-                        st.error("Validation failed. Cannot execute step.")
-                except Exception as e:
-                    st.error(f"Error executing {self.name}: {str(e)}")
-                    st.error(traceback.format_exc())
-        else:
-            st.success(f"{self.name} completed ✓")
-            reset_button = st.button(f"Reset {self.name}", key=f"reset_{self.name}")
-            if reset_button:
-                self.status = "Not Started"
-                self.result = None
-                if self.order in st.session_state.step_completed:
-                    del st.session_state.step_completed[self.order]
-                st.experimental_rerun()
+        if mimic_path != st.session_state.get('mimic_path'):
+            st.session_state.mimic_path = mimic_path
 
-        # Render the result if available
-        if self.result is not None:
-            self.render_result()
+        # Show status and errors
+        if self.status == "completed":
+            st.success("Dataset loaded successfully!")
+        elif self.status == "error":
+            st.error(f"Error loading dataset: {self.error}")
 
-    def render_result(self):
-        """Render the result of the pipeline step"""
-        st.write("Step completed successfully.")
-
-        # Default rendering for result data
-        if isinstance(self.result, pd.DataFrame):
-            st.write("Result DataFrame:")
-            st.dataframe(self.result.head())
-            st.write(f"Shape: {self.result.shape}")
+        # Show load button
+        if st.button("Load Dataset"):
+            with st.spinner("Loading dataset..."):
+                success = self.run()
+                if success:
+                    st.session_state.step_completed['dataset_loading'] = True
+                    st.rerun()
 
 
-# Data Preprocessing Step
 class DataPreprocessingStep(PipelineStep):
-    def __init__(self, order: int):
-        super().__init__(name="Data Preprocessing", order=order,
-                        description="Preprocess the MIMIC-IV data for analysis")
-        self.preprocessor = MimicPreprocessor()
+    """Step for preprocessing the MIMIC-IV dataset"""
+    def __init__(self):
+        self.status = "not_started"
+        self.error = None
+        self.preprocessed_data = None
 
-    def validate(self) -> bool:
-        """Validate that the data can be preprocessed"""
-        # Check if MIMIC-IV data paths are configured
-        if not self.preprocessor.config.get('data_path'):
-            st.error("MIMIC-IV data path not configured. Please set it in the configuration.")
-            return False
-        return True
-
-    def execute(self) -> Any:
-        """Execute the data preprocessing step"""
+    def run(self):
+        """Run the preprocessing step"""
         try:
-            # Get parameters from the UI
-            data_option = st.session_state.get('data_option', 'sample')
-            features = st.session_state.get('selected_features', [])
-            outcome = st.session_state.get('selected_outcome', None)
+            if not st.session_state.preprocessing_module:
+                raise ValueError("Preprocessor not initialized. Please complete dataset loading first.")
 
-            # Log the preprocessing parameters
-            logger.info(f"Preprocessing data with option: {data_option}")
-            logger.info(f"Selected features: {features}")
-            logger.info(f"Selected outcome: {outcome}")
+            preprocessor = st.session_state.preprocessing_module
 
-            # Run the preprocessing
-            processed_data = self.preprocessor.preprocess(
-                data_option=data_option,
-                features=features,
-                outcome=outcome
+            # Get preprocessing parameters from session state
+            config = preprocessor.config
+
+            # Run preprocessing
+            self.preprocessed_data = preprocessor.preprocess_data()
+
+            self.status = "completed"
+            return True
+        except Exception as e:
+            self.error = str(e)
+            self.status = "error"
+            logger.error(f"Preprocessing failed: {str(e)}")
+            return False
+
+    def render(self):
+        """Render the preprocessing UI"""
+        st.header("Step 2: Data Preprocessing")
+
+        if not st.session_state.step_completed.get('dataset_loading'):
+            st.warning("Please complete dataset loading first.")
+            return
+
+        # Preprocessing options
+        st.subheader("Preprocessing Options")
+
+        preprocessor = st.session_state.preprocessing_module
+        config = preprocessor.config
+
+        # Configure preprocessing options
+        config.use_icu = st.checkbox("Include ICU data", value=config.use_icu)
+        config.remove_outliers = st.checkbox("Remove outliers", value=config.remove_outliers)
+        config.impute_missing = st.checkbox("Impute missing values", value=config.impute_missing)
+
+        if config.remove_outliers:
+            config.outlier_threshold = st.slider(
+                "Outlier threshold (standard deviations)",
+                min_value=1.0,
+                max_value=5.0,
+                value=float(config.outlier_threshold),
+                step=0.5
             )
 
-            return processed_data
-        except Exception as e:
-            logger.error(f"Error in preprocessing: {str(e)}")
-            logger.error(traceback.format_exc())
-            raise
+        # Show status and errors
+        if self.status == "completed":
+            st.success("Preprocessing completed successfully!")
+            if self.preprocessed_data is not None:
+                st.write("Preprocessed data shape:", self.preprocessed_data.shape)
+        elif self.status == "error":
+            st.error(f"Error during preprocessing: {self.error}")
 
-    def render(self):
-        """Render the data preprocessing step UI"""
-        st.subheader(f"Step {self.order}: {self.name}")
-
-        if self.description:
-            st.write(self.description)
-
-        # Data options
-        st.write("#### Data Options")
-        data_option = st.radio(
-            "Select data to preprocess:",
-            options=["sample", "full"],
-            index=0,
-            key="data_option"
-        )
-
-        # Feature selection
-        st.write("#### Feature Selection")
-        available_features = self.preprocessor.get_available_features()
-        selected_features = st.multiselect(
-            "Select features to include:",
-            options=available_features,
-            default=available_features[:5] if available_features else [],
-            key="selected_features"
-        )
-
-        # Outcome selection
-        st.write("#### Outcome Selection")
-        available_outcomes = self.preprocessor.get_available_outcomes()
-        selected_outcome = st.selectbox(
-            "Select outcome variable:",
-            options=available_outcomes,
-            index=0 if available_outcomes else None,
-            key="selected_outcome"
-        )
-
-        # Execute button
-        if self.status != "Completed":
-            execute_button = st.button(f"Execute {self.name}", key=f"execute_{self.name}")
-            if execute_button:
-                try:
-                    if self.validate():
-                        with st.spinner(f"Executing {self.name}..."):
-                            self.result = self.execute()
-                            self.status = "Completed"
-                            st.session_state.step_completed[self.order] = True
-                            st.success(f"{self.name} completed successfully!")
-                    else:
-                        st.error("Validation failed. Cannot execute step.")
-                except Exception as e:
-                    st.error(f"Error executing {self.name}: {str(e)}")
-                    st.error(traceback.format_exc())
-        else:
-            st.success(f"{self.name} completed ✓")
-            reset_button = st.button(f"Reset {self.name}", key=f"reset_{self.name}")
-            if reset_button:
-                self.status = "Not Started"
-                self.result = None
-                if self.order in st.session_state.step_completed:
-                    del st.session_state.step_completed[self.order]
-                st.experimental_rerun()
-
-        # Render the result if available
-        if self.result is not None:
-            self.render_result()
-
-    def render_result(self):
-        """Render the preprocessing results"""
-        st.write("### Preprocessing Results")
-
-        if isinstance(self.result, dict):
-            # Display main dataset
-            if 'data' in self.result and isinstance(self.result['data'], pd.DataFrame):
-                st.write("#### Preprocessed Data")
-                st.dataframe(self.result['data'].head())
-                st.write(f"Shape: {self.result['data'].shape}")
-
-                # Display feature statistics
-                st.write("#### Feature Statistics")
-                st.write(self.result['data'].describe())
-
-                # Display additional metadata if available
-                if 'metadata' in self.result:
-                    st.write("#### Metadata")
-                    st.json(self.result['metadata'])
-        elif isinstance(self.result, pd.DataFrame):
-            st.write("#### Preprocessed Data")
-            st.dataframe(self.result.head())
-            st.write(f"Shape: {self.result.shape}")
-
-            # Display feature statistics
-            st.write("#### Feature Statistics")
-            st.write(self.result.describe())
-        else:
-            st.write("Preprocessing completed, but no compatible data format was returned.")
+        # Show preprocess button
+        if st.button("Run Preprocessing"):
+            with st.spinner("Preprocessing data..."):
+                success = self.run()
+                if success:
+                    st.session_state.step_completed['preprocessing'] = True
+                    st.rerun()
 
 
 class FeatureSelectionStep(PipelineStep):
-    """Handles the feature selection step of the pipeline."""
+    """Step for selecting features and outcomes"""
+    def __init__(self):
+        self.status = "not_started"
+        self.error = None
+        self.selected_features = []
+        self.selected_outcomes = []
+
+    def run(self):
+        """Run the feature selection step"""
+        try:
+            if not st.session_state.preprocessing_module:
+                raise ValueError("Preprocessor not initialized. Please complete preprocessing first.")
+
+            preprocessor = st.session_state.preprocessing_module
+
+            # Validate feature selection
+            if not self.selected_features:
+                raise ValueError("No features selected")
+            if not self.selected_outcomes:
+                raise ValueError("No outcomes selected")
+
+            # Store selections in session state
+            st.session_state.selected_features = self.selected_features
+            st.session_state.selected_outcomes = self.selected_outcomes
+
+            self.status = "completed"
+            return True
+        except Exception as e:
+            self.error = str(e)
+            self.status = "error"
+            logger.error(f"Feature selection failed: {str(e)}")
+            return False
 
     def render(self):
-        st.header("Feature Selection")
+        """Render the feature selection UI"""
+        st.header("Step 3: Feature Selection")
 
-        if not self.validate():
+        if not st.session_state.step_completed.get('preprocessing'):
+            st.warning("Please complete preprocessing first.")
             return
 
-        st.info("Feature selection will be implemented in the next version.")
-        st.write("This feature will allow you to:")
-        st.write("- Select specific features from each category")
-        st.write("- Apply feature importance methods")
-        st.write("- Generate feature importance plots")
-        st.write("- Save selected feature sets")
+        preprocessor = st.session_state.preprocessing_module
 
-    def validate(self):
-        if not MODULES_AVAILABLE:
-            if 'import_error_for_ui' in globals():
-                st.error(f"Required modules not available: {import_error_for_ui}")
-            else:
-                st.error("Required modules not available. Please check your installation.")
+        # Feature selection
+        st.subheader("Select Features")
+        available_features = preprocessor.get_available_features()
+        self.selected_features = st.multiselect(
+            "Select features for model training",
+            options=available_features,
+            default=self.selected_features or []
+        )
 
-            st.info("Possible solutions:\n"
-                    "1. Make sure all dependencies are installed by running `pip install -r requirements.txt`\n"
-                    "2. Check that all project files are in the correct directories\n"
-                    "3. Restart the application")
-            return False
-        elif st.session_state.preprocessing_module is None:
-            st.warning("Please run the preprocessing step first.")
-            return False
-        return True
+        # Outcome selection
+        st.subheader("Select Outcomes")
+        available_outcomes = preprocessor.get_available_outcomes()
+        self.selected_outcomes = st.multiselect(
+            "Select outcomes to predict",
+            options=available_outcomes,
+            default=self.selected_outcomes or []
+        )
+
+        # Show status and errors
+        if self.status == "completed":
+            st.success("Feature selection completed!")
+        elif self.status == "error":
+            st.error(f"Error during feature selection: {self.error}")
+
+        # Show confirm button
+        if st.button("Confirm Selection"):
+            with st.spinner("Confirming feature selection..."):
+                success = self.run()
+                if success:
+                    st.session_state.step_completed['feature_selection'] = True
+                    st.rerun()
 
 
 class ModelTrainingStep(PipelineStep):
-    """Handles the model training step of the pipeline."""
+    """Step for training the machine learning model"""
+    def __init__(self):
+        self.status = "not_started"
+        self.error = None
+        self.model = None
+        self.training_results = None
 
-    def render(self):
-        st.header("Model Training")
+    def run(self):
+        """Run the model training step"""
+        try:
+            if not st.session_state.model_module:
+                raise ValueError("Model module not initialized")
 
-        if not self.validate():
-            return
+            model_module = st.session_state.model_module
 
-        # Model settings
-        st.subheader("Model Settings")
-        col1, col2 = st.columns(2)
-        with col1:
-            model_type = st.selectbox("Model Type", ["lstm", "gru", "transformer"])
-            hidden_size = st.number_input("Hidden Size", value=128, min_value=1)
-            num_layers = st.number_input("Number of Layers", value=2, min_value=1)
-        with col2:
-            dropout = st.slider("Dropout", value=0.2, min_value=0.0, max_value=1.0)
-            batch_size = st.number_input("Batch Size", value=32, min_value=1)
-            learning_rate = st.number_input("Learning Rate", value=0.001, format="%.3f")
+            # Get training parameters from session state
+            params = st.session_state.get('training_params', {})
 
-        # Training settings
-        st.subheader("Training Settings")
-        col1, col2 = st.columns(2)
-        with col1:
-            num_epochs = st.number_input("Number of Epochs", value=10, min_value=1)
-            target_column = st.text_input("Target Column", value="mortality")
-        with col2:
-            sensitive_columns = st.multiselect(
-                "Sensitive Columns",
-                options=["ethnicity", "gender", "age"],
-                default=["ethnicity", "gender"]
+            # Train model
+            self.model, self.training_results = model_module.train_model(
+                features=st.session_state.selected_features,
+                outcomes=st.session_state.selected_outcomes,
+                **params
             )
 
-        # Run training
+            # Store model in session state
+            st.session_state.trained_model = self.model
+            st.session_state.training_results = self.training_results
+
+            self.status = "completed"
+            return True
+        except Exception as e:
+            self.error = str(e)
+            self.status = "error"
+            logger.error(f"Model training failed: {str(e)}")
+            return False
+
+    def render(self):
+        """Render the model training UI"""
+        st.header("Step 4: Model Training")
+
+        if not st.session_state.step_completed.get('feature_selection'):
+            st.warning("Please complete feature selection first.")
+            return
+
+        # Model configuration
+        st.subheader("Model Configuration")
+
+        # Model type selection
+        model_type = st.selectbox(
+            "Select model type",
+            options=["Random Forest", "XGBoost", "Logistic Regression"]
+        )
+
+        # Training parameters
+        st.subheader("Training Parameters")
+
+        params = {}
+        if model_type == "Random Forest":
+            params['n_estimators'] = st.slider("Number of trees", 10, 500, 100)
+            params['max_depth'] = st.slider("Maximum depth", 2, 20, 10)
+        elif model_type == "XGBoost":
+            params['learning_rate'] = st.slider("Learning rate", 0.01, 0.3, 0.1)
+            params['max_depth'] = st.slider("Maximum depth", 2, 20, 6)
+        elif model_type == "Logistic Regression":
+            params['C'] = st.slider("Regularization strength", 0.1, 10.0, 1.0)
+
+        # Store parameters in session state
+        st.session_state.training_params = params
+
+        # Show status and errors
+        if self.status == "completed":
+            st.success("Model training completed!")
+            if self.training_results:
+                st.write("Training Results:")
+                st.write(self.training_results)
+        elif self.status == "error":
+            st.error(f"Error during model training: {self.error}")
+
+        # Show train button
         if st.button("Train Model"):
-            try:
-                # Initialize model module
-                st.session_state.model_module = ModelModule(
-                    output_dir="./data/models"
-                )
-
-                # Set parameters
-                st.session_state.model_module.model_type = model_type
-                st.session_state.model_module.hidden_size = hidden_size
-                st.session_state.model_module.num_layers = num_layers
-                st.session_state.model_module.dropout = dropout
-                st.session_state.model_module.batch_size = batch_size
-                st.session_state.model_module.learning_rate = learning_rate
-                st.session_state.model_module.num_epochs = num_epochs
-
-                # Run pipeline
-                with st.spinner("Training model..."):
-                    results = st.session_state.model_module.run_model_pipeline(
-                        feature_paths=st.session_state.preprocessing_module.feature_paths,
-                        cohort_path=st.session_state.preprocessing_module.cohort_path,
-                        target_column=target_column,
-                        sensitive_columns=sensitive_columns,
-                        model_name=f"{model_type}_{target_column}"
-                    )
-
-                    st.success("Model training completed successfully!")
-
-                    # Display results
-                    st.subheader("Model Metrics")
-                    for metric, value in results["metrics"].items():
-                        if metric != "fairness":
-                            st.write(f"**{metric}:** {value:.4f}")
-
-                    if "fairness" in results["metrics"]:
-                        st.subheader("Fairness Metrics")
-                        for attribute, metrics in results["metrics"]["fairness"].items():
-                            st.write(f"**{attribute}:**")
-                            for metric, value in metrics.items():
-                                st.write(f"- {metric}: {value:.4f}")
-            except Exception as e:
-                st.error(f"Error during model training: {str(e)}")
-                st.error("Check logs for more details")
-
-    def validate(self):
-        if not MODULES_AVAILABLE:
-            if 'import_error_for_ui' in globals():
-                st.error(f"Required modules not available: {import_error_for_ui}")
-            else:
-                st.error("Required modules not available. Please check your installation.")
-
-            st.info("Possible solutions:\n"
-                    "1. Make sure all dependencies are installed by running `pip install -r requirements.txt`\n"
-                    "2. Check that all project files are in the correct directories\n"
-                    "3. Restart the application")
-            return False
-        elif st.session_state.preprocessing_module is None:
-            st.warning("Please run the preprocessing step first.")
-            return False
-        return True
+            with st.spinner("Training model..."):
+                success = self.run()
+                if success:
+                    st.session_state.step_completed['model_training'] = True
+                    st.rerun()
 
 
 class EvaluationStep(PipelineStep):
-    """Handles the model evaluation step of the pipeline."""
+    """Step for evaluating the trained model"""
+    def __init__(self):
+        self.status = "not_started"
+        self.error = None
+        self.evaluation_results = None
+
+    def run(self):
+        """Run the model evaluation step"""
+        try:
+            if not st.session_state.model_module:
+                raise ValueError("Model module not initialized")
+
+            model_module = st.session_state.model_module
+
+            # Evaluate model
+            self.evaluation_results = model_module.evaluate_model(
+                model=st.session_state.trained_model,
+                features=st.session_state.selected_features,
+                outcomes=st.session_state.selected_outcomes
+            )
+
+            # Store results in session state
+            st.session_state.evaluation_results = self.evaluation_results
+
+            self.status = "completed"
+            return True
+        except Exception as e:
+            self.error = str(e)
+            self.status = "error"
+            logger.error(f"Model evaluation failed: {str(e)}")
+            return False
 
     def render(self):
-        st.header("Model Evaluation")
+        """Render the model evaluation UI"""
+        st.header("Step 5: Model Evaluation")
 
-        if not self.validate():
+        if not st.session_state.step_completed.get('model_training'):
+            st.warning("Please complete model training first.")
             return
 
-        st.info("Evaluation metrics will be displayed here.")
-        st.write("This section will show:")
-        st.write("- Model performance metrics")
-        st.write("- ROC curves")
-        st.write("- Precision-recall curves")
-        st.write("- Confusion matrices")
+        # Evaluation options
+        st.subheader("Evaluation Options")
 
-    def validate(self):
-        if not MODULES_AVAILABLE:
-            if 'import_error_for_ui' in globals():
-                st.error(f"Required modules not available: {import_error_for_ui}")
-            else:
-                st.error("Required modules not available. Please check your installation.")
+        metrics = st.multiselect(
+            "Select evaluation metrics",
+            options=["Accuracy", "Precision", "Recall", "F1-Score", "ROC-AUC"],
+            default=["Accuracy", "ROC-AUC"]
+        )
 
-            st.info("Possible solutions:\n"
-                    "1. Make sure all dependencies are installed by running `pip install -r requirements.txt`\n"
-                    "2. Check that all project files are in the correct directories\n"
-                    "3. Restart the application")
-            return False
-        elif st.session_state.model_module is None:
-            st.warning("Please train a model first.")
-            return False
-        return True
+        # Show status and errors
+        if self.status == "completed":
+            st.success("Model evaluation completed!")
+            if self.evaluation_results:
+                st.write("Evaluation Results:")
+                st.write(self.evaluation_results)
+        elif self.status == "error":
+            st.error(f"Error during evaluation: {self.error}")
+
+        # Show evaluate button
+        if st.button("Evaluate Model"):
+            with st.spinner("Evaluating model..."):
+                success = self.run()
+                if success:
+                    st.session_state.step_completed['evaluation'] = True
+                    st.rerun()
 
 
 class FairnessAnalysisStep(PipelineStep):
-    """Handles the fairness analysis step of the pipeline."""
-
-    def render(self):
-        st.header("Fairness Analysis")
-
-        if not self.validate():
-            return
-
-        st.info("Fairness analysis will be displayed here.")
-        st.write("This section will show:")
-        st.write("- Demographic parity")
-        st.write("- Equal opportunity")
-        st.write("- Equalized odds")
-        st.write("- Treatment equality")
-
-    def validate(self):
-        if not MODULES_AVAILABLE:
-            if 'import_error_for_ui' in globals():
-                st.error(f"Required modules not available: {import_error_for_ui}")
-            else:
-                st.error("Required modules not available. Please check your installation.")
-
-            st.info("Possible solutions:\n"
-                    "1. Make sure all dependencies are installed by running `pip install -r requirements.txt`\n"
-                    "2. Check that all project files are in the correct directories\n"
-                    "3. Restart the application")
-            return False
-        elif st.session_state.model_module is None:
-            st.warning("Please train a model first.")
-            return False
-        return True
-
-
-class StreamlitApp:
-    """Main application class for the MIMIC-IV Data Pipeline."""
-
+    """Step for analyzing model fairness"""
     def __init__(self):
-        """Initialize the application."""
-        self.steps = {
-            "Dataset Loading": DatasetLoadingStep(),
-            "Data Preprocessing": DataPreprocessingStep(),
-            "Feature Selection": FeatureSelectionStep(),
-            "Model Training": ModelTrainingStep(),
-            "Evaluation": EvaluationStep(),
-            "Fairness Analysis": FairnessAnalysisStep()
-        }
-
-        # Initialize session state
-        if "preprocessing_module" not in st.session_state:
-            st.session_state.preprocessing_module = None
-        if "model_module" not in st.session_state:
-            st.session_state.model_module = None
-        if "current_step" not in st.session_state:
-            st.session_state.current_step = "Dataset Loading"
-        if "dataset_loaded" not in st.session_state:
-            st.session_state.dataset_loaded = False
-        if "mimic_path" not in st.session_state:
-            st.session_state.mimic_path = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1"
-
-    def render_header(self):
-        """Render the application header."""
-        st.title("🏥 MIMIC-IV Data Pipeline")
-        st.markdown("""
-        This dashboard helps you process and analyze MIMIC-IV healthcare data through a step-by-step pipeline.
-        Start by loading your dataset, then proceed through preprocessing, model training, and analysis.
-        """)
-        st.markdown("---")
-
-    def render_main_content(self):
-        """Render the main content with tabs for navigation."""
-        # Create tabs for each step
-        tabs = st.tabs(list(self.steps.keys()))
-
-        # Render the content for each tab
-        for i, (step_name, step) in enumerate(self.steps.items()):
-            with tabs[i]:
-                step.render()
-
-    def render_footer(self):
-        """Render the footer."""
-        st.markdown("---")
-        st.markdown("""
-        <div style='text-align: center'>
-            <p>MIMIC-IV Data Pipeline Dashboard | Built with Streamlit</p>
-            <p>For documentation and support, please visit the <a href="https://github.com/your-repo/mimic-iv-pipeline">GitHub repository</a></p>
-        </div>
-        """, unsafe_allow_html=True)
+        self.status = "not_started"
+        self.error = None
+        self.fairness_results = None
 
     def run(self):
-        """Run the application."""
-        # Render the application
-        self.render_header()
-        self.render_main_content()
-        self.render_footer()
+        """Run the fairness analysis step"""
+        try:
+            if not st.session_state.model_module:
+                raise ValueError("Model module not initialized")
+
+            model_module = st.session_state.model_module
+
+            # Get fairness parameters from session state
+            params = st.session_state.get('fairness_params', {})
+
+            # Analyze fairness
+            self.fairness_results = model_module.analyze_fairness(
+                model=st.session_state.trained_model,
+                sensitive_features=params.get('sensitive_features', []),
+                metrics=params.get('metrics', [])
+            )
+
+            # Store results in session state
+            st.session_state.fairness_results = self.fairness_results
+
+            self.status = "completed"
+            return True
+        except Exception as e:
+            self.error = str(e)
+            self.status = "error"
+            logger.error(f"Fairness analysis failed: {str(e)}")
+            return False
+
+    def render(self):
+        """Render the fairness analysis UI"""
+        st.header("Step 6: Fairness Analysis")
+
+        if not st.session_state.step_completed.get('evaluation'):
+            st.warning("Please complete model evaluation first.")
+            return
+
+        # Fairness analysis options
+        st.subheader("Fairness Analysis Options")
+
+        # Select sensitive features
+        sensitive_features = st.multiselect(
+            "Select sensitive features",
+            options=st.session_state.selected_features,
+            default=[]
+        )
+
+        # Select fairness metrics
+        fairness_metrics = st.multiselect(
+            "Select fairness metrics",
+            options=["Demographic Parity", "Equal Opportunity", "Equalized Odds"],
+            default=["Demographic Parity"]
+        )
+
+        # Store parameters in session state
+        st.session_state.fairness_params = {
+            'sensitive_features': sensitive_features,
+            'metrics': fairness_metrics
+        }
+
+        # Show status and errors
+        if self.status == "completed":
+            st.success("Fairness analysis completed!")
+            if self.fairness_results:
+                st.write("Fairness Analysis Results:")
+                st.write(self.fairness_results)
+        elif self.status == "error":
+            st.error(f"Error during fairness analysis: {self.error}")
+
+        # Show analyze button
+        if st.button("Analyze Fairness"):
+            with st.spinner("Analyzing model fairness..."):
+                success = self.run()
+                if success:
+                    st.session_state.step_completed['fairness_analysis'] = True
+                    st.rerun()
 
 
-def initialize_app():
-    """Initialize the Streamlit app and return the pipeline steps"""
-    # Create pipeline steps
-    pipeline_steps = [
-        DataPreprocessingStep(order=1)
-    ]
-
-    return pipeline_steps
-
-def run_app():
-    """Run the Streamlit application"""
-    # Set up page configuration
+def main():
+    """Main function to run the Streamlit app"""
     st.set_page_config(
-        page_title="MIMIC-IV Analysis Pipeline",
+        page_title="MIMIC-IV Preprocessing Pipeline",
         page_icon="🏥",
-        layout="wide",
-        initial_sidebar_state="expanded"
+        layout="wide"
     )
 
-    # Prepare session state
-    if 'pipeline_steps' not in st.session_state:
-        st.session_state.pipeline_steps = initialize_app()
+    # Initialize session state
+    init_session_state()
 
-    if 'current_step' not in st.session_state:
-        st.session_state.current_step = 0
-
-    if 'step_completed' not in st.session_state:
-        st.session_state.step_completed = {}
-
-    # Render app title and description
-    st.title("MIMIC-IV Analysis Pipeline")
-    st.write("""
-    This application guides you through analyzing MIMIC-IV clinical data for healthcare research.
-    Follow the steps sequentially to preprocess the data, build models, and analyze results.
+    # Title and description
+    st.title("MIMIC-IV Preprocessing Pipeline")
+    st.markdown("""
+    This application helps you preprocess the MIMIC-IV dataset for machine learning tasks.
+    Follow the steps below to prepare your data.
     """)
 
-    # Create sidebar navigation
+    # Check if modules are available
+    if not MODULES_AVAILABLE:
+        st.error(import_error_for_ui)
+        st.stop()
+
+    # Initialize pipeline steps if not already done
+    if not st.session_state.pipeline_steps:
+        st.session_state.pipeline_steps = [
+            DatasetLoadingStep(),
+            DataPreprocessingStep(),
+            FeatureSelectionStep(),
+            ModelTrainingStep(),
+            EvaluationStep(),
+            FairnessAnalysisStep()
+        ]
+
+    # Create sidebar for navigation
     with st.sidebar:
-        st.header("Navigation")
-        st.write("Select a step to navigate:")
+        st.header("Pipeline Steps")
 
+        # Display progress
+        total_steps = len(st.session_state.pipeline_steps)
+        completed_steps = sum(1 for step in st.session_state.step_completed.values() if step)
+        st.progress(completed_steps / total_steps)
+
+        # Step selection
         for i, step in enumerate(st.session_state.pipeline_steps):
-            is_completed = st.session_state.step_completed.get(step.order, False)
-            status_icon = "✅" if is_completed else "⏳"
+            step_name = step.__class__.__name__.replace("Step", "")
+            is_completed = st.session_state.step_completed.get(step_name.lower(), False)
+            is_current = i == st.session_state.current_step
 
-            if st.button(f"{status_icon} {step.name}", key=f"nav_{step.order}"):
+            # Create a button for each step
+            button_label = f"{'✅' if is_completed else '⏳'} {step_name}"
+            if st.button(button_label, key=f"nav_{i}", disabled=not (is_completed or i <= completed_steps)):
                 st.session_state.current_step = i
-                st.experimental_rerun()
+                st.rerun()
 
-    # Display current step
-    current_step = st.session_state.pipeline_steps[st.session_state.current_step]
-    current_step.render()
-
-    # Navigation buttons
+    # Add navigation buttons at the bottom
     st.write("---")
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns([1, 2, 1])
 
     with col1:
         if st.session_state.current_step > 0:
             if st.button("⬅️ Previous Step"):
                 st.session_state.current_step -= 1
-                st.experimental_rerun()
+                st.rerun()
 
     with col2:
-        if st.session_state.current_step < len(st.session_state.pipeline_steps) - 1:
-            next_enabled = st.session_state.step_completed.get(
-                st.session_state.pipeline_steps[st.session_state.current_step].order,
-                False
-            )
+        # Show current step number and name
+        current_step = st.session_state.pipeline_steps[st.session_state.current_step]
+        step_name = current_step.__class__.__name__.replace("Step", "")
+        st.write(f"Current Step: {st.session_state.current_step + 1}/{total_steps} - {step_name}")
 
-            if st.button("Next Step ➡️", disabled=not next_enabled):
+    with col3:
+        if st.session_state.current_step < len(st.session_state.pipeline_steps) - 1:
+            # Enable next button only if current step is completed
+            current_step_name = st.session_state.pipeline_steps[st.session_state.current_step].__class__.__name__.replace("Step", "").lower()
+            can_proceed = st.session_state.step_completed.get(current_step_name, False)
+
+            if st.button("Next Step ➡️", disabled=not can_proceed):
                 st.session_state.current_step += 1
-                st.experimental_rerun()
+                st.rerun()
+
+    # Render current step
+    current_step = st.session_state.pipeline_steps[st.session_state.current_step]
+    current_step.render()
+
 
 if __name__ == "__main__":
-    # Configure logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    logger = logging.getLogger(__name__)
-
-    try:
-        run_app()
-    except Exception as e:
-        st.error(f"Application error: {str(e)}")
-        st.error(traceback.format_exc())
-        logger.error(f"Application error: {str(e)}", exc_info=True)
+    main()

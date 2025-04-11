@@ -19,10 +19,10 @@ from __future__ import print_function
 from .data import MIMICDataLoader
 from .core import (
     PredictiveModeling,
-    PatientTrajectory,
-    OrderPattern,
+    PatientTrajectoryAnalysis,
+    OrderPatternAnalysis,
     ClinicalInterpretation,
-    EDA
+    ExploratoryDataAnalysis
 )
 from .configurations import load_config
 from .app import StreamlitApp
@@ -36,10 +36,10 @@ __all__ = [
 
     # Core analytical modules
     'PredictiveModeling',
-    'PatientTrajectory',
-    'OrderPattern',
+    'PatientTrajectoryAnalysis',
+    'OrderPatternAnalysis',
     'ClinicalInterpretation',
-    'EDA',
+    'ExploratoryDataAnalysis',
 
     # Visualization
     'StreamlitApp'
