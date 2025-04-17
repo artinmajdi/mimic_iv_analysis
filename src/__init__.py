@@ -1,23 +1,55 @@
-"""MIMIC-IV Analysis Package.
+"""MIMIC-IV Analysis Agent Module.
 
-A comprehensive toolkit for analyzing MIMIC-IV clinical database,
-providing modules for data preprocessing, visualization, and analysis.
-
-This package contains the following modules:
-- pipeline: Data preprocessing and pipeline components
-- agent: Main analysis agent with predictive modeling capabilities
-- agent2: Alternative analysis agent with specialized visualizations
-- claude: Claude AI integration for advanced analysis
-
-For usage examples, see the documentation or refer to the example scripts.
+A comprehensive toolkit for analyzing MIMIC-IV clinical database.
+This module provides:
+- Data loading and preprocessing utilities
+- Core analytical functions for predictive modeling
+- Patient trajectory analysis
+- Order pattern detection
+- Clinical interpretation tools
+- Exploratory data analysis capabilities
+- Visualization components
 """
 
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from . import claude, agent, agent2, pipeline
+# Import submodules to make them available when importing the package
+from .data_loader import MIMICDataLoader
+from .core import (
+    PredictiveModeling,
+    PatientTrajectoryAnalysis,
+    OrderPatternAnalysis,
+    ClinicalInterpretation,
+    ExploratoryDataAnalysis
+)
+from .models import (
+    ClusteringAnalyzer,
+    FeatureEngineer
+)
+from .configurations import load_config
+from .visualization import StreamlitApp, StreamlitAppClaude
 
+__all__ = [
+    # Data modules
+    'MIMICDataLoader',
 
-__version__ = "0.1.0"
-__author__ = "Artin Majdi"
+    # Configuration
+    'load_config',
+
+    # Core analytical modules
+    'PredictiveModeling',
+    'PatientTrajectoryAnalysis',
+    'OrderPatternAnalysis',
+    'ClinicalInterpretation',
+    'ExploratoryDataAnalysis',
+
+    # Models
+    'ClusteringAnalyzer',
+    'FeatureEngineer',
+
+    # Visualization
+    'StreamlitApp',
+    'StreamlitAppClaude'
+]

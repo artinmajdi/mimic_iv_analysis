@@ -22,11 +22,6 @@ A comprehensive analytical toolkit for exploring and modeling data from the MIMI
 pip install -e ".[dev]"  # Install with development dependencies
 ```
 
-### Option 2: Using Docker
-
-```bash
-docker-compose up
-```
 
 ### Option 3: Manual Installation
 

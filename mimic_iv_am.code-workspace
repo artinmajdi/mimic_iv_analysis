@@ -1,0 +1,19 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../mimic-code"
+		},
+		{
+			"path": "../pipeline"
+		},
+		{
+			"path": "../dataset"
+		}
+	],
+	"settings": {
+		"hide-files.files": []
+	}
+}

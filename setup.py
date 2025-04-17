@@ -45,15 +45,6 @@ CLASSIFIERS = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
-PACKAGE_DATA = {
-    "src": [
-        "**/*.py",
-        "**/*.json",
-        "**/*.yaml",
-        "**/*.csv"
-    ]
-}
-
 DEV_REQUIREMENTS = [
     "pytest>=6.0",
     "pytest-cov>=2.0",
@@ -110,12 +101,11 @@ setup(
     extras_require=EXTRA_REQUIRES,
     packages=find_packages(where="src", exclude=["tests*", "docs*"]),
     package_dir={"": "src"},
-    package_data=PACKAGE_DATA,
     include_package_data=True,
     zip_safe=False,
     entry_points={
         "console_scripts": [
-            "mimic-iv-analysis=mimic_iv_analysis.visualization.app:main",
+            "mimic-iv-analysis=agent.app:main",
         ],
     },
     keywords=KEYWORDS,
