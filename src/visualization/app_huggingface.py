@@ -21,68 +21,6 @@ LARGE_FILE_THRESHOLD_MB = 100
 DEFAULT_SAMPLE_SIZE = 1000
 RANDOM_STATE = 42
 
-# Set page configuration
-st.set_page_config(
-	page_title="MIMIC-IV Dashboard",
-	page_icon="🏥",
-	layout="wide",
-	initial_sidebar_state="expanded"
-)
-
-# Custom CSS
-st.markdown("""
-<style>
-	.main-header {
-		font-size: 2.5rem;
-		color: #4682B4;
-		text-align: center;
-	}
-	.sub-header {
-		font-size: 1.5rem;
-		color: #4682B4;
-	}
-	.info-box {
-		background-color: #F0F8FF;
-		padding: 1rem;
-		border-radius: 0.5rem;
-		margin-bottom: 1rem;
-	}
-	.stProgress .st-bo {
-		background-color: #4682B4;
-	}
-</style>
-""", unsafe_allow_html=True)
-
-# Function to initialize session state
-def init_session_state():
-	if 'loader' not in st.session_state:
-		st.session_state.loader = None
-	if 'datasets' not in st.session_state:
-		st.session_state.datasets = {}
-	if 'selected_module' not in st.session_state:
-		st.session_state.selected_module = None
-	if 'selected_table' not in st.session_state:
-		st.session_state.selected_table = None
-	if 'df' not in st.session_state:
-		st.session_state.df = None
-	if 'sample_size' not in st.session_state:
-		st.session_state.sample_size = DEFAULT_SAMPLE_SIZE
-	if 'available_tables' not in st.session_state:
-		st.session_state.available_tables = {}
-	if 'file_paths' not in st.session_state:
-		st.session_state.file_paths = {}
-	if 'file_sizes' not in st.session_state:
-		st.session_state.file_sizes = {}
-	if 'table_display_names' not in st.session_state:
-		st.session_state.table_display_names = {}
-	if 'current_file_path' not in st.session_state:
-		st.session_state.current_file_path = None
-	if 'mimic_path' not in st.session_state:
-		st.session_state.mimic_path = DEFAULT_MIMIC_PATH
-
-# Initialize session state
-init_session_state()
-
 
 # --- Data Handling Class ---
 class MIMICDataHandler:
@@ -225,7 +163,6 @@ class MIMICDataHandler:
 class MIMICVisualizer:
 	def __init__(self):
 		pass
-	# Methods will be moved here later
 
 	def display_dataset_statistics(self, df: Optional[pd.DataFrame]):
 		"""Displays key statistics about the loaded DataFrame."""
@@ -262,23 +199,20 @@ class MIMICVisualizer:
 			st.info("No data loaded to display statistics.")
 
 
-
 	# Function to display data preview (Original)
-	@staticmethod
-	def display_data_preview(df):
+	def display_data_preview(self, df: Optional[pd.DataFrame]):
 		if df is not None:
 			st.markdown("<h2 class='sub-header'>Data Preview</h2>", unsafe_allow_html=True)
 			st.dataframe(df.head(10), use_container_width=True)
 
 	# Function to display visualizations (Original)
-	@staticmethod
-	def display_visualizations(df):
+	def display_visualizations(self, df: Optional[pd.DataFrame]):
 		if df is not None:
 			st.markdown("<h2 class='sub-header'>Data Visualization</h2>", unsafe_allow_html=True)
 
 			# Select columns for visualization
-			numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-			categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+			numeric_cols    : List[str] = df.select_dtypes(include=['number']).columns.tolist()
+			categorical_cols: List[str] = df.select_dtypes(include=['object', 'category']).columns.tolist()
 
 			if len(numeric_cols) > 0:
 				st.markdown("<h3>Numeric Data Visualization</h3>", unsafe_allow_html=True)
@@ -326,208 +260,267 @@ class MIMICVisualizer:
 class MIMICDashboardApp:
 	def __init__(self):
 		self.data_handler = MIMICDataHandler()
-		self.visualizer = MIMICVisualizer()
-		# self._init_session_state() # Call moved to main execution
-	# Methods will be moved here later
-	def run(self):
-		pass # Implementation later
+		self.visualizer   = MIMICVisualizer()
+		self.init_session_state() # Call moved to main execution
 
+	@staticmethod
+	def init_session_state():
+		""" Function to initialize session state """
 
-# Main application
-def main():
-	# Sidebar inputs
-	st.sidebar.markdown("## Dataset Configuration")
-
-	visualizer = MIMICVisualizer()
-
-	# MIMIC-IV path input
-	mimic_path = st.sidebar.text_input(
-		"MIMIC-IV Dataset Path",
-		value=st.session_state.mimic_path,
-		help="Enter the path to your local MIMIC-IV v3.1 dataset"
-	)
-
-	# Update mimic_path in session state
-	st.session_state.mimic_path = mimic_path
-
-	# Scan button
-	if st.sidebar.button("Scan MIMIC-IV Directory"):
-		if not mimic_path or mimic_path == "/path/to/mimic-iv-3.1":
-			st.sidebar.error("Please enter a valid MIMIC-IV dataset path")
-		else:
-			# Scan the directory structure
-			data_handler = MIMICDataHandler()
-			available_tables, file_paths, file_sizes, table_display_names = data_handler.scan_mimic_directory(mimic_path)
-
-			if available_tables:
-				st.session_state.available_tables = available_tables
-				st.session_state.file_paths = file_paths
-				st.session_state.file_sizes = file_sizes
-				st.session_state.table_display_names = table_display_names
-				st.sidebar.success(f"Found {sum(len(tables) for tables in available_tables.values())} tables in {len(available_tables)} modules")
-			else:
-				st.sidebar.error("No MIMIC-IV data found in the specified path")
-
-	# Module and table selection (only show if available_tables is populated)
-	if st.session_state.available_tables:
-		# Module selection
-		module = st.sidebar.selectbox(
-			"Select Module",
-			list(st.session_state.available_tables.keys()),
-			help="Select which MIMIC-IV module to explore"
+		# Set page configuration
+		st.set_page_config(
+			page_title="MIMIC-IV Dashboard",
+			page_icon="🏥",
+			layout="wide",
+			initial_sidebar_state="expanded"
 		)
 
-		# Update selected module
-		st.session_state.selected_module = module
+		# Custom CSS
+		st.markdown("""
+		<style>
+			.main-header {
+				font-size: 2.5rem;
+				color: #4682B4;
+				text-align: center;
+			}
+			.sub-header {
+				font-size: 1.5rem;
+				color: #4682B4;
+			}
+			.info-box {
+				background-color: #F0F8FF;
+				padding: 1rem;
+				border-radius: 0.5rem;
+				margin-bottom: 1rem;
+			}
+			.stProgress .st-bo {
+				background-color: #4682B4;
+			}
+		</style>
+		""", unsafe_allow_html=True)
 
-		# Table selection based on selected module
-		if module in st.session_state.available_tables:
-			# Create a list of table display names for the dropdown
-			table_options = st.session_state.available_tables[module]
-			table_display_options = [st.session_state.table_display_names.get((module, table), table) for table in table_options]
+		# Initialize session state
+		if 'loader' not in st.session_state:
+			st.session_state.loader = None
+		if 'datasets' not in st.session_state:
+			st.session_state.datasets = {}
+		if 'selected_module' not in st.session_state:
+			st.session_state.selected_module = None
+		if 'selected_table' not in st.session_state:
+			st.session_state.selected_table = None
+		if 'df' not in st.session_state:
+			st.session_state.df = None
+		if 'sample_size' not in st.session_state:
+			st.session_state.sample_size = DEFAULT_SAMPLE_SIZE
+		if 'available_tables' not in st.session_state:
+			st.session_state.available_tables = {}
+		if 'file_paths' not in st.session_state:
+			st.session_state.file_paths = {}
+		if 'file_sizes' not in st.session_state:
+			st.session_state.file_sizes = {}
+		if 'table_display_names' not in st.session_state:
+			st.session_state.table_display_names = {}
+		if 'current_file_path' not in st.session_state:
+			st.session_state.current_file_path = None
+		if 'mimic_path' not in st.session_state:
+			st.session_state.mimic_path = DEFAULT_MIMIC_PATH
 
-			# Create a mapping from display name back to actual table name
-			display_to_table = {display: table for table, display in zip(table_options, table_display_options)}
 
-			# Show the dropdown with display names
-			selected_display = st.sidebar.selectbox(
-				"Select Table",
-				table_display_options,
-				help="Select which table to load (file size shown in parentheses)"
+	# Methods will be moved here later
+	def run(self):
+		# Display the sidebar
+		self._display_sidebar()
+
+		# Call the method to display the main content
+		self._display_main_content()
+
+	def _display_sidebar(self):
+		"""Handles the display and logic of the sidebar components."""
+		st.sidebar.markdown("## Dataset Configuration")
+
+		# MIMIC-IV path input
+		mimic_path = st.sidebar.text_input( "MIMIC-IV Dataset Path",
+			value=st.session_state.mimic_path,
+			help="Enter the path to your local MIMIC-IV v3.1 dataset" )
+
+		# Update mimic_path in session state
+		st.session_state.mimic_path = mimic_path
+
+		# Scan button
+		if st.sidebar.button("Scan MIMIC-IV Directory"):
+			if not mimic_path or mimic_path == "/path/to/mimic-iv-3.1":
+				st.sidebar.error("Please enter a valid MIMIC-IV dataset path")
+			else:
+				# Scan the directory structure
+				available_tables, file_paths, file_sizes, table_display_names = self.data_handler.scan_mimic_directory(mimic_path)
+
+				if available_tables:
+					st.session_state.available_tables = available_tables
+					st.session_state.file_paths = file_paths
+					st.session_state.file_sizes = file_sizes
+					st.session_state.table_display_names = table_display_names
+					st.sidebar.success(f"Found {sum(len(tables) for tables in available_tables.values())} tables in {len(available_tables)} modules")
+				else:
+					st.sidebar.error("No MIMIC-IV data found in the specified path")
+
+		# Module and table selection (only show if available_tables is populated)
+		if st.session_state.available_tables:
+			# Module selection
+			module = st.sidebar.selectbox(
+				"Select Module",
+				list(st.session_state.available_tables.keys()),
+				help="Select which MIMIC-IV module to explore"
 			)
 
-			# Get the actual table name from the selected display name
-			table = display_to_table[selected_display]
+			# Update selected module
+			st.session_state.selected_module = module
 
-			# Update selected table
-			st.session_state.selected_table = table
+			# Table selection based on selected module
+			if module in st.session_state.available_tables:
+				# Create a list of table display names for the dropdown
+				table_options = st.session_state.available_tables[module]
+				table_display_options = [st.session_state.table_display_names.get((module, table), table) for table in table_options]
 
-			# Show table info
-			data_handler = MIMICDataHandler()
-			table_info = data_handler.get_table_info(module, table)
-			st.sidebar.info(table_info)
+				# Create a mapping from display name back to actual table name
+				display_to_table = {display: table for table, display in zip(table_options, table_display_options)}
 
-			# Advanced options
-			with st.sidebar.expander("Advanced Options"):
-				encoding = st.selectbox("Encoding", ["latin-1", "utf-8"], index=0)
-				st.session_state.sample_size = st.number_input("Sample Size", 100, 10000, 1000, 100)
-
-			# Load button
-			if st.sidebar.button("Load Table"):
-				file_path = st.session_state.file_paths.get((module, table))
-				if file_path:
-					st.session_state.current_file_path = file_path
-					df = data_handler.load_mimic_table(
-						file_path=file_path,
-						sample_size=st.session_state.sample_size,
-						encoding=encoding
-					)
-
-					if df is not None:
-						st.session_state.df = df
-
-	# Main content area
-	if st.session_state.df is not None:
-		# Dataset info
-		st.markdown("<h2 class='sub-header'>Dataset Information</h2>", unsafe_allow_html=True)
-		st.markdown(f"<div class='info-box'>", unsafe_allow_html=True)
-		st.markdown(f"**Module:** {st.session_state.selected_module}")
-		st.markdown(f"**Table:** {st.session_state.selected_table}")
-		st.markdown(f"**File:** {os.path.basename(st.session_state.current_file_path)}")
-
-		# Get file size and format it
-		file_size_mb = st.session_state.file_sizes.get((st.session_state.selected_module, st.session_state.selected_table), 0)
-		if file_size_mb < 1:
-			size_str = f"{file_size_mb:.2f} KB"
-		elif file_size_mb < 1000:
-			size_str = f"{file_size_mb:.2f} MB"
-		else:
-			size_str = f"{file_size_mb/1000:.2f} GB"
-
-		st.markdown(f"**File Size:** {size_str}")
-		st.markdown(f"**Sample Size:** {min(len(st.session_state.df), st.session_state.sample_size)} rows out of {len(st.session_state.df)}")
-		st.markdown("</div>", unsafe_allow_html=True)
-
-		# Data preview
-		visualizer.display_data_preview(st.session_state.df)
-
-		# Dataset statistics
-		visualizer.display_dataset_statistics(st.session_state.df)
-
-		# Data visualization
-		visualizer.display_visualizations(st.session_state.df)
-
-		# Export options
-		st.markdown("<h2 class='sub-header'>Export Options</h2>", unsafe_allow_html=True)
-		col1, col2 = st.columns(2)
-
-		with col1:
-			if st.button("Export to CSV"):
-				csv = st.session_state.df.to_csv(index=False)
-				st.download_button(
-					label="Download CSV",
-					data=csv,
-					file_name=f"mimic_iv_{st.session_state.selected_module}_{st.session_state.selected_table}.csv",
-					mime="text/csv"
+				# Show the dropdown with display names
+				selected_display = st.sidebar.selectbox(
+					"Select Table",
+					table_display_options,
+					help="Select which table to load (file size shown in parentheses)"
 				)
 
-		with col2:
-			if st.button("Convert to Parquet"):
-				data_handler = MIMICDataHandler()
-				try:
-					# Create parquet directory if it doesn't exist
-					parquet_dir = os.path.join(os.path.dirname(st.session_state.current_file_path), 'parquet_files')
-					os.makedirs(parquet_dir, exist_ok=True)
+				# Get the actual table name from the selected display name
+				table = display_to_table[selected_display]
 
-					# Define parquet file path
-					parquet_file = os.path.join(parquet_dir, f"{st.session_state.selected_table}.parquet")
+				# Update selected table
+				st.session_state.selected_table = table
 
-					# Convert to parquet
-					table = pa.Table.from_pandas(st.session_state.df)
-					pq.write_table(table, parquet_file)
+				# Show table info
+				table_info = self.data_handler.get_table_info(module, table)
+				st.sidebar.info(table_info)
 
-					st.success(f"Dataset converted to Parquet format at {parquet_file}")
-				except Exception as e:
-					st.error(f"Error converting to Parquet: {str(e)}")
-	else:
-		# Welcome message when no data is loaded
-		st.markdown("""
-		<div class='info-box'>
-		<h2 class='sub-header'>Welcome to the MIMIC-IV Dashboard</h2>
-		<p>This dashboard allows you to explore the MIMIC-IV dataset directly from the CSV/CSV.GZ files.</p>
-		<p>To get started:</p>
-		<ol>
-			<li>Enter the path to your local MIMIC-IV v3.1 dataset in the sidebar</li>
-			<li>Click "Scan MIMIC-IV Directory" to detect available tables</li>
-			<li>Select a module and table to explore</li>
-			<li>Configure advanced options if needed</li>
-			<li>Click "Load Table" to begin</li>
-		</ol>
-		<p>Note: You need to have access to the MIMIC-IV dataset and have it downloaded locally.</p>
-		</div>
-		""", unsafe_allow_html=True)
+				# Advanced options
+				with st.sidebar.expander("Advanced Options"):
+					encoding = st.selectbox("Encoding", ["latin-1", "utf-8"], index=0)
+					st.session_state.sample_size = st.number_input("Sample Size", 100, 10000, 1000, 100)
 
-		# About MIMIC-IV
-		st.markdown("""
-		<h2 class='sub-header'>About MIMIC-IV</h2>
-		<div class='info-box'>
-		<p>MIMIC-IV is a large, freely-available database comprising de-identified health-related data associated with patients who stayed in critical care units at the Beth Israel Deaconess Medical Center between 2008 - 2019.</p>
-		<p>The database is organized into two main modules:</p>
-		<ul>
-			<li><strong>Hospital (hosp)</strong>: Contains hospital-wide data including admissions, patients, lab tests, diagnoses, etc.</li>
-			<li><strong>ICU (icu)</strong>: Contains ICU-specific data including vital signs, medications, procedures, etc.</li>
-		</ul>
-		<p>Key tables include:</p>
-		<ul>
-			<li><strong>patients.csv</strong>: Patient demographic data</li>
-			<li><strong>admissions.csv</strong>: Hospital admission information</li>
-			<li><strong>labevents.csv</strong>: Laboratory measurements</li>
-			<li><strong>chartevents.csv</strong>: Patient charting data (vital signs, etc.)</li>
-			<li><strong>icustays.csv</strong>: ICU stay information</li>
-		</ul>
-		<p>For more information, visit <a href="https://physionet.org/content/mimiciv/3.1/">MIMIC-IV on PhysioNet</a>.</p>
-		</div>
-		""", unsafe_allow_html=True)
+				# Load button
+				if st.sidebar.button("Load Table"):
+					file_path = st.session_state.file_paths.get((module, table))
+					if file_path:
+						st.session_state.current_file_path = file_path
+						df = self.data_handler.load_mimic_table( file_path=file_path, sample_size=st.session_state.sample_size, encoding=encoding )
+
+						if df is not None:
+							st.session_state.df = df
+
+	def _display_main_content(self):
+		"""Handles the display of the main content area based on the loaded dataset."""
+		# Main content area
+		if st.session_state.df is not None:
+			# Dataset info
+			st.markdown("<h2 class='sub-header'>Dataset Information</h2>", unsafe_allow_html=True)
+			st.markdown(f"<div class='info-box'>", unsafe_allow_html=True)
+			st.markdown(f"**Module:** {st.session_state.selected_module}")
+			st.markdown(f"**Table:** {st.session_state.selected_table}")
+			st.markdown(f"**File:** {os.path.basename(st.session_state.current_file_path)}")
+
+			# Get file size and format it
+			file_size_mb = st.session_state.file_sizes.get((st.session_state.selected_module, st.session_state.selected_table), 0)
+			if file_size_mb < 1:
+				size_str = f"{file_size_mb:.2f} KB"
+			elif file_size_mb < 1000:
+				size_str = f"{file_size_mb:.2f} MB"
+			else:
+				size_str = f"{file_size_mb/1000:.2f} GB"
+
+			st.markdown(f"**File Size:** {size_str}")
+			st.markdown(f"**Sample Size:** {min(len(st.session_state.df), st.session_state.sample_size)} rows out of {len(st.session_state.df)}") # TODO: Need total row count
+			st.markdown("</div>", unsafe_allow_html=True)
+
+			# Data preview
+			self.visualizer.display_data_preview(st.session_state.df)
+
+			# Dataset statistics
+			self.visualizer.display_dataset_statistics(st.session_state.df)
+
+			# Data visualization
+			self.visualizer.display_visualizations(st.session_state.df)
+
+			# Export options
+			st.markdown("<h2 class='sub-header'>Export Options</h2>", unsafe_allow_html=True)
+			col1, col2 = st.columns(2)
+
+			with col1:
+				if st.button("Export to CSV"):
+					csv = st.session_state.df.to_csv(index=False)
+					st.download_button(
+						label="Download CSV",
+						data=csv,
+						file_name=f"mimic_iv_{st.session_state.selected_module}_{st.session_state.selected_table}.csv",
+						mime="text/csv"
+					)
+
+			with col2:
+				if st.button("Convert to Parquet"):
+					try:
+						# Create parquet directory if it doesn't exist
+						parquet_dir = os.path.join(os.path.dirname(st.session_state.current_file_path), 'parquet_files')
+						os.makedirs(parquet_dir, exist_ok=True)
+
+						# Define parquet file path
+						parquet_file = os.path.join(parquet_dir, f"{st.session_state.selected_table}.parquet")
+
+						# Convert to parquet
+						table = pa.Table.from_pandas(st.session_state.df)
+						pq.write_table(table, parquet_file)
+
+						st.success(f"Dataset converted to Parquet format at {parquet_file}")
+					except Exception as e:
+						st.error(f"Error converting to Parquet: {str(e)}")
+		else:
+			# Welcome message when no data is loaded
+			st.markdown("""
+			<div class='info-box'>
+			<h2 class='sub-header'>Welcome to the MIMIC-IV Dashboard</h2>
+			<p>This dashboard allows you to explore the MIMIC-IV dataset directly from the CSV/CSV.GZ files.</p>
+			<p>To get started:</p>
+			<ol>
+				<li>Enter the path to your local MIMIC-IV v3.1 dataset in the sidebar</li>
+				<li>Click "Scan MIMIC-IV Directory" to detect available tables</li>
+				<li>Select a module and table to explore</li>
+				<li>Configure advanced options if needed</li>
+				<li>Click "Load Table" to begin</li>
+			</ol>
+			<p>Note: You need to have access to the MIMIC-IV dataset and have it downloaded locally.</p>
+			</div>
+			""", unsafe_allow_html=True)
+
+			# About MIMIC-IV
+			st.markdown("""
+			<h2 class='sub-header'>About MIMIC-IV</h2>
+			<div class='info-box'>
+			<p>MIMIC-IV is a large, freely-available database comprising de-identified health-related data associated with patients who stayed in critical care units at the Beth Israel Deaconess Medical Center between 2008 - 2019.</p>
+			<p>The database is organized into two main modules:</p>
+			<ul>
+				<li><strong>Hospital (hosp)</strong>: Contains hospital-wide data including admissions, patients, lab tests, diagnoses, etc.</li>
+				<li><strong>ICU (icu)</strong>: Contains ICU-specific data including vital signs, medications, procedures, etc.</li>
+			</ul>
+			<p>Key tables include:</p>
+			<ul>
+				<li><strong>patients.csv</strong>: Patient demographic data</li>
+				<li><strong>admissions.csv</strong>: Hospital admission information</li>
+				<li><strong>labevents.csv</strong>: Laboratory measurements</li>
+				<li><strong>chartevents.csv</strong>: Patient charting data (vital signs, etc.)</li>
+				<li><strong>icustays.csv</strong>: ICU stay information</li>
+			</ul>
+			<p>For more information, visit <a href="https://physionet.org/content/mimiciv/3.1/">MIMIC-IV on PhysioNet</a>.</p>
+			</div>
+			""", unsafe_allow_html=True)
+
 
 if __name__ == "__main__":
-	main()
+    app = MIMICDashboardApp()
+    app.run()
