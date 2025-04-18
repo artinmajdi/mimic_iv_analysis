@@ -80,7 +80,7 @@ EXTRA_REQUIRES = {
 }
 
 # Read requirements
-requirements = read_requirements('setup_config/requirements.txt')
+requirements = read_requirements('requirements.txt')
 
 # Read long description from README
 long_description = read_file('README.md')

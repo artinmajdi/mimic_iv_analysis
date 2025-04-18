@@ -10,27 +10,19 @@ import sys
 import subprocess
 from typing import List, Tuple
 
-def find_dashboard_apps(src_dir: str) -> List[Tuple[str, str]]:
+def find_dashboard_apps(visualization_dir: str) -> List[Tuple[str, str]]:
     """
-    Find all app.py files in subdirectories of src_dir.
+    Find all files starting with 'app' in the visualization_dir.
     Returns a list of tuples (dashboard_name, app_path).
     """
     dashboard_apps = []
-
-    # Skip these directories and files
     skip_items = {'.DS_Store', '__pycache__', '__init__.py'}
-
-    for item in os.listdir(src_dir):
+    for item in os.listdir(visualization_dir):
         if item in skip_items:
             continue
-
-        item_path = os.path.join(src_dir, item)
-        if os.path.isdir(item_path):
-            # Look for app.py in this directory
-            potential_app = os.path.join(item_path, 'app.py')
-            if os.path.isfile(potential_app):
-                dashboard_apps.append((item, potential_app))
-
+        if item.startswith('app') and item.endswith('.py'):
+            dashboard_name = item.replace('.py', '')
+            dashboard_apps.append((dashboard_name, os.path.join(visualization_dir, item)))
     return dashboard_apps
 
 def select_dashboard(dashboard_apps: List[Tuple[str, str]]) -> Tuple[str, str]:
@@ -60,7 +52,7 @@ def main():
     # Get the project root directory (one level up from scripts directory)
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
-    src_dir = os.path.join(project_root, "src")
+    visualization_dir = os.path.join(project_root, 'src', 'visualization')
 
     # Make sure the project root is in the Python path
     if project_root not in sys.path:
@@ -73,7 +65,7 @@ def main():
     print(f"Python version: {sys.version}")
 
     # Find available dashboards
-    dashboard_apps = find_dashboard_apps(src_dir)
+    dashboard_apps = find_dashboard_apps(visualization_dir)
 
     # Let user select a dashboard
     selected_name, app_path = select_dashboard(dashboard_apps)

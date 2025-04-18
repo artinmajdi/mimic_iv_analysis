@@ -11,6 +11,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import streamlit as st
 from datasets import load_dataset
+import datasets
 import dask.dataframe as dd
 
 
@@ -946,12 +947,12 @@ class HuggingFaceMIMICLoader:
         ]
 
     def load_dataset(self,
-                     task: str,
-                     encoding: str = 'latin-1',
-                     generate_cohort: bool = False,
-                     val_size: float = 0.2,
-                     split: Optional[str] = None,
-                     streaming: bool = False) -> Union[datasets.Dataset, datasets.DatasetDict]:
+                    task           : str,
+                    encoding       : str = 'latin-1',
+                    generate_cohort: bool = False,
+                    val_size       : float = 0.2,
+                    split          : Optional[str] = None,
+                    streaming      : bool = False) -> Union[datasets.Dataset, datasets.DatasetDict]:
         """Load a specific task dataset from MIMIC-IV using Hugging Face datasets.
 
         Args:

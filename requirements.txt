@@ -1,6 +1,8 @@
 # Core scientific computing
 numpy
 pandas
+dask
+pyarrow
 scipy
 scikit-learn
 statsmodels
@@ -19,21 +21,22 @@ tensorflow
 xgboost
 shap
 lifelines  # Survival analysis
-networkx    # Network analysis
-mlxtend    # ML extensions
+networkx  # Network analysis
+mlxtend  # ML extensions
 umap-learn
+# pyhealth  # Healthcare machine learning library
 
 # Data processing
-pyarrow
-dask
 psycopg2-binary  # PostgreSQL connection for MIMIC-IV
+datasets  # Hugging Face datasets library
+transformers  # Required for some HuggingFace functionality
 
 # Utilities
 tqdm
 python-dotenv
 pyyaml
 joblib
-watchdog    # File system monitoring
+watchdog  # File system monitoring
 
 # Development tools
 pytest
