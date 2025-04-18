@@ -1,83 +1,80 @@
-import streamlit as st
-import os
-import pandas as pd
-import numpy as np
-from pathlib import Path
-import csv
-
-# Helper to load CSV or CSV.GZ files efficiently using pandas chunking
-# Usage: df = load_csv_auto(path)
-def load_csv_auto(path, chunk_size=100000):
-    """
-    Loads a CSV or CSV.GZ file efficiently using pandas chunking for large files.
-    Compatible with pandas 1.5.3 and PyHealth requirements.
-
-    Args:
-        path (str): Path to the CSV/CSV.GZ file.
-        chunk_size (int): Number of rows to read at a time for large files.
-    Returns:
-        DataFrame (pandas)
-    """
-    try:
-        # Check file size to determine approach
-        size_mb = os.path.getsize(path) / (1024*1024)
-
-        # For small files (< 500MB), use standard pandas
-        if size_mb < 500:
-            return pd.read_csv(path)
-
-        # For large files, use pandas chunking
-        print(f"Loading large file ({size_mb:.1f} MB) with chunking: {Path(path).name}")
-
-        # Use pandas chunking for large files
-        chunks = []
-        for i, chunk in enumerate(pd.read_csv(path, chunksize=chunk_size)):
-            chunks.append(chunk)
-            # Progress indicator every 10 chunks
-            if (i+1) % 10 == 0:
-                print(f"Read {(i+1) * chunk_size:,} rows from {Path(path).name}")
-
-        # Combine chunks
-        if chunks:
-            return pd.concat(chunks, ignore_index=True)
-        return None
-
-    except Exception as e:
-        print(f"Error loading {path}: {e}")
-        return None
-
-# Count rows in a CSV file without loading the whole file
-def count_csv_rows(filepath):
-    """Count rows in a CSV file without loading it into memory"""
-    try:
-        with open(filepath, 'r') as f:
-            reader = csv.reader(f)
-            # Skip header
-            next(reader, None)
-            count = sum(1 for _ in reader)
-        return count
-    except Exception as e:
-        print(f"Error counting rows in {filepath}: {e}")
-        return None
-
-
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import os
-import plotly.express as px
-import plotly.graph_objects as go
-from pathlib import Path
+# Standard library imports
 import json
-import time
+import os
 from datetime import datetime
 
+# Third-party imports
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+
 # PyHealth imports
-from pyhealth.datasets import MIMIC4Dataset
-from pyhealth.tasks import drug_recommendation_mimic4_fn, mortality_prediction_mimic4_fn, readmission_prediction_mimic4_fn, length_of_stay_prediction_mimic4_fn
-from pyhealth.datasets import split_by_patient, get_dataloader
-from pyhealth.models import Transformer, RETAIN, RNN, MLP, CNN
-from pyhealth.metrics import binary_metrics_fn, multiclass_metrics_fn, multilabel_metrics_fn
+from pyhealth.data import Event
+from pyhealth.datasets import MIMIC4Dataset, get_dataloader, split_by_patient
+from pyhealth.metrics import (
+    binary_metrics_fn,
+    multiclass_metrics_fn,
+    multilabel_metrics_fn,
+)
+from pyhealth.models import CNN, MLP, RETAIN, RNN, Transformer
+from pyhealth.tasks import (
+    drug_recommendation_mimic4_fn,
+    length_of_stay_prediction_mimic4_fn,
+    mortality_prediction_mimic4_fn,
+    readmission_prediction_mimic4_fn,
+)
+
+# Extended dataset to support generic loading of additional tables
+class ExtendedMIMIC4Dataset(MIMIC4Dataset):
+    def __init__(self, root, tables, code_mapping=None, dev=False, refresh_cache=False):
+        # root should point to hosp/ directory
+        super().__init__(root=root, tables=tables, code_mapping=code_mapping, dev=dev, refresh_cache=refresh_cache)
+        # store full dataset root (parent of hosp/)
+        self.full_root = os.path.dirname(root)
+        # container for extra table DataFrames
+        self.extra_tables = {}
+
+    def parse_tables(self):
+        # First parse basic info (patients & admissions)
+        patients = self.parse_basic_info({})
+        # define which tables go to hosp and icu
+        hosp_tables = {
+            'admissions', 'patients', 'transfers', 'diagnoses_icd',
+            'procedures_icd', 'prescriptions', 'labevents', 'd_labitems',
+            'microbiologyevents', 'pharmacy', 'poe', 'poe_detail', 'services'
+        }
+        icu_tables = {
+            'icustays', 'chartevents', 'd_items', 'inputevents',
+            'outputevents', 'procedureevents', 'datetimeevents', 'ingredientevents', 'caregiver'
+        }
+        # loop through requested tables
+        for t in self.tables:
+            base = t.lower().rstrip('.csv').rstrip('.gz')
+            # if a PyHealth parser exists, use it
+            parse_fn = getattr(self, f"parse_{base}", None)
+            if callable(parse_fn):
+                patients = parse_fn(patients)
+            else:
+                # generic load into extra_tables
+                if base in hosp_tables:
+                    path = os.path.join(self.root, f"{base}.csv.gz")
+                    if not os.path.exists(path):
+                        path = os.path.join(self.root, f"{base}.csv")
+                elif base in icu_tables:
+                    path = os.path.join(self.full_root, 'icu', f"{base}.csv.gz")
+                    if not os.path.exists(path):
+                        path = os.path.join(self.full_root, 'icu', f"{base}.csv")
+                else:
+                    # unknown table, skip
+                    continue
+                try:
+                    df = pd.read_csv(path)
+                    self.extra_tables[base] = df
+                except Exception as e:
+                    print(f"Error loading extra table {base}: {e}")
+        return patients
 
 # Set page configuration
 st.set_page_config(
@@ -214,9 +211,11 @@ def load_mimic_data(root_path, tables, code_mapping=None, dev=False):
                 st.error("No valid tables found to load")
                 return None
 
-            # Load dataset using PyHealth's MIMIC4Dataset
-            dataset = MIMIC4Dataset(
-                root=root_path,  # PyHealth knows about the hosp/ and icu/ structure
+            # resolved_tables may include any v3.1 table; Extended subclass will store extras
+
+            # Load dataset using PyHealth's MIMIC4Dataset (hospital CSVs live under hosp/)
+            dataset = ExtendedMIMIC4Dataset(
+                root=hosp_dir,  # hosp/ directory for core CSVs; ExtendedMIMC4Dataset handles extras
                 tables=resolved_tables,
                 code_mapping=code_mapping,
                 dev=dev
@@ -235,15 +234,27 @@ def display_dataset_info(dataset):
 
         # Basic dataset statistics
         st.subheader("Dataset Statistics")
-        stats = dataset.stat()
+        # stats = dataset.stat() # This returns a string, not a dict
 
-        col1, col2, col3 = st.columns(3)
+        # Calculate stats directly
+        num_patients = len(dataset.patients)
+        num_visits = sum(len(p) for p in dataset.patients.values())
+        # Note: Calculating total events requires iterating all visits/events and might be slow
+        # num_events = sum(len(v.get_event_list(table))
+        #                  for p in dataset.patients.values()
+        #                  for v in p
+        #                  for table in v.available_tables)
+
+        col1, col2 = st.columns(2) # Adjusted columns as event count is intensive
         with col1:
-            st.metric("Number of Patients", stats["patient_num"])
+            # st.metric("Number of Patients", stats["patient_num"])
+            st.metric("Number of Patients", num_patients)
         with col2:
-            st.metric("Number of Visits", stats["visit_num"])
-        with col3:
-            st.metric("Total Events", stats["event_num"])
+            # st.metric("Number of Visits", stats["visit_num"])
+            st.metric("Number of Visits", num_visits)
+        # with col3:
+            # st.metric("Total Events", stats["event_num"])
+            # st.metric("Total Events", num_events) # Omitted for performance
 
         # Display sample patients
         st.subheader("Sample Patient Data")
@@ -261,12 +272,12 @@ def display_dataset_info(dataset):
                     st.write(f"- Discharge Time: {visit.discharge_time}")
 
                     # Events summary
-                    event_types = visit.get_event_names()
+                    event_types = list(visit.event_list_dict.keys())
                     st.write(f"- Event Types: {', '.join(event_types)}")
 
                     # Show a sample of events for each type
                     for event_type in event_types:
-                        events = visit.get_event_from_type(event_type)
+                        events = visit.get_event_list(event_type)
                         if events and len(events) > 0:
                             with st.expander(f"Sample {event_type} events"):
                                 event_df = pd.DataFrame([e.__dict__ for e in events[:5]])
@@ -520,7 +531,7 @@ elif app_mode == "Data Exploration":
 
     exploration_option = st.radio(
         "Select what to explore:",
-        ["Patient Demographics", "Diagnoses", "Procedures", "Medications", "Lab Tests", "ICU Stays"]
+        ["Patient Demographics", "Diagnoses", "Procedures", "Medications", "Lab Tests", "ICU Stays", "Extra Tables"]
     )
 
     # Extract and display data based on selection
@@ -804,6 +815,21 @@ elif app_mode == "Data Exploration":
                 st.plotly_chart(fig)
         else:
             st.info("No ICU stay data available. Make sure you've loaded the icustays table.")
+
+    elif exploration_option == "Extra Tables":
+        st.subheader("Extra Tables")
+        # Show any tables loaded in ExtendedMIMIC4Dataset.extra_tables
+        extra = getattr(dataset, 'extra_tables', None)
+        if extra and len(extra) > 0:
+            table_name = st.selectbox("Select table to view", list(extra.keys()))
+            df = extra.get(table_name)
+            if df is not None:
+                st.write(f"Dataset shape: {df.shape}")
+                st.dataframe(df.head(20))
+            else:
+                st.info("No data available for this table.")
+        else:
+            st.info("No extra tables loaded. Please select additional tables in Data Loading.")
 
 # Predictive Tasks page
 elif app_mode == "Predictive Tasks":
@@ -1294,12 +1320,12 @@ elif app_mode == "Patient Analytics":
                         st.markdown(f"**Length of Stay:** {los:.2f} days")
 
                 # Get event types for this visit
-                event_types = visit.get_event_names()
+                event_types = list(visit.event_list_dict.keys())
 
                 # Display events by type
                 for event_type in event_types:
                     with st.expander(f"{event_type.capitalize()} Events"):
-                        events = visit.get_event_from_type(event_type)
+                        events = visit.get_event_list(event_type)
 
                         if events:
                             # Convert events to dataframe
@@ -1570,7 +1596,6 @@ elif app_mode == "Patient Analytics":
                         <p><strong>Visit ID:</strong> {selected_visit_id}</p>
                         <p><strong>Admission Time:</strong> {visit.encounter_time if hasattr(visit, 'encounter_time') else "Unknown"}</p>
                         <p><strong>Discharge Time:</strong> {visit.discharge_time if hasattr(visit, 'discharge_time') else "Unknown"}</p>
-                        <p><strong>Length of Stay:</strong> {los_text}</p>
                     </div>
                     """, unsafe_allow_html=True)
 
