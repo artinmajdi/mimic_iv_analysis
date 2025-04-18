@@ -17,10 +17,10 @@ import logging
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 # Constants
-DEFAULT_MIMIC_PATH = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1"
+DEFAULT_MIMIC_PATH      = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1"
 LARGE_FILE_THRESHOLD_MB = 100
-DEFAULT_SAMPLE_SIZE = 1000
-RANDOM_STATE = 42
+DEFAULT_SAMPLE_SIZE     = 1000
+RANDOM_STATE            = 42
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
