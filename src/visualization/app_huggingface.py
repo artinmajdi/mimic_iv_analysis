@@ -11,6 +11,7 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 from typing import Dict, List, Optional, Tuple, Any
+import logging
 
 # Add the parent directory to the path to import from src
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -21,6 +22,8 @@ LARGE_FILE_THRESHOLD_MB = 100
 DEFAULT_SAMPLE_SIZE = 1000
 RANDOM_STATE = 42
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- Data Handling Class ---
 class MIMICDataHandler:
@@ -106,7 +109,7 @@ class MIMICDataHandler:
 					df = df.sample(sample_size, random_state=RANDOM_STATE)
 			return df
 		except Exception as e:
-			print(f"Error loading data from {os.path.basename(file_path)}: {str(e)}")
+			logging.error(f"Error loading data from {os.path.basename(file_path)}: {str(e)}")
 			return None
 
 	def get_table_info(self, module: str, table_name: str) -> str:
@@ -156,7 +159,7 @@ class MIMICDataHandler:
 			pq.write_table(table, parquet_file)
 			return parquet_file
 		except Exception as e:
-			print(f"Error converting {table_name} to Parquet: {str(e)}")
+			logging.error(f"Error converting {table_name} to Parquet: {str(e)}")
 			return None
 
 # --- Visualization Class (Placeholder) ---
@@ -197,7 +200,6 @@ class MIMICVisualizer:
 				st.error(f"Error generating column info: {e}")
 		else:
 			st.info("No data loaded to display statistics.")
-
 
 	# Function to display data preview (Original)
 	def display_data_preview(self, df: Optional[pd.DataFrame]):
@@ -259,47 +261,16 @@ class MIMICVisualizer:
 # --- Main Application Class (Placeholder) ---
 class MIMICDashboardApp:
 	def __init__(self):
+		logging.info("Initializing MIMICDashboardApp...")
 		self.data_handler = MIMICDataHandler()
-		self.visualizer   = MIMICVisualizer()
-		self.init_session_state() # Call moved to main execution
+		self.visualizer = MIMICVisualizer()
+		self.init_session_state()
+		logging.info("MIMICDashboardApp initialized.")
 
 	@staticmethod
 	def init_session_state():
 		""" Function to initialize session state """
-
-		# Set page configuration
-		st.set_page_config(
-			page_title="MIMIC-IV Dashboard",
-			page_icon="🏥",
-			layout="wide",
-			initial_sidebar_state="expanded"
-		)
-
-		# Custom CSS
-		st.markdown("""
-		<style>
-			.main-header {
-				font-size: 2.5rem;
-				color: #4682B4;
-				text-align: center;
-			}
-			.sub-header {
-				font-size: 1.5rem;
-				color: #4682B4;
-			}
-			.info-box {
-				background-color: #F0F8FF;
-				padding: 1rem;
-				border-radius: 0.5rem;
-				margin-bottom: 1rem;
-			}
-			.stProgress .st-bo {
-				background-color: #4682B4;
-			}
-		</style>
-		""", unsafe_allow_html=True)
-
-		# Initialize session state
+		logging.info("Initializing session state...")
 		if 'loader' not in st.session_state:
 			st.session_state.loader = None
 		if 'datasets' not in st.session_state:
@@ -324,15 +295,17 @@ class MIMICDashboardApp:
 			st.session_state.current_file_path = None
 		if 'mimic_path' not in st.session_state:
 			st.session_state.mimic_path = DEFAULT_MIMIC_PATH
+		logging.info("Session state initialized.")
 
-
-	# Methods will be moved here later
 	def run(self):
+		"""Run the main application loop."""
+		logging.info("Starting MIMICDashboardApp run...")
 		# Display the sidebar
 		self._display_sidebar()
 
 		# Call the method to display the main content
 		self._display_main_content()
+		logging.info("MIMICDashboardApp run finished.")
 
 	def _display_sidebar(self):
 		"""Handles the display and logic of the sidebar components."""
