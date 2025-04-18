@@ -1,35 +1,53 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
+# Standard library imports
 import os
 import sys
 import glob
-import warnings
+import logging
+import datetime
+import pickle
+from io import BytesIO
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+# Data processing imports
+import numpy as np
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+# Visualization imports
+import matplotlib.pyplot as plt
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from pathlib import Path
-import pyarrow as pa
-import pyarrow.parquet as pq
-from typing import Dict, List, Optional, Tuple, Any
-import logging
-import datetime
-import matplotlib.pyplot as plt
-import seaborn as sns
-from scipy import stats
-import json
+
+# Machine learning imports
+from scipy.cluster.hierarchy import dendrogram
+from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
+from sklearn.decomposition import LatentDirichletAllocation
+
+# Streamlit import
+import streamlit as st
+
+# Optional imports (importing separately for better error handling)
+try:
+	import umap
+except ImportError:
+	pass  # Handle missing umap import
 
 # Add the parent directory to the path to import from src
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
+
 # Constants
-DEFAULT_MIMIC_PATH      = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1"
+DEFAULT_MIMIC_PATH = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1"
 LARGE_FILE_THRESHOLD_MB = 100
-DEFAULT_SAMPLE_SIZE     = 1000
-RANDOM_STATE            = 42
+DEFAULT_SAMPLE_SIZE = 1000
+RANDOM_STATE = 42
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 
 # --- Data Handling Class ---
@@ -48,6 +66,7 @@ class MIMICDataHandler:
 			return f"({size_mb:.1f} MB)"
 		else:
 			return f"({size_mb / 1000:.1f} GB)"
+
 
 	def scan_mimic_directory(self, mimic_path: str) -> Tuple[Dict, Dict, Dict, Dict]:
 		"""Scans the MIMIC-IV directory structure and returns table info."""
@@ -118,6 +137,7 @@ class MIMICDataHandler:
 		except Exception as e:
 			logging.error(f"Error loading data from {os.path.basename(file_path)}: {str(e)}")
 			return None
+
 
 	def get_table_info(self, module: str, table_name: str) -> str:
 		"""Get descriptive information about a specific MIMIC-IV table."""
@@ -266,477 +286,6 @@ class MIMICVisualizer:
 					st.plotly_chart(fig, use_container_width=True)
 
 
-# --- NEW Feature Engineering Class ---
-class MIMICFeatureEngineer:
-	"""Handles feature engineering for MIMIC-IV data."""
-
-	def __init__(self):
-		pass
-
-	def detect_order_columns(self, df: pd.DataFrame) -> List[str]:
-		"""Detect columns likely to contain order information."""
-		order_columns = []
-
-		# Check column names that might represent orders
-		order_related_terms = [
-			'order', 'medication', 'drug', 'procedure', 'treatment',
-			'item', 'event', 'action', 'prescription', 'poe'
-		]
-
-		for col in df.columns:
-			col_lower = col.lower()
-			# Check if any order-related term is in column name
-			if any(term in col_lower for term in order_related_terms):
-				order_columns.append(col)
-			# Or if column has common order-related suffixes/prefixes
-			elif col_lower.endswith('_id') or col_lower.endswith('_type') or \
-				 col_lower.endswith('_name') or col_lower.startswith('order_'):
-				order_columns.append(col)
-
-		return order_columns
-
-	def detect_temporal_columns(self, df: pd.DataFrame) -> List[str]:
-		"""Detect columns containing temporal information."""
-		time_columns = []
-
-		# Check column names
-		time_related_terms = [
-			'time', 'date', 'datetime', 'timestamp', 'start', 'end',
-			'created', 'updated', 'admission', 'discharge'
-		]
-
-		for col in df.columns:
-			col_lower = col.lower()
-			if any(term in col_lower for term in time_related_terms):
-				# Check if column contains datetime-like values
-				if df[col].dtype == 'datetime64[ns]':
-					time_columns.append(col)
-				elif df[col].dtype == 'object':
-					# Try to detect if string column contains dates
-					sample = df[col].dropna().head(10).astype(str)
-					date_patterns = [
-						r'\d{4}-\d{2}-\d{2}',  # yyyy-mm-dd
-						r'\d{2}/\d{2}/\d{4}',  # mm/dd/yyyy
-						r'\d{4}/\d{2}/\d{2}',  # yyyy/mm/dd
-						r'\d{2}-\d{2}-\d{4}',  # mm-dd-yyyy
-					]
-
-					if any(sample.str.contains(pattern).any() for pattern in date_patterns):
-						time_columns.append(col)
-
-		return time_columns
-
-	def detect_patient_id_column(self, df: pd.DataFrame) -> Optional[str]:
-		"""Detect column likely to contain patient identifiers."""
-		# Common patient ID column names in MIMIC-IV
-		patient_id_candidates = [
-			'subject_id', 'patient_id', 'patientid', 'pat_id', 'patient'
-		]
-
-		for candidate in patient_id_candidates:
-			if candidate in df.columns:
-				return candidate
-
-		# If no exact match, look for columns with 'id' that might be patient IDs
-		id_columns = [col for col in df.columns if 'id' in col.lower()]
-		if id_columns:
-			# Choose the one that looks most like a patient ID based on cardinality and naming
-			for col in id_columns:
-				if df[col].nunique() > len(df) * 0.1:  # High cardinality
-					return col
-
-		return None
-
-	def create_order_frequency_matrix(self,
-										df: pd.DataFrame,
-										patient_id_col: str,
-										order_col: str,
-										normalize: bool = False,
-										top_n: int = 20) -> pd.DataFrame:
-		"""
-		Creates a matrix of order frequencies by patient.
-
-		Args:
-			df: DataFrame with order data
-			patient_id_col: Column containing patient IDs
-			order_col: Column containing order types/names
-			normalize: If True, normalize counts by patient
-			top_n: Maximum number of order types to include (for dimensionality reduction)
-
-		Returns:
-			DataFrame with patients as rows and order types as columns
-		"""
-		# Validate columns exist
-		if patient_id_col not in df.columns or order_col not in df.columns:
-			raise ValueError(f"Columns {patient_id_col} or {order_col} not found in DataFrame")
-
-		# Get the most common order types for dimensionality reduction
-		if top_n > 0:
-			top_orders = df[order_col].value_counts().head(top_n).index.tolist()
-			filtered_df = df[df[order_col].isin(top_orders)].copy()
-		else:
-			filtered_df = df.copy()
-
-		# Create a crosstab of patient IDs and order types
-		freq_matrix = pd.crosstab(
-			filtered_df[patient_id_col],
-			filtered_df[order_col]
-		)
-
-		# Normalize if requested
-		if normalize:
-			freq_matrix = freq_matrix.div(freq_matrix.sum(axis=1), axis=0)
-
-		return freq_matrix
-
-	def extract_temporal_order_sequences(self,
-									   df: pd.DataFrame,
-									   patient_id_col: str,
-									   order_col: str,
-									   time_col: str,
-									   max_sequence_length: int = 20) -> Dict[Any, List[str]]:
-		"""
-		Extracts temporal sequences of orders for each patient.
-
-		Args:
-			df: DataFrame with order data
-			patient_id_col: Column containing patient IDs
-			order_col: Column containing order types
-			time_col: Column containing timestamps
-			max_sequence_length: Maximum number of orders to include in each sequence
-
-		Returns:
-			Dictionary mapping patient IDs to lists of order sequences
-		"""
-		# Validate columns exist
-		if not all(col in df.columns for col in [patient_id_col, order_col, time_col]):
-			missing = [col for col in [patient_id_col, order_col, time_col] if col not in df.columns]
-			raise ValueError(f"Columns {missing} not found in DataFrame")
-
-		# Ensure time column is datetime
-		if df[time_col].dtype != 'datetime64[ns]':
-			try:
-				df = df.copy()
-				df[time_col] = pd.to_datetime(df[time_col])
-			except:
-				raise ValueError(f"Could not convert {time_col} to datetime format")
-
-		# Sort by patient ID and timestamp
-		sorted_df = df.sort_values([patient_id_col, time_col])
-
-		# Extract sequences
-		sequences = {}
-		for patient_id, group in sorted_df.groupby(patient_id_col):
-			# Get ordered sequence of orders
-			patient_sequence = group[order_col].tolist()
-
-			# Limit sequence length if needed
-			if max_sequence_length > 0 and len(patient_sequence) > max_sequence_length:
-				patient_sequence = patient_sequence[:max_sequence_length]
-
-			sequences[patient_id] = patient_sequence
-
-		return sequences
-
-	def create_order_timing_features(self,
-								   df: pd.DataFrame,
-								   patient_id_col: str,
-								   order_col: str,
-								   order_time_col: str,
-								   admission_time_col: str = None,
-								   discharge_time_col: str = None) -> pd.DataFrame:
-		"""
-		Creates features related to order timing.
-
-		Args:
-			df: DataFrame with order data
-			patient_id_col: Column containing patient IDs
-			order_col: Column containing order types
-			order_time_col: Column containing order timestamps
-			admission_time_col: Column containing admission timestamps (optional)
-			discharge_time_col: Column containing discharge timestamps (optional)
-
-		Returns:
-			DataFrame with timing features
-		"""
-		# Validate columns exist
-		required_cols = [patient_id_col, order_col, order_time_col]
-		if not all(col in df.columns for col in required_cols):
-			missing = [col for col in required_cols if col not in df.columns]
-			raise ValueError(f"Columns {missing} not found in DataFrame")
-
-		# Ensure time columns are datetime
-		df = df.copy()
-		time_cols = [order_time_col]
-		if admission_time_col:
-			time_cols.append(admission_time_col)
-		if discharge_time_col:
-			time_cols.append(discharge_time_col)
-
-		for col in time_cols:
-			if col in df.columns and df[col].dtype != 'datetime64[ns]':
-				try:
-					df[col] = pd.to_datetime(df[col])
-				except:
-					raise ValueError(f"Could not convert {col} to datetime format")
-
-		# Initialize results DataFrame
-		timing_features = pd.DataFrame()
-
-		# Process by patient
-		grouped = df.groupby(patient_id_col)
-
-		# Create base features list
-		features = {
-			'patient_id': [],
-			'total_orders': [],
-			'unique_order_types': [],
-			'first_order_time': [],
-			'last_order_time': [],
-			'order_span_hours': []
-		}
-
-		# Add admission-relative features if admission time is available
-		if admission_time_col and admission_time_col in df.columns:
-			features.update({
-				'time_to_first_order_hours': [],
-				'orders_in_first_24h': [],
-				'orders_in_first_48h': [],
-				'orders_in_first_72h': []
-			})
-
-		# Add discharge-relative features if discharge time is available
-		if discharge_time_col and discharge_time_col in df.columns:
-			features.update({
-				'time_from_last_order_to_discharge_hours': [],
-				'orders_in_last_24h': [],
-				'orders_in_last_48h': []
-			})
-
-		# Calculate features for each patient
-		for patient_id, patient_data in grouped:
-			features['patient_id'].append(patient_id)
-			features['total_orders'].append(len(patient_data))
-			features['unique_order_types'].append(patient_data[order_col].nunique())
-
-			# Sort orders by time
-			patient_data = patient_data.sort_values(order_time_col)
-
-			# Get first and last order times
-			first_order_time = patient_data[order_time_col].min()
-			last_order_time = patient_data[order_time_col].max()
-
-			features['first_order_time'].append(first_order_time)
-			features['last_order_time'].append(last_order_time)
-
-			# Calculate order span in hours
-			order_span_hours = (last_order_time - first_order_time).total_seconds() / 3600
-			features['order_span_hours'].append(order_span_hours)
-
-			# Calculate admission-related features
-			if admission_time_col and admission_time_col in df.columns:
-				# Get admission time for this patient (should be the same for all rows)
-				admission_time = patient_data[admission_time_col].iloc[0]
-
-				# Time from admission to first order
-				time_to_first_order = (first_order_time - admission_time).total_seconds() / 3600
-				features['time_to_first_order_hours'].append(time_to_first_order)
-
-				# Count orders in first 24/48/72 hours
-				orders_24h = patient_data[
-					patient_data[order_time_col] <= admission_time + pd.Timedelta(hours=24)
-				].shape[0]
-				features['orders_in_first_24h'].append(orders_24h)
-
-				orders_48h = patient_data[
-					patient_data[order_time_col] <= admission_time + pd.Timedelta(hours=48)
-				].shape[0]
-				features['orders_in_first_48h'].append(orders_48h)
-
-				orders_72h = patient_data[
-					patient_data[order_time_col] <= admission_time + pd.Timedelta(hours=72)
-				].shape[0]
-				features['orders_in_first_72h'].append(orders_72h)
-
-			# Calculate discharge-related features
-			if discharge_time_col and discharge_time_col in df.columns:
-				# Get discharge time for this patient
-				discharge_time = patient_data[discharge_time_col].iloc[0]
-
-				# Time from last order to discharge
-				time_to_discharge = (discharge_time - last_order_time).total_seconds() / 3600
-				features['time_from_last_order_to_discharge_hours'].append(time_to_discharge)
-
-				# Count orders in last 24/48 hours
-				orders_last_24h = patient_data[
-					patient_data[order_time_col] >= discharge_time - pd.Timedelta(hours=24)
-				].shape[0]
-				features['orders_in_last_24h'].append(orders_last_24h)
-
-				orders_last_48h = patient_data[
-					patient_data[order_time_col] >= discharge_time - pd.Timedelta(hours=48)
-				].shape[0]
-				features['orders_in_last_48h'].append(orders_last_48h)
-
-		# Create DataFrame from features
-		timing_features = pd.DataFrame(features)
-
-		return timing_features
-
-	def get_order_type_distributions(self,
-								   df: pd.DataFrame,
-								   patient_id_col: str,
-								   order_col: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
-		"""
-		Calculate order type distributions overall and by patient.
-
-		Args:
-			df: DataFrame with order data
-			patient_id_col: Column containing patient IDs
-			order_col: Column containing order types
-
-		Returns:
-			Tuple of (overall distribution, patient-level distribution)
-		"""
-		# Validate columns exist
-		if not all(col in df.columns for col in [patient_id_col, order_col]):
-			missing = [col for col in [patient_id_col, order_col] if col not in df.columns]
-			raise ValueError(f"Columns {missing} not found in DataFrame")
-
-		# Calculate overall distribution
-		overall_dist = df[order_col].value_counts(normalize=True).reset_index()
-		overall_dist.columns = [order_col, 'frequency']
-
-		# Calculate patient-level distribution
-		patient_dists = []
-
-		for patient_id, patient_data in df.groupby(patient_id_col):
-			# Get this patient's distribution
-			patient_dist = patient_data[order_col].value_counts(normalize=True)
-
-			# Convert to DataFrame and add patient ID
-			patient_dist_df = patient_dist.reset_index()
-			patient_dist_df.columns = [order_col, 'frequency']
-			patient_dist_df['patient_id'] = patient_id
-
-			patient_dists.append(patient_dist_df)
-
-		# Combine all patient distributions
-		if patient_dists:
-			patient_level_dist = pd.concat(patient_dists, ignore_index=True)
-		else:
-			patient_level_dist = pd.DataFrame(columns=[order_col, 'frequency', 'patient_id'])
-
-		return overall_dist, patient_level_dist
-
-	def calculate_order_transition_matrix(self,
-										sequences: Dict[Any, List[str]],
-										top_n: int = 20) -> pd.DataFrame:
-		"""
-		Calculate transition probabilities between different order types.
-
-		Args:
-			sequences: Dictionary of order sequences by patient
-			top_n: Limit to most common n order types
-
-		Returns:
-			DataFrame with transition probabilities
-		"""
-		# Collect all order types and their counts
-		all_orders = []
-		for sequence in sequences.values():
-			all_orders.extend(sequence)
-
-		# Get most common order types if needed
-		order_counts = pd.Series(all_orders).value_counts()
-		if top_n > 0 and len(order_counts) > top_n:
-			common_orders = order_counts.head(top_n).index.tolist()
-		else:
-			common_orders = order_counts.index.tolist()
-
-		# Initialize transition count matrix
-		transition_counts = pd.DataFrame(0,
-									   index=common_orders,
-									   columns=common_orders)
-
-		# Count transitions
-		for sequence in sequences.values():
-			# Filter to common orders
-			filtered_sequence = [order for order in sequence if order in common_orders]
-
-			# Count transitions
-			for i in range(len(filtered_sequence) - 1):
-				from_order = filtered_sequence[i]
-				to_order = filtered_sequence[i + 1]
-				transition_counts.loc[from_order, to_order] += 1
-
-		# Convert to probabilities
-		row_sums = transition_counts.sum(axis=1)
-		transition_probs = transition_counts.div(row_sums, axis=0).fillna(0)
-
-		return transition_probs
-
-	def save_features(self, features: Any, feature_type: str, base_path: str, format: str = 'csv') -> str:
-		"""
-		Save engineered features to file.
-
-		Args:
-			features: DataFrame or other data structure to save
-			feature_type: String identifier for the feature type
-			base_path: Directory to save in
-			format: File format ('csv', 'parquet', or 'json')
-
-		Returns:
-			Path to saved file
-		"""
-		# Create directory if it doesn't exist
-		features_dir = os.path.join(base_path, 'engineered_features')
-		os.makedirs(features_dir, exist_ok=True)
-
-		# Create timestamp for filename
-		timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-
-		# Base filename
-		filename = f"{feature_type}_{timestamp}"
-
-		# Save based on format
-		if format == 'csv':
-			# For DataFrames
-			if isinstance(features, pd.DataFrame):
-				filepath = os.path.join(features_dir, f"{filename}.csv")
-				features.to_csv(filepath, index=True)
-			else:
-				raise ValueError(f"Cannot save {type(features)} as CSV")
-
-		elif format == 'parquet':
-			# For DataFrames
-			if isinstance(features, pd.DataFrame):
-				filepath = os.path.join(features_dir, f"{filename}.parquet")
-				features.to_parquet(filepath, index=True)
-			else:
-				raise ValueError(f"Cannot save {type(features)} as Parquet")
-
-		elif format == 'json':
-			# For dictionaries or DataFrames
-			filepath = os.path.join(features_dir, f"{filename}.json")
-
-			if isinstance(features, pd.DataFrame):
-				# Convert DataFrame to JSON-compatible format
-				json_data = features.to_json(orient='records')
-				with open(filepath, 'w') as f:
-					f.write(json_data)
-			elif isinstance(features, dict):
-				# Save dict directly
-				with open(filepath, 'w') as f:
-					json.dump(features, f)
-			else:
-				raise ValueError(f"Cannot save {type(features)} as JSON")
-		else:
-			raise ValueError(f"Unsupported format: {format}")
-
-		return filepath
-
-
 # --- Main Application Class ---
 class MIMICDashboardApp:
 	def __init__(self):
@@ -744,6 +293,7 @@ class MIMICDashboardApp:
 		self.data_handler = MIMICDataHandler()
 		self.visualizer = MIMICVisualizer()
 		self.feature_engineer = MIMICFeatureEngineer()  # Initialize feature engineer
+		self.clustering_analyzer = MIMICClusteringAnalysis()  # Initialize clustering analyzer
 		self.init_session_state()
 		logging.info("MIMICDashboardApp initialized.")
 
@@ -797,6 +347,26 @@ class MIMICDashboardApp:
 			st.session_state.patient_order_dist = None
 		if 'transition_matrix' not in st.session_state:
 			st.session_state.transition_matrix = None
+
+		# Clustering states
+		if 'clustering_input_data' not in st.session_state:
+			st.session_state.clustering_input_data = None
+		if 'reduced_data' not in st.session_state:
+			st.session_state.reduced_data = None
+		if 'kmeans_labels' not in st.session_state:
+			st.session_state.kmeans_labels = None
+		if 'hierarchical_labels' not in st.session_state:
+			st.session_state.hierarchical_labels = None
+		if 'dbscan_labels' not in st.session_state:
+			st.session_state.dbscan_labels = None
+		if 'lda_results' not in st.session_state:
+			st.session_state.lda_results = None
+		if 'cluster_metrics' not in st.session_state:
+			st.session_state.cluster_metrics = {}
+		if 'optimal_k' not in st.session_state:
+			st.session_state.optimal_k = None
+		if 'optimal_eps' not in st.session_state:
+			st.session_state.optimal_eps = None
 
 		logging.info("Session state initialized.")
 
@@ -954,7 +524,12 @@ class MIMICDashboardApp:
 			st.markdown("</div>", unsafe_allow_html=True)
 
 			# Create tabs
-			tab1, tab2, tab3 = st.tabs(["Exploration & Visualization", "Feature Engineering", "Export Options"])
+			tab1, tab2, tab3, tab4 = st.tabs([
+				"Exploration & Visualization",
+				"Feature Engineering",
+				"Clustering Analysis",
+				"Export Options"
+			])
 
 			# Tab 1: Exploration & Visualization
 			with tab1:
@@ -971,8 +546,12 @@ class MIMICDashboardApp:
 			with tab2:
 				self._display_feature_engineering_tab()
 
-			# Tab 3: Export Options
+			# Tab 3: Clustering Analysis
 			with tab3:
+				self._display_clustering_analysis_tab()
+
+			# Tab 4: Export Options
+			with tab4:
 				st.markdown("<h2 class='sub-header'>Export Options</h2>", unsafe_allow_html=True)
 				col1, col2 = st.columns(2)
 
@@ -1109,24 +688,27 @@ class MIMICDashboardApp:
 			# Options
 			col1, col2, col3 = st.columns(3)
 			with col1:
-				normalize = st.checkbox("Normalize by Patient", value=False,
-										help="Convert frequencies to percentages of total orders per patient")
+				normalize = st.checkbox("Normalize by Patient", value=False, help="Convert frequencies to percentages of total orders per patient")
 			with col2:
-				top_n = st.number_input("Top N Order Types", min_value=0, max_value=100, value=20,
-										help="Limit to most frequent order types (0 = include all)")
+				top_n = st.number_input("Top N Order Types", min_value=0, max_value=100, value=20, help="Limit to most frequent order types (0 = include all)")
 
 			# Generate button
 			if st.button("Generate Order Frequency Matrix"):
 				try:
 					with st.spinner("Generating order frequency matrix..."):
 						freq_matrix = self.feature_engineer.create_order_frequency_matrix(
-							st.session_state.df,
-							patient_id_col,
-							order_col,
-							normalize,
-							top_n
+							df             = st.session_state.df,
+							patient_id_col = patient_id_col,
+							order_col      = order_col,
+							normalize      = normalize,
+							top_n          = top_n
 						)
+						# Store the frequency matrix
 						st.session_state.freq_matrix = freq_matrix
+
+						# Store in clustering_input_data for clustering analysis
+						st.session_state.clustering_input_data = freq_matrix
+
 				except Exception as e:
 					st.error(f"Error generating frequency matrix: {str(e)}")
 
@@ -1605,6 +1187,1903 @@ class MIMICDashboardApp:
 							st.success(f"Saved timing features to {filepath}")
 						except Exception as e:
 							st.error(f"Error saving timing features: {str(e)}")
+
+
+	def _display_clustering_analysis_tab(self):
+			"""Display the clustering analysis tab content."""
+			st.markdown("<h2 class='sub-header'>Clustering Analysis</h2>", unsafe_allow_html=True)
+
+			# Introductory text
+			st.info("This section enables advanced clustering analysis on MIMIC-IV order data to discover patterns and patient groupings. You can apply different clustering algorithms and analyze the resulting clusters to gain insights.")
+
+			# Clustering subtabs
+			clustering_tabs = st.tabs([
+				"📋 Data Selection",
+				"📊 Dimensionality Reduction",
+				"🔄 K-Means Clustering",
+				"🌴 Hierarchical Clustering",
+				"🔍 DBSCAN Clustering",
+				"📝 LDA Topic Modeling",
+				"📈 Evaluation Metrics"
+			])
+
+			# 1. Data Selection Tab
+			with clustering_tabs[0]:
+				st.markdown("<h3>Select Input Data for Clustering</h3>", unsafe_allow_html=True)
+
+				# Option to use the current DataFrame or a feature matrix
+				data_source = st.radio(
+					"Select Data Source",
+					["Current DataFrame", "Order Frequency Matrix", "Order Timing Features", "Upload Data"],
+					horizontal=True
+				)
+
+				input_data = None
+
+				if data_source == "Current DataFrame":
+					# Let user select columns from the current DataFrame
+					if st.session_state.df is not None:
+						# Get numeric columns only for clustering
+						numeric_cols = st.session_state.df.select_dtypes(include=['number']).columns.tolist()
+
+						if numeric_cols:
+							selected_cols = st.multiselect(
+								"Select numeric columns for clustering",
+								numeric_cols,
+								default=numeric_cols[:min(5, len(numeric_cols))]
+							)
+
+							if selected_cols:
+								input_data = st.session_state.df[selected_cols].copy()
+								st.markdown(f"Data shape: {input_data.shape[0]} rows × {input_data.shape[1]} columns")
+								st.dataframe(input_data.head(), use_container_width=True)
+						else:
+							st.warning("No numeric columns found in the current DataFrame. Please select another data source.")
+					else:
+						st.warning("No DataFrame is currently loaded. Please load a dataset first.")
+
+				elif data_source == "Order Frequency Matrix":
+					# Use order frequency matrix if available
+					if st.session_state.freq_matrix is not None:
+						input_data = st.session_state.freq_matrix
+						st.markdown(f"Using order frequency matrix with shape: {input_data.shape[0]} patients × {input_data.shape[1]} order types")
+						st.dataframe(input_data.head(), use_container_width=True)
+					else:
+						st.warning("Order frequency matrix not found. Please generate it in the Feature Engineering tab first.")
+
+				elif data_source == "Order Timing Features":
+					# Use timing features if available
+					if st.session_state.timing_features is not None:
+						# Get numeric columns only
+						numeric_cols = st.session_state.timing_features.select_dtypes(include=['number']).columns.tolist()
+						selected_cols = st.multiselect(
+							"Select timing features for clustering",
+							numeric_cols,
+							default=numeric_cols
+						)
+
+						if selected_cols:
+							input_data = st.session_state.timing_features[selected_cols].copy()
+							st.markdown(f"Data shape: {input_data.shape[0]} rows × {input_data.shape[1]} columns")
+							st.dataframe(input_data.head(), use_container_width=True)
+					else:
+						st.warning("Order timing features not found. Please generate them in the Feature Engineering tab first.")
+
+				elif data_source == "Upload Data":
+					# Allow user to upload a CSV or Parquet file
+					uploaded_file = st.file_uploader("Upload CSV or Parquet file", type=["csv", "parquet"])
+
+					if uploaded_file is not None:
+						try:
+							if uploaded_file.name.endswith('.csv'):
+								input_data = pd.read_csv(uploaded_file)
+							elif uploaded_file.name.endswith('.parquet'):
+								input_data = pd.read_parquet(uploaded_file)
+
+							st.markdown(f"Uploaded data shape: {input_data.shape[0]} rows × {input_data.shape[1]} columns")
+							st.dataframe(input_data.head(), use_container_width=True)
+						except Exception as e:
+							st.error(f"Error loading file: {str(e)}")
+
+				# Data preprocessing options
+				if input_data is not None:
+					st.markdown("<h4>Data Preprocessing</h4>", unsafe_allow_html=True)
+
+					preprocess_col1, preprocess_col2 = st.columns(2)
+
+					with preprocess_col1:
+						preprocess_method = st.selectbox(
+							"Preprocessing Method",
+							["None", "Standard Scaling", "Min-Max Scaling", "Normalization"],
+							index=1,
+							help="Select method to preprocess the data"
+						)
+
+					with preprocess_col2:
+						handle_missing = st.selectbox(
+							"Handle Missing Values",
+							["Drop", "Fill with Mean", "Fill with Median", "Fill with Zero"],
+							index=0,
+							help="Select method to handle missing values"
+						)
+
+					# Map selections to parameter values
+					preprocess_method_map = {
+						"None": None,
+						"Standard Scaling": "standard",
+						"Min-Max Scaling": "minmax",
+						"Normalization": "normalize"
+					}
+
+					handle_missing_map = {
+						"Drop": "drop",
+						"Fill with Mean": "mean",
+						"Fill with Median": "median",
+						"Fill with Zero": "zero"
+					}
+
+					# Button to process and store the data
+					if st.button("Prepare Data for Clustering"):
+						try:
+							if preprocess_method != "None":
+								# Apply preprocessing
+								processed_data = self.clustering_analyzer.preprocess_data(
+									input_data,
+									method=preprocess_method_map[preprocess_method],
+									handle_missing=handle_missing_map[handle_missing]
+								)
+
+								st.session_state.clustering_input_data = processed_data
+								st.success(f"Data preprocessed and ready for clustering! Shape: {processed_data.shape}")
+
+								# Show preview of processed data
+								st.dataframe(processed_data.head(), use_container_width=True)
+							else:
+								# Use raw data
+								st.session_state.clustering_input_data = input_data
+								st.success(f"Raw data ready for clustering! Shape: {input_data.shape}")
+
+						except Exception as e:
+							st.error(f"Error preparing data: {str(e)}")
+
+			# 2. Dimensionality Reduction Tab
+			with clustering_tabs[1]:
+				st.markdown("<h3>Dimensionality Reduction</h3>", unsafe_allow_html=True)
+
+				# Check if input data is available
+				if st.session_state.clustering_input_data is not None:
+					# Get data shape
+					input_shape = st.session_state.clustering_input_data.shape
+
+					st.markdown(f"""
+					<div class='info-box'>
+					Reduce the dimensionality of your data to visualize and improve clustering performance.
+					Current data shape: {input_shape[0]} rows × {input_shape[1]} columns
+					</div>
+					""", unsafe_allow_html=True)
+
+					# Dimensionality reduction method selection
+					reduction_col1, reduction_col2 = st.columns(2)
+
+					with reduction_col1:
+						reduction_method = st.selectbox(
+							"Dimensionality Reduction Method",
+							["PCA", "t-SNE", "UMAP", "SVD"],
+							index=0,
+							help="Select method to reduce dimensions"
+						)
+
+					with reduction_col2:
+						n_components = st.number_input(
+							"Number of Components",
+							min_value=2,
+							max_value=min(10, input_shape[1]),
+							value=2,
+							help="Number of dimensions to reduce to"
+						)
+
+					# Method-specific parameters
+					if reduction_method == "t-SNE":
+						tsne_col1, tsne_col2 = st.columns(2)
+
+						with tsne_col1:
+							perplexity = st.slider(
+								"Perplexity",
+								min_value=5,
+								max_value=50,
+								value=30,
+								help="Balance between preserving local and global structure"
+							)
+
+						with tsne_col2:
+							learning_rate = st.slider(
+								"Learning Rate",
+								min_value=10,
+								max_value=1000,
+								value=200,
+								step=10,
+								help="Learning rate for t-SNE"
+							)
+
+						n_iter = st.slider(
+							"Max Iterations",
+							min_value=250,
+							max_value=2000,
+							value=1000,
+							step=250,
+							help="Maximum number of iterations"
+						)
+
+						extra_params = {
+							"perplexity": perplexity,
+							"learning_rate": learning_rate,
+							"n_iter": n_iter
+						}
+
+					elif reduction_method == "UMAP":
+						umap_col1, umap_col2 = st.columns(2)
+
+						with umap_col1:
+							n_neighbors = st.slider(
+								"Number of Neighbors",
+								min_value=2,
+								max_value=100,
+								value=15,
+								help="Controls how local or global the embedding is"
+							)
+
+						with umap_col2:
+							min_dist = st.slider(
+								"Minimum Distance",
+								min_value=0.0,
+								max_value=0.99,
+								value=0.1,
+								step=0.05,
+								help="Controls how tightly points are packed together"
+							)
+
+						metric = st.selectbox(
+							"Distance Metric",
+							["euclidean", "manhattan", "cosine", "correlation"],
+							index=0,
+							help="Metric used to measure distances"
+						)
+
+						extra_params = {
+							"n_neighbors": n_neighbors,
+							"min_dist": min_dist,
+							"metric": metric
+						}
+
+					else:
+						# PCA and SVD don't need extra parameters
+						extra_params = {}
+
+					# Button to apply dimensionality reduction
+					if st.button("Apply Dimensionality Reduction"):
+						try:
+							with st.spinner(f"Applying {reduction_method} dimensionality reduction..."):
+								# Map method names
+								method_map = {
+									"PCA": "pca",
+									"t-SNE": "tsne",
+									"UMAP": "umap",
+									"SVD": "svd"
+								}
+
+								# Apply reduction
+								reduced_data = self.clustering_analyzer.apply_dimensionality_reduction(
+									st.session_state.clustering_input_data,
+									method=method_map[reduction_method],
+									n_components=n_components,
+									**extra_params
+								)
+
+								# Store reduced data
+								st.session_state.reduced_data = reduced_data
+
+								# Show success message
+								st.success(f"Dimensionality reduction complete! Reduced from {input_shape[1]} to {n_components} dimensions.")
+
+								# Show preview
+								st.dataframe(reduced_data.head(), use_container_width=True)
+
+						except Exception as e:
+							st.error(f"Error applying dimensionality reduction: {str(e)}")
+
+					# Visualization of reduced data (if available and 2D/3D)
+					if st.session_state.reduced_data is not None:
+						reduced_shape = st.session_state.reduced_data.shape
+
+						st.markdown("<h4>Visualization of Reduced Data</h4>", unsafe_allow_html=True)
+
+						if reduced_shape[1] == 2:
+							# Create 2D scatter plot
+							fig = px.scatter(
+								st.session_state.reduced_data,
+								x=st.session_state.reduced_data.columns[0],
+								y=st.session_state.reduced_data.columns[1],
+								title=f"2D Projection using {reduction_method}"
+							)
+							st.plotly_chart(fig, use_container_width=True)
+
+						elif reduced_shape[1] == 3:
+							# Create 3D scatter plot
+							fig = px.scatter_3d(
+								st.session_state.reduced_data,
+								x=st.session_state.reduced_data.columns[0],
+								y=st.session_state.reduced_data.columns[1],
+								z=st.session_state.reduced_data.columns[2],
+								title=f"3D Projection using {reduction_method}"
+							)
+							st.plotly_chart(fig, use_container_width=True)
+
+						else:
+							st.info("Reduced data has more than 3 dimensions. Select 2 or 3 components for visualization.")
+
+						# Option to save reduced data
+						save_col1, save_col2 = st.columns(2)
+
+						with save_col1:
+							save_format = st.radio(
+								"Save Format",
+								["CSV", "Parquet"],
+								horizontal=True,
+								key="dimreduction_save_format"
+							)
+
+						with save_col2:
+							if st.button("Save Reduced Data"):
+								try:
+									# Use feature engineer's save method
+									filepath = self.feature_engineer.save_features(
+										st.session_state.reduced_data,
+										f"{reduction_method.lower()}_reduced_data",
+										os.path.dirname(st.session_state.current_file_path),
+										save_format.lower()
+									)
+									st.success(f"Saved reduced data to {filepath}")
+								except Exception as e:
+									st.error(f"Error saving data: {str(e)}")
+				else:
+					st.warning("No input data available. Please prepare data in the Data Selection tab first.")
+
+			# 3. K-Means Clustering Tab
+			with clustering_tabs[2]:
+				st.markdown("<h3>K-Means Clustering</h3>", unsafe_allow_html=True)
+
+				# Check if input data is available
+				if st.session_state.clustering_input_data is not None:
+					st.markdown("""
+					<div class='info-box'>
+					K-means clustering partitions data into k clusters, where each observation belongs to the cluster with the nearest mean.
+					</div>
+					""", unsafe_allow_html=True)
+
+					# Option to use reduced data if available
+					use_reduced_data = False
+					if st.session_state.reduced_data is not None:
+						use_reduced_data = st.checkbox(
+							"Use dimensionality-reduced data for clustering",
+							value=True,
+							help="Use the reduced data from the previous tab instead of original data"
+						)
+
+					# K-means parameters
+					kmeans_params_col1, kmeans_params_col2 = st.columns(2)
+
+					with kmeans_params_col1:
+						n_clusters = st.number_input(
+							"Number of Clusters (k)",
+							min_value=2,
+							max_value=20,
+							value=5,
+							help="Number of clusters to form"
+						)
+
+					with kmeans_params_col2:
+						max_iter = st.slider(
+							"Maximum Iterations",
+							min_value=100,
+							max_value=1000,
+							value=300,
+							step=100,
+							help="Maximum number of iterations for a single run"
+						)
+
+					n_init = st.slider(
+						"Number of Initializations",
+						min_value=1,
+						max_value=20,
+						value=10,
+						help="Number of times the algorithm will run with different centroid seeds"
+					)
+
+					# Button to find optimal k
+					st.markdown("<h4>Optimal Number of Clusters</h4>", unsafe_allow_html=True)
+
+					optimal_k_col1, optimal_k_col2 = st.columns(2)
+
+					with optimal_k_col1:
+						k_min = st.number_input("Minimum k", min_value=2, max_value=10, value=2)
+
+					with optimal_k_col2:
+						k_max = st.number_input("Maximum k", min_value=3, max_value=20, value=10)
+
+					metric = st.selectbox(
+						"Optimization Metric",
+						["Silhouette Score", "Davies-Bouldin Index", "Calinski-Harabasz Index", "Inertia (Elbow Method)"],
+						index=0,
+						help="Metric to optimize when finding the best k"
+					)
+
+					# Map to internal names
+					metric_map = {
+						"Silhouette Score": "silhouette",
+						"Davies-Bouldin Index": "davies_bouldin",
+						"Calinski-Harabasz Index": "calinski_harabasz",
+						"Inertia (Elbow Method)": "inertia"
+					}
+
+					# Button to find optimal k
+					if st.button("Find Optimal Number of Clusters"):
+						try:
+							with st.spinner("Finding optimal number of clusters..."):
+								# Get the appropriate data
+								if use_reduced_data and st.session_state.reduced_data is not None:
+									data_for_clustering = st.session_state.reduced_data
+								else:
+									data_for_clustering = st.session_state.clustering_input_data
+
+								# Find optimal k
+								optimal_k, k_metrics = self.clustering_analyzer.find_optimal_k_for_kmeans(
+									data_for_clustering,
+									k_range=range(k_min, k_max + 1),
+									metric=metric_map[metric],
+									n_init=n_init,
+									max_iter=max_iter
+								)
+
+								# Store optimal k
+								st.session_state.optimal_k = optimal_k
+
+								# Show result
+								st.success(f"Optimal number of clusters (k): {optimal_k}")
+
+								# Plot metric values
+								fig = go.Figure()
+
+								if metric == "Inertia (Elbow Method)":
+									fig.add_trace(go.Scatter(
+										x=k_metrics['k'],
+										y=k_metrics['inertia'],
+										mode='lines+markers',
+										name='Inertia'
+									))
+									fig.update_layout(
+										title=f"Elbow Method for Optimal k (k={optimal_k})",
+										xaxis_title="Number of Clusters (k)",
+										yaxis_title="Inertia",
+										hovermode="x unified"
+									)
+								elif metric == "Davies-Bouldin Index":
+									fig.add_trace(go.Scatter(
+										x=k_metrics['k'],
+										y=k_metrics['davies_bouldin'],
+										mode='lines+markers',
+										name='Davies-Bouldin Index'
+									))
+									fig.update_layout(
+										title=f"Davies-Bouldin Index for Different k (k={optimal_k})",
+										xaxis_title="Number of Clusters (k)",
+										yaxis_title="Davies-Bouldin Index (lower is better)",
+										hovermode="x unified"
+									)
+								elif metric == "Silhouette Score":
+									fig.add_trace(go.Scatter(
+										x=k_metrics['k'],
+										y=k_metrics['silhouette'],
+										mode='lines+markers',
+										name='Silhouette Score'
+									))
+									fig.update_layout(
+										title=f"Silhouette Score for Different k (k={optimal_k})",
+										xaxis_title="Number of Clusters (k)",
+										yaxis_title="Silhouette Score (higher is better)",
+										hovermode="x unified"
+									)
+								else:  # Calinski-Harabasz Index
+									fig.add_trace(go.Scatter(
+										x=k_metrics['k'],
+										y=k_metrics['calinski_harabasz'],
+										mode='lines+markers',
+										name='Calinski-Harabasz Index'
+									))
+									fig.update_layout(
+										title=f"Calinski-Harabasz Index for Different k (k={optimal_k})",
+										xaxis_title="Number of Clusters (k)",
+										yaxis_title="Calinski-Harabasz Index (higher is better)",
+										hovermode="x unified"
+									)
+
+								# Add vertical line at optimal k
+								fig.add_vline(
+									x=optimal_k,
+									line_dash="dash",
+									line_color="red",
+									annotation_text=f"Optimal k = {optimal_k}",
+									annotation_position="top right"
+								)
+
+								st.plotly_chart(fig, use_container_width=True)
+
+								# Set the optimal k as the default value
+								n_clusters = optimal_k
+
+						except Exception as e:
+							st.error(f"Error finding optimal k: {str(e)}")
+
+					# Button to run K-means
+					st.markdown("<h4>Run K-means Clustering</h4>", unsafe_allow_html=True)
+
+					# Option to use optimal k if available
+					if st.session_state.optimal_k is not None:
+						use_optimal_k = st.checkbox(
+							f"Use optimal k ({st.session_state.optimal_k})",
+							value=True,
+							help="Use the optimal k found above"
+						)
+
+						if use_optimal_k:
+							n_clusters = st.session_state.optimal_k
+
+					if st.button("Run K-means Clustering"):
+						try:
+							with st.spinner(f"Running K-means clustering with k={n_clusters}..."):
+								# Get the appropriate data
+								if use_reduced_data and st.session_state.reduced_data is not None:
+									data_for_clustering = st.session_state.reduced_data
+								else:
+									data_for_clustering = st.session_state.clustering_input_data
+
+								# Run K-means
+								labels, kmeans_model = self.clustering_analyzer.run_kmeans_clustering(
+									data_for_clustering,
+									n_clusters=n_clusters,
+									n_init=n_init,
+									max_iter=max_iter
+								)
+
+								# Store labels in session state
+								st.session_state.kmeans_labels = labels
+
+								# Calculate metrics
+								metrics = self.clustering_analyzer.evaluate_clustering(
+									data_for_clustering,
+									labels,
+									"kmeans"
+								)
+
+								# Show success message with metrics
+								st.success(f"""
+								Clustering complete! Results:
+								- Number of clusters: {n_clusters}
+								- Silhouette score: {metrics['silhouette_score']:.4f} (higher is better)
+								- Davies-Bouldin index: {metrics['davies_bouldin_score']:.4f} (lower is better)
+								- Calinski-Harabasz index: {metrics['calinski_harabasz_score']:.4f} (higher is better)
+								""")
+
+								# Show cluster distribution
+								cluster_counts = labels.value_counts().sort_index()
+
+								# Create bar chart of cluster sizes
+								fig = px.bar(
+									x=cluster_counts.index,
+									y=cluster_counts.values,
+									labels={'x': 'Cluster', 'y': 'Count'},
+									title="Distribution of Clusters"
+								)
+								st.plotly_chart(fig, use_container_width=True)
+
+								# If we have 2D or 3D data, visualize the clusters
+								if data_for_clustering.shape[1] == 2:
+									# Create 2D scatter plot with clusters
+									vis_data = data_for_clustering.copy()
+									vis_data['Cluster'] = labels
+
+									fig = px.scatter(
+										vis_data,
+										x=vis_data.columns[0],
+										y=vis_data.columns[1],
+										color='Cluster',
+										title="K-means Clustering Results (2D)",
+										color_discrete_sequence=px.colors.qualitative.G10
+									)
+									st.plotly_chart(fig, use_container_width=True)
+
+								elif data_for_clustering.shape[1] == 3:
+									# Create 3D scatter plot with clusters
+									vis_data = data_for_clustering.copy()
+									vis_data['Cluster'] = labels
+
+									fig = px.scatter_3d(
+										vis_data,
+										x=vis_data.columns[0],
+										y=vis_data.columns[1],
+										z=vis_data.columns[2],
+										color='Cluster',
+										title="K-means Clustering Results (3D)",
+										color_discrete_sequence=px.colors.qualitative.G10
+									)
+									st.plotly_chart(fig, use_container_width=True)
+
+								# Get cluster centers
+								if hasattr(kmeans_model, 'cluster_centers_'):
+									st.markdown("<h4>Cluster Centers</h4>", unsafe_allow_html=True)
+
+									centers = pd.DataFrame(
+										kmeans_model.cluster_centers_,
+										columns=data_for_clustering.columns,
+										index=[f"Cluster {i}" for i in range(n_clusters)]
+									)
+
+									st.dataframe(centers, use_container_width=True)
+
+						except Exception as e:
+							st.error(f"Error running K-means clustering: {str(e)}")
+
+					# Save model and results (if available)
+					if st.session_state.kmeans_labels is not None:
+						st.markdown("<h4>Save Clustering Results</h4>", unsafe_allow_html=True)
+
+						save_col1, save_col2 = st.columns(2)
+
+						with save_col1:
+							if st.button("Save K-means Model"):
+								try:
+									# Save model
+									model_path = self.clustering_analyzer.save_model(
+										"kmeans",
+										os.path.dirname(st.session_state.current_file_path)
+									)
+									st.success(f"Saved K-means model to {model_path}")
+								except Exception as e:
+									st.error(f"Error saving model: {str(e)}")
+
+						with save_col2:
+							if st.button("Save Cluster Assignments"):
+								try:
+									# Create DataFrame with cluster assignments
+									if use_reduced_data and st.session_state.reduced_data is not None:
+										cluster_df = st.session_state.reduced_data.copy()
+									else:
+										cluster_df = st.session_state.clustering_input_data.copy()
+
+									cluster_df['cluster'] = st.session_state.kmeans_labels
+
+									# Save
+									filepath = self.feature_engineer.save_features(
+										cluster_df,
+										"kmeans_cluster_assignments",
+										os.path.dirname(st.session_state.current_file_path),
+										"csv"
+									)
+									st.success(f"Saved cluster assignments to {filepath}")
+								except Exception as e:
+									st.error(f"Error saving cluster assignments: {str(e)}")
+				else:
+					st.warning("No input data available. Please prepare data in the Data Selection tab first.")
+
+			# 4. Hierarchical Clustering Tab
+			with clustering_tabs[3]:
+				st.markdown("<h3>Hierarchical Clustering</h3>", unsafe_allow_html=True)
+
+				# Check if input data is available
+				if st.session_state.clustering_input_data is not None:
+					st.markdown("""
+					<div class='info-box'>
+					Hierarchical clustering creates a tree of clusters by progressively merging or splitting groups.
+					It's useful for discovering hierarchical relationships in the data.
+					</div>
+					""", unsafe_allow_html=True)
+
+					# Option to use reduced data if available
+					use_reduced_data = False
+					if st.session_state.reduced_data is not None:
+						use_reduced_data = st.checkbox(
+							"Use dimensionality-reduced data for hierarchical clustering",
+							value=True,
+							help="Use the reduced data from the dimensionality reduction tab"
+						)
+
+					# Hierarchical clustering parameters
+					hier_col1, hier_col2 = st.columns(2)
+
+					with hier_col1:
+						n_clusters = st.number_input(
+							"Number of Clusters",
+							min_value=2,
+							max_value=20,
+							value=5,
+							help="Number of clusters to form",
+							key="hier_n_clusters"
+						)
+
+					with hier_col2:
+						linkage_method = st.selectbox(
+							"Linkage Method",
+							["ward", "complete", "average", "single"],
+							index=0,
+							help="Method for calculating distances between clusters"
+						)
+
+					distance_metric = st.selectbox(
+						"Distance Metric",
+						["euclidean", "manhattan", "cosine", "correlation"],
+						index=0,
+						help="Metric for measuring distances between samples"
+					)
+
+					# Warning for ward linkage
+					if linkage_method == "ward" and distance_metric != "euclidean":
+						st.warning("Ward linkage requires Euclidean distance. Switching to Euclidean.")
+						distance_metric = "euclidean"
+
+					# Button to run hierarchical clustering
+					if st.button("Run Hierarchical Clustering"):
+						try:
+							with st.spinner(f"Running hierarchical clustering with {linkage_method} linkage..."):
+								# Get the appropriate data
+								if use_reduced_data and st.session_state.reduced_data is not None:
+									data_for_clustering = st.session_state.reduced_data
+								else:
+									data_for_clustering = st.session_state.clustering_input_data
+
+								# Limit data size if too large (hierarchical clustering can be memory-intensive)
+								max_samples = 1000
+								if len(data_for_clustering) > max_samples:
+									st.warning(f"Limiting to {max_samples} samples for hierarchical clustering to avoid memory issues.")
+									data_for_clustering = data_for_clustering.sample(max_samples, random_state=42)
+
+								# Run hierarchical clustering
+								labels, linkage_data = self.clustering_analyzer.run_hierarchical_clustering(
+									data_for_clustering,
+									n_clusters=n_clusters,
+									linkage_method=linkage_method,
+									distance_metric=distance_metric
+								)
+
+								# Store labels in session state
+								st.session_state.hierarchical_labels = labels
+
+								# Calculate metrics
+								metrics = self.clustering_analyzer.evaluate_clustering(
+									data_for_clustering,
+									labels,
+									"hierarchical"
+								)
+
+								# Show success message with metrics
+								st.success(f"""
+								Hierarchical clustering complete! Results:
+								- Number of clusters: {n_clusters}
+								- Silhouette score: {metrics['silhouette_score']:.4f} (higher is better)
+								- Davies-Bouldin index: {metrics['davies_bouldin_score']:.4f} (lower is better)
+								- Calinski-Harabasz index: {metrics['calinski_harabasz_score']:.4f} (higher is better)
+								""")
+
+								# Show cluster distribution
+								cluster_counts = labels.value_counts().sort_index()
+
+								# Create bar chart of cluster sizes
+								fig = px.bar(
+									x=cluster_counts.index,
+									y=cluster_counts.values,
+									labels={'x': 'Cluster', 'y': 'Count'},
+									title="Distribution of Hierarchical Clusters"
+								)
+								st.plotly_chart(fig, use_container_width=True)
+
+								# If we have 2D or 3D data, visualize the clusters
+								if data_for_clustering.shape[1] == 2:
+									# Create 2D scatter plot with clusters
+									vis_data = data_for_clustering.copy()
+									vis_data['Cluster'] = labels
+
+									fig = px.scatter(
+										vis_data,
+										x=vis_data.columns[0],
+										y=vis_data.columns[1],
+										color='Cluster',
+										title="Hierarchical Clustering Results (2D)",
+										color_discrete_sequence=px.colors.qualitative.G10
+									)
+									st.plotly_chart(fig, use_container_width=True)
+
+								elif data_for_clustering.shape[1] == 3:
+									# Create 3D scatter plot with clusters
+									vis_data = data_for_clustering.copy()
+									vis_data['Cluster'] = labels
+
+									fig = px.scatter_3d(
+										vis_data,
+										x=vis_data.columns[0],
+										y=vis_data.columns[1],
+										z=vis_data.columns[2],
+										color='Cluster',
+										title="Hierarchical Clustering Results (3D)",
+										color_discrete_sequence=px.colors.qualitative.G10
+									)
+									st.plotly_chart(fig, use_container_width=True)
+
+								# Plot dendrogram
+								st.markdown("<h4>Dendrogram</h4>", unsafe_allow_html=True)
+
+								# Create dendrogram figure
+								plt.figure(figsize=(10, 7))
+								dendrogram(linkage_data['linkage_matrix'])
+								plt.title('Hierarchical Clustering Dendrogram')
+								plt.xlabel('Sample index')
+								plt.ylabel('Distance')
+
+								# Draw a horizontal line at the height where we get n_clusters
+								if n_clusters > 1:
+									plt.axhline(y=linkage_data['linkage_matrix'][-(n_clusters-1), 2],
+											c='k', linestyle='--',
+											label=f'Cut for {n_clusters} clusters')
+									plt.legend()
+
+								# Display in Streamlit
+								st.pyplot(plt.gcf())
+								plt.close()
+
+						except Exception as e:
+							st.error(f"Error running hierarchical clustering: {str(e)}")
+
+					# Save model and results (if available)
+					if st.session_state.hierarchical_labels is not None:
+						st.markdown("<h4>Save Clustering Results</h4>", unsafe_allow_html=True)
+
+						save_col1, save_col2 = st.columns(2)
+
+						with save_col1:
+							if st.button("Save Hierarchical Model"):
+								try:
+									# Save model
+									model_path = self.clustering_analyzer.save_model(
+										"hierarchical",
+										os.path.dirname(st.session_state.current_file_path)
+									)
+									st.success(f"Saved hierarchical clustering model to {model_path}")
+								except Exception as e:
+									st.error(f"Error saving model: {str(e)}")
+
+						with save_col2:
+							if st.button("Save Hierarchical Cluster Assignments"):
+								try:
+									# Create DataFrame with cluster assignments
+									if use_reduced_data and st.session_state.reduced_data is not None:
+										cluster_df = st.session_state.reduced_data.copy()
+									else:
+										cluster_df = st.session_state.clustering_input_data.copy()
+
+									cluster_df['cluster'] = st.session_state.hierarchical_labels
+
+									# Save
+									filepath = self.feature_engineer.save_features(
+										cluster_df,
+										"hierarchical_cluster_assignments",
+										os.path.dirname(st.session_state.current_file_path),
+										"csv"
+									)
+									st.success(f"Saved cluster assignments to {filepath}")
+								except Exception as e:
+									st.error(f"Error saving cluster assignments: {str(e)}")
+				else:
+					st.warning("No input data available. Please prepare data in the Data Selection tab first.")
+
+			# 5. DBSCAN Clustering Tab
+			with clustering_tabs[4]:
+				st.markdown("<h3>DBSCAN Clustering</h3>", unsafe_allow_html=True)
+
+				# Check if input data is available
+				if st.session_state.clustering_input_data is not None:
+					st.markdown("""
+					<div class='info-box'>
+					DBSCAN (Density-Based Spatial Clustering of Applications with Noise) finds clusters of arbitrary shapes
+					by grouping points that are closely packed together, while marking outlier points as noise.
+					</div>
+					""", unsafe_allow_html=True)
+
+					# Option to use reduced data if available
+					use_reduced_data = False
+					if st.session_state.reduced_data is not None:
+						use_reduced_data = st.checkbox(
+							"Use dimensionality-reduced data for DBSCAN",
+							value=True,
+							help="Use the reduced data from the dimensionality reduction tab"
+						)
+
+					# DBSCAN parameters
+					dbscan_col1, dbscan_col2 = st.columns(2)
+
+					with dbscan_col1:
+						eps = st.number_input(
+							"Epsilon (ε)",
+							min_value=0.01,
+							max_value=5.0,
+							value=0.5,
+							step=0.05,
+							help="Maximum distance between two samples to be considered neighbors"
+						)
+
+					with dbscan_col2:
+						min_samples = st.number_input(
+							"Minimum Samples",
+							min_value=2,
+							max_value=100,
+							value=5,
+							help="Number of samples in a neighborhood for a point to be a core point"
+						)
+
+					metric = st.selectbox(
+						"Distance Metric",
+						["euclidean", "manhattan", "cosine", "l1", "l2"],
+						index=0,
+						help="Metric for measuring distances between samples",
+						key="dbscan_metric"
+					)
+
+					# Button to find optimal eps
+					st.markdown("<h4>Find Optimal Epsilon (ε)</h4>", unsafe_allow_html=True)
+
+					k_dist = st.slider(
+						"k for k-distance graph",
+						min_value=2,
+						max_value=20,
+						value=5,
+						help="Number of neighbors to consider for k-distance graph"
+					)
+
+					if st.button("Find Optimal Epsilon (ε)"):
+						try:
+							with st.spinner("Calculating k-distance graph to find optimal epsilon..."):
+								# Get the appropriate data
+								if use_reduced_data and st.session_state.reduced_data is not None:
+									data_for_clustering = st.session_state.reduced_data
+								else:
+									data_for_clustering = st.session_state.clustering_input_data
+
+								# Find optimal epsilon
+								suggested_eps, k_distances = self.clustering_analyzer.find_optimal_eps_for_dbscan(
+									data_for_clustering,
+									k_dist=k_dist
+								)
+
+								# Store the suggested eps
+								st.session_state.optimal_eps = suggested_eps
+
+								# Show result
+								st.success(f"Suggested epsilon (ε): {suggested_eps:.4f}")
+
+								# Plot k-distance graph
+								fig = go.Figure()
+
+								fig.add_trace(go.Scatter(
+									x=list(range(len(k_distances))),
+									y=k_distances,
+									mode='lines',
+									name=f'{k_dist}-distance'
+								))
+
+								# Add point at the suggested epsilon
+								knee_point_idx = np.argmax(np.diff(k_distances)) + 1  # Find the "knee" of the curve
+
+								fig.add_trace(go.Scatter(
+									x=[knee_point_idx],
+									y=[k_distances[knee_point_idx]],
+									mode='markers',
+									marker=dict(size=10, color='red'),
+									name=f'Suggested ε = {suggested_eps:.4f}'
+								))
+
+								fig.update_layout(
+									title=f"{k_dist}-Distance Graph for DBSCAN Epsilon Selection",
+									xaxis_title="Points (sorted by distance)",
+									yaxis_title=f"{k_dist}-distance",
+									hovermode="x"
+								)
+
+								st.plotly_chart(fig, use_container_width=True)
+
+						except Exception as e:
+							st.error(f"Error finding optimal epsilon: {str(e)}")
+
+					# Button to run DBSCAN
+					st.markdown("<h4>Run DBSCAN Clustering</h4>", unsafe_allow_html=True)
+
+					# Option to use optimal eps if available
+					if st.session_state.optimal_eps is not None:
+						use_optimal_eps = st.checkbox(
+							f"Use suggested epsilon ({st.session_state.optimal_eps:.4f})",
+							value=True,
+							help="Use the suggested epsilon value found above"
+						)
+
+						if use_optimal_eps:
+							eps = st.session_state.optimal_eps
+
+					if st.button("Run DBSCAN Clustering"):
+						try:
+							with st.spinner(f"Running DBSCAN clustering with ε={eps}..."):
+								# Get the appropriate data
+								if use_reduced_data and st.session_state.reduced_data is not None:
+									data_for_clustering = st.session_state.reduced_data
+								else:
+									data_for_clustering = st.session_state.clustering_input_data
+
+								# Run DBSCAN
+								labels, dbscan_model = self.clustering_analyzer.run_dbscan_clustering(
+									data_for_clustering,
+									eps=eps,
+									min_samples=min_samples,
+									metric=metric
+								)
+
+								# Store labels in session state
+								st.session_state.dbscan_labels = labels
+
+								# Count number of clusters (excluding noise points with label -1)
+								n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+								n_noise = list(labels).count(-1)
+
+								# Calculate metrics (if more than one cluster)
+								if n_clusters > 1:
+									# For metrics, exclude noise points
+									if -1 in labels:
+										non_noise_mask = labels != -1
+										metrics = self.clustering_analyzer.evaluate_clustering(
+											data_for_clustering[non_noise_mask],
+											labels[non_noise_mask],
+											"dbscan"
+										)
+									else:
+										metrics = self.clustering_analyzer.evaluate_clustering(
+											data_for_clustering,
+											labels,
+											"dbscan"
+										)
+
+									# Show success message with metrics
+									st.success(f"""
+									DBSCAN clustering complete! Results:
+									- Number of clusters: {n_clusters}
+									- Number of noise points: {n_noise} ({n_noise/len(labels)*100:.2f}% of data)
+									- Silhouette score: {metrics['silhouette_score']:.4f} (higher is better)
+									- Davies-Bouldin index: {metrics['davies_bouldin_score']:.4f} (lower is better)
+									- Calinski-Harabasz index: {metrics['calinski_harabasz_score']:.4f} (higher is better)
+									""")
+								else:
+									st.warning(f"""
+									DBSCAN clustering completed, but resulted in only {n_clusters} cluster(s).
+									- Number of noise points: {n_noise} ({n_noise/len(labels)*100:.2f}% of data)
+
+									Try adjusting epsilon (ε) or min_samples parameters.
+									""")
+
+								# Show cluster distribution
+								cluster_counts = labels.value_counts().sort_index()
+
+								# Create bar chart of cluster sizes
+								fig = px.bar(
+									x=cluster_counts.index.map(lambda x: "Noise" if x == -1 else f"Cluster {x}"),
+									y=cluster_counts.values,
+									labels={'x': 'Cluster', 'y': 'Count'},
+									title="Distribution of DBSCAN Clusters"
+								)
+								st.plotly_chart(fig, use_container_width=True)
+
+								# If we have 2D or 3D data, visualize the clusters
+								if data_for_clustering.shape[1] == 2:
+									# Create 2D scatter plot with clusters
+									vis_data = data_for_clustering.copy()
+									vis_data['Cluster'] = labels.map(lambda x: "Noise" if x == -1 else f"Cluster {x}")
+
+									fig = px.scatter(
+										vis_data,
+										x=vis_data.columns[0],
+										y=vis_data.columns[1],
+										color='Cluster',
+										title="DBSCAN Clustering Results (2D)",
+										color_discrete_sequence=px.colors.qualitative.G10
+									)
+									st.plotly_chart(fig, use_container_width=True)
+
+								elif data_for_clustering.shape[1] == 3:
+									# Create 3D scatter plot with clusters
+									vis_data = data_for_clustering.copy()
+									vis_data['Cluster'] = labels.map(lambda x: "Noise" if x == -1 else f"Cluster {x}")
+
+									fig = px.scatter_3d(
+										vis_data,
+										x=vis_data.columns[0],
+										y=vis_data.columns[1],
+										z=vis_data.columns[2],
+										color='Cluster',
+										title="DBSCAN Clustering Results (3D)",
+										color_discrete_sequence=px.colors.qualitative.G10
+									)
+									st.plotly_chart(fig, use_container_width=True)
+
+						except Exception as e:
+							st.error(f"Error running DBSCAN clustering: {str(e)}")
+
+					# Save model and results (if available)
+					if st.session_state.dbscan_labels is not None:
+						st.markdown("<h4>Save Clustering Results</h4>", unsafe_allow_html=True)
+
+						save_col1, save_col2 = st.columns(2)
+
+						with save_col1:
+							if st.button("Save DBSCAN Model"):
+								try:
+									# Save model
+									model_path = self.clustering_analyzer.save_model(
+										"dbscan",
+										os.path.dirname(st.session_state.current_file_path)
+									)
+									st.success(f"Saved DBSCAN model to {model_path}")
+								except Exception as e:
+									st.error(f"Error saving model: {str(e)}")
+
+						with save_col2:
+							if st.button("Save DBSCAN Cluster Assignments"):
+								try:
+									# Create DataFrame with cluster assignments
+									if use_reduced_data and st.session_state.reduced_data is not None:
+										cluster_df = st.session_state.reduced_data.copy()
+									else:
+										cluster_df = st.session_state.clustering_input_data.copy()
+
+									cluster_df['cluster'] = st.session_state.dbscan_labels
+
+									# Save
+									filepath = self.feature_engineer.save_features(
+										cluster_df,
+										"dbscan_cluster_assignments",
+										os.path.dirname(st.session_state.current_file_path),
+										"csv"
+									)
+									st.success(f"Saved cluster assignments to {filepath}")
+								except Exception as e:
+									st.error(f"Error saving cluster assignments: {str(e)}")
+				else:
+					st.warning("No input data available. Please prepare data in the Data Selection tab first.")
+
+			# 6. LDA Topic Modeling Tab
+			with clustering_tabs[5]:
+				st.markdown("<h3>LDA Topic Modeling</h3>", unsafe_allow_html=True)
+
+				st.markdown("""
+				<div class='info-box'>
+				Latent Dirichlet Allocation (LDA) is a probabilistic model that discovers "topics" in text data.
+				In medical orders context, LDA can find patterns in order sequences and group similar order types.
+				</div>
+				""", unsafe_allow_html=True)
+
+				# Check if we have text data
+				if st.session_state.df is not None:
+					# Option to use original data or order sequences
+					data_source = st.radio(
+						"Text Data Source",
+						["Order Sequences", "Text Column in Dataset"],
+						index=0,
+						help="Select source for text data to use in LDA"
+					)
+
+					if data_source == "Order Sequences":
+						# Check if we have order sequences
+						if st.session_state.order_sequences is not None:
+							st.markdown(f"""
+							Using {len(st.session_state.order_sequences)} patient order sequences for topic modeling.
+							Each sequence will be treated as a "document" for LDA.
+							""")
+
+							# Convert sequences to text documents
+							documents = [" ".join(map(str, seq)) for seq in st.session_state.order_sequences.values()]
+
+							# Show sample
+							st.markdown("<h4>Sample Order Sequences (as Text)</h4>", unsafe_allow_html=True)
+							for i, doc in enumerate(documents[:3]):
+								st.text_area(f"Patient {i+1}", doc, height=100, key=f"sample_doc_{i}")
+						else:
+							st.warning("Order sequences not found. Please generate them in the Feature Engineering tab first.")
+							documents = None
+
+					else:  # Text Column in Dataset
+						# Select text column from DataFrame
+						text_columns = st.session_state.df.select_dtypes(include=['object']).columns.tolist()
+
+						if text_columns:
+							text_col = st.selectbox(
+								"Select Text Column",
+								text_columns,
+								help="Select column containing text data for topic modeling"
+							)
+
+							# Convert to list of strings and handle NaNs
+							documents = st.session_state.df[text_col].fillna("").astype(str).tolist()
+
+							# Show sample
+							st.markdown("<h4>Sample Text Documents</h4>", unsafe_allow_html=True)
+							for i, doc in enumerate(documents[:3]):
+								st.text_area(f"Document {i+1}", doc, height=100, key=f"sample_doc_{i}")
+						else:
+							st.warning("No text columns found in the dataset.")
+							documents = None
+
+					# LDA parameters (if we have documents)
+					if documents:
+						st.markdown("<h4>LDA Parameters</h4>", unsafe_allow_html=True)
+
+						lda_col1, lda_col2 = st.columns(2)
+
+						with lda_col1:
+							n_topics = st.number_input(
+								"Number of Topics",
+								min_value=2,
+								max_value=20,
+								value=5,
+								help="Number of topics to extract"
+							)
+
+						with lda_col2:
+							max_iter = st.slider(
+								"Maximum Iterations",
+								min_value=10,
+								max_value=1000,
+								value=100,
+								step=10,
+								help="Maximum number of iterations for LDA"
+							)
+
+						lda_col3, lda_col4 = st.columns(2)
+
+						with lda_col3:
+							vectorizer_type = st.selectbox(
+								"Vectorizer Type",
+								["Count", "TF-IDF"],
+								index=0,
+								help="Method to convert text to numerical features"
+							)
+
+						with lda_col4:
+							max_features = st.number_input(
+								"Maximum Features",
+								min_value=100,
+								max_value=10000,
+								value=1000,
+								step=100,
+								help="Maximum number of terms to include in the vocabulary"
+							)
+
+						learning_method = st.selectbox(
+							"Learning Method",
+							["Online", "Batch"],
+							index=0,
+							help="Method for LDA parameter estimation"
+						)
+
+						# Button to run LDA
+						if st.button("Run LDA Topic Modeling"):
+							try:
+								with st.spinner(f"Running LDA topic modeling with {n_topics} topics..."):
+									# Map parameters
+									vectorizer_map = {
+										"Count": "count",
+										"TF-IDF": "tfidf"
+									}
+
+									learning_map = {
+										"Online": "online",
+										"Batch": "batch"
+									}
+
+									# Run LDA
+									lda_model, doc_topic_matrix, topic_term_matrix = self.clustering_analyzer.run_lda_topic_modeling(
+										documents,
+										n_topics=n_topics,
+										vectorizer_type=vectorizer_map[vectorizer_type],
+										max_features=max_features,
+										max_iter=max_iter,
+										learning_method=learning_map[learning_method]
+									)
+
+									# Store results in session state
+									st.session_state.lda_results = {
+										'doc_topic_matrix': doc_topic_matrix,
+										'topic_term_matrix': topic_term_matrix
+									}
+
+									# Show success message
+									st.success(f"LDA topic modeling complete with {n_topics} topics!")
+
+									# Extract top terms per topic
+									top_terms = self.clustering_analyzer.get_top_terms_per_topic(
+										topic_term_matrix,
+										n_terms=10
+									)
+
+									# Display top terms per topic
+									st.markdown("<h4>Top Terms for Each Topic</h4>", unsafe_allow_html=True)
+									st.dataframe(top_terms, use_container_width=True)
+
+									# Display document-topic distribution
+									st.markdown("<h4>Document-Topic Distribution</h4>", unsafe_allow_html=True)
+
+									# Create heatmap of document-topic matrix (sample)
+									sample_size = min(20, doc_topic_matrix.shape[0])
+									doc_topic_sample = doc_topic_matrix.iloc[:sample_size]
+
+									fig = px.imshow(
+										doc_topic_sample,
+										labels=dict(x="Topic", y="Document", color="Probability"),
+										title=f"Document-Topic Distribution (Sample of {sample_size} Documents)",
+										color_continuous_scale="Viridis"
+									)
+									st.plotly_chart(fig, use_container_width=True)
+
+									# Topic distribution visualization
+									st.markdown("<h4>Topic Distribution Overview</h4>", unsafe_allow_html=True)
+
+									# Get the dominant topic for each document
+									dominant_topics = doc_topic_matrix.idxmax(axis=1).value_counts().sort_index()
+
+									# Create bar chart of topic distribution
+									fig = px.bar(
+										x=dominant_topics.index,
+										y=dominant_topics.values,
+										labels={'x': 'Topic', 'y': 'Document Count'},
+										title="Documents per Dominant Topic"
+									)
+									st.plotly_chart(fig, use_container_width=True)
+
+									# Create visualization of topic similarity/distance
+									if n_topics > 1:
+										st.markdown("<h4>Topic Similarity</h4>", unsafe_allow_html=True)
+
+										# Calculate topic similarity using cosine similarity
+										from sklearn.metrics.pairwise import cosine_similarity
+										topic_vectors = topic_term_matrix.values
+										topic_similarity = cosine_similarity(topic_vectors)
+
+										# Create heatmap of topic similarity
+										fig = px.imshow(
+											topic_similarity,
+											labels=dict(x="Topic", y="Topic", color="Cosine Similarity"),
+											x=[f"Topic {i+1}" for i in range(n_topics)],
+											y=[f"Topic {i+1}" for i in range(n_topics)],
+											title="Topic Similarity Matrix",
+											color_continuous_scale="Viridis"
+										)
+										st.plotly_chart(fig, use_container_width=True)
+
+							except Exception as e:
+								st.error(f"Error running LDA topic modeling: {str(e)}")
+
+						# Save model and results (if available)
+						if 'lda_results' in st.session_state and st.session_state.lda_results:
+							st.markdown("<h4>Save LDA Results</h4>", unsafe_allow_html=True)
+
+							save_col1, save_col2 = st.columns(2)
+
+							with save_col1:
+								if st.button("Save LDA Model"):
+									try:
+										# Save model
+										model_path = self.clustering_analyzer.save_model(
+											"lda",
+											os.path.dirname(st.session_state.current_file_path)
+										)
+										st.success(f"Saved LDA model to {model_path}")
+									except Exception as e:
+										st.error(f"Error saving LDA model: {str(e)}")
+
+							with save_col2:
+								if st.button("Save Topic Distributions"):
+									try:
+										# Get document-topic matrix from results
+										doc_topic_df = st.session_state.lda_results['doc_topic_matrix']
+
+										# Save
+										filepath = self.feature_engineer.save_features(
+											doc_topic_df,
+											"lda_topic_distributions",
+											os.path.dirname(st.session_state.current_file_path),
+											"csv"
+										)
+										st.success(f"Saved topic distributions to {filepath}")
+									except Exception as e:
+										st.error(f"Error saving topic distributions: {str(e)}")
+				else:
+					st.warning("No data available. Please load a dataset first.")
+
+			# 7. Evaluation Metrics Tab
+			with clustering_tabs[6]:
+				st.markdown("<h3>Clustering Evaluation Metrics</h3>", unsafe_allow_html=True)
+
+				st.markdown("""
+				<div class='info-box'>
+				This section compares the results of different clustering algorithms using various evaluation metrics.
+				It helps you determine which algorithm performs best for your data.
+				</div>
+				""", unsafe_allow_html=True)
+
+				# Check if we have any clustering results
+				has_kmeans = st.session_state.kmeans_labels is not None
+				has_hierarchical = st.session_state.hierarchical_labels is not None
+				has_dbscan = st.session_state.dbscan_labels is not None
+
+				if any([has_kmeans, has_hierarchical, has_dbscan]):
+					# Create table of metrics
+					metrics_data = {
+						'Algorithm': [],
+						'Number of Clusters': [],
+						'Silhouette Score': [],
+						'Davies-Bouldin Index': [],
+						'Calinski-Harabasz Index': []
+					}
+
+					# Add K-means metrics if available
+					if has_kmeans:
+						# Get metrics
+						kmeans_metrics = self.clustering_analyzer.cluster_metrics.get('kmeans', {})
+
+						# Add to table
+						metrics_data['Algorithm'].append('K-means')
+						metrics_data['Number of Clusters'].append(len(set(st.session_state.kmeans_labels)))
+						metrics_data['Silhouette Score'].append(kmeans_metrics.get('silhouette_score', 'N/A'))
+						metrics_data['Davies-Bouldin Index'].append(kmeans_metrics.get('davies_bouldin_score', 'N/A'))
+						metrics_data['Calinski-Harabasz Index'].append(kmeans_metrics.get('calinski_harabasz_score', 'N/A'))
+
+					# Add hierarchical metrics if available
+					if has_hierarchical:
+						# Get metrics
+						hierarchical_metrics = self.clustering_analyzer.cluster_metrics.get('hierarchical', {})
+
+						# Add to table
+						metrics_data['Algorithm'].append('Hierarchical')
+						metrics_data['Number of Clusters'].append(len(set(st.session_state.hierarchical_labels)))
+						metrics_data['Silhouette Score'].append(hierarchical_metrics.get('silhouette_score', 'N/A'))
+						metrics_data['Davies-Bouldin Index'].append(hierarchical_metrics.get('davies_bouldin_score', 'N/A'))
+						metrics_data['Calinski-Harabasz Index'].append(hierarchical_metrics.get('calinski_harabasz_score', 'N/A'))
+
+					# Add DBSCAN metrics if available
+					if has_dbscan:
+						# Get metrics
+						dbscan_metrics = self.clustering_analyzer.cluster_metrics.get('dbscan', {})
+
+						# Add to table
+						metrics_data['Algorithm'].append('DBSCAN')
+						metrics_data['Number of Clusters'].append(len(set(st.session_state.dbscan_labels)) - (1 if -1 in st.session_state.dbscan_labels else 0))
+						metrics_data['Silhouette Score'].append(dbscan_metrics.get('silhouette_score', 'N/A'))
+						metrics_data['Davies-Bouldin Index'].append(dbscan_metrics.get('davies_bouldin_score', 'N/A'))
+						metrics_data['Calinski-Harabasz Index'].append(dbscan_metrics.get('calinski_harabasz_score', 'N/A'))
+
+					# Convert to DataFrame
+					metrics_df = pd.DataFrame(metrics_data)
+
+					# Display metrics table
+					st.markdown("<h4>Clustering Performance Metrics</h4>", unsafe_allow_html=True)
+					st.dataframe(metrics_df, use_container_width=True)
+
+					# Create visualizations of metrics
+					st.markdown("<h4>Metric Comparison</h4>", unsafe_allow_html=True)
+
+					# Create bar chart for each metric
+					metrics_to_viz = ['Silhouette Score', 'Davies-Bouldin Index', 'Calinski-Harabasz Index']
+
+					for metric in metrics_to_viz:
+						# Skip if all values are N/A
+						if all(val == 'N/A' for val in metrics_df[metric]):
+							continue
+
+						# Filter out N/A values
+						temp_df = metrics_df[metrics_df[metric] != 'N/A'].copy()
+
+						if len(temp_df) > 0:
+							# Create bar chart
+							fig = px.bar(
+								temp_df,
+								x='Algorithm',
+								y=metric,
+								title=f"Comparison of {metric}",
+								color='Algorithm',
+								color_discrete_sequence=px.colors.qualitative.G10
+							)
+
+							# Add note about which direction is better
+							if metric == 'Davies-Bouldin Index':
+								fig.add_annotation(
+									text="Lower is better",
+									xref="paper", yref="paper",
+									x=0.5, y=1.05,
+									showarrow=False
+								)
+							else:
+								fig.add_annotation(
+									text="Higher is better",
+									xref="paper", yref="paper",
+									x=0.5, y=1.05,
+									showarrow=False
+								)
+
+							st.plotly_chart(fig, use_container_width=True)
+
+					# Model Selection Guide
+					st.markdown("<h4>Clustering Algorithm Selection Guide</h4>", unsafe_allow_html=True)
+
+					# Determine best algorithm for each metric
+					best_silhouette = None
+					best_davies_bouldin = None
+					best_calinski_harabasz = None
+
+					if 'Silhouette Score' in metrics_df.columns:
+						valid_scores = metrics_df[metrics_df['Silhouette Score'] != 'N/A']
+						if not valid_scores.empty:
+							best_silhouette = valid_scores.loc[valid_scores['Silhouette Score'].astype(float).idxmax()]['Algorithm']
+
+					if 'Davies-Bouldin Index' in metrics_df.columns:
+						valid_scores = metrics_df[metrics_df['Davies-Bouldin Index'] != 'N/A']
+						if not valid_scores.empty:
+							best_davies_bouldin = valid_scores.loc[valid_scores['Davies-Bouldin Index'].astype(float).idxmin()]['Algorithm']
+
+					if 'Calinski-Harabasz Index' in metrics_df.columns:
+						valid_scores = metrics_df[metrics_df['Calinski-Harabasz Index'] != 'N/A']
+						if not valid_scores.empty:
+							best_calinski_harabasz = valid_scores.loc[valid_scores['Calinski-Harabasz Index'].astype(float).idxmax()]['Algorithm']
+
+					# Create a recommendations section
+					with st.expander("Algorithm Recommendations", expanded=True):
+						if best_silhouette or best_davies_bouldin or best_calinski_harabasz:
+							st.markdown("""
+							Based on the evaluation metrics, here are the top-performing algorithms:
+							""")
+
+							recommendations = []
+
+							if best_silhouette:
+								recommendations.append(f"- **Best Silhouette Score**: {best_silhouette}")
+
+							if best_davies_bouldin:
+								recommendations.append(f"- **Best Davies-Bouldin Index**: {best_davies_bouldin}")
+
+							if best_calinski_harabasz:
+								recommendations.append(f"- **Best Calinski-Harabasz Index**: {best_calinski_harabasz}")
+
+							for rec in recommendations:
+								st.markdown(rec)
+
+							# Count algorithm occurrences
+							from collections import Counter
+
+							algorithms = [a for a in [best_silhouette, best_davies_bouldin, best_calinski_harabasz] if a]
+							algo_count = Counter(algorithms)
+
+							# Make a final recommendation
+							if algo_count:
+								most_common = algo_count.most_common(1)[0][0]
+								st.markdown(f"""
+								### Overall Recommendation
+
+								**{most_common}** appears to be the best clustering algorithm for this dataset
+								based on the evaluation metrics.
+								""")
+						else:
+							st.markdown("""
+							No metrics are available for comparison. Please run at least one clustering algorithm
+							to generate evaluation metrics.
+							""")
+
+					# Save metrics report
+					if st.button("Save Metrics Report"):
+						try:
+							# Create directory if it doesn't exist
+							reports_dir = os.path.join(os.path.dirname(st.session_state.current_file_path), 'reports')
+							os.makedirs(reports_dir, exist_ok=True)
+
+							# Create timestamp for filename
+							timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+
+							# Create report file path
+							report_path = os.path.join(reports_dir, f"clustering_metrics_report_{timestamp}.csv")
+
+							# Save metrics DataFrame
+							metrics_df.to_csv(report_path, index=False)
+
+							# Show success message
+							st.success(f"Saved metrics report to {report_path}")
+						except Exception as e:
+							st.error(f"Error saving metrics report: {str(e)}")
+
+					# Compare cluster assignments
+					st.markdown("<h4>Cluster Assignment Comparison</h4>", unsafe_allow_html=True)
+
+					# Check if we have at least two clustering results
+					algorithms_with_results = []
+					if has_kmeans:
+						algorithms_with_results.append("K-means")
+					if has_hierarchical:
+						algorithms_with_results.append("Hierarchical")
+					if has_dbscan:
+						algorithms_with_results.append("DBSCAN")
+
+					if len(algorithms_with_results) >= 2:
+						# Select two algorithms to compare
+						compare_col1, compare_col2 = st.columns(2)
+
+						with compare_col1:
+							algo1 = st.selectbox(
+								"First Algorithm",
+								algorithms_with_results,
+								index=0,
+								key="compare_algo1"
+							)
+
+						with compare_col2:
+							# Default to second algorithm in list
+							default_idx = 1 if len(algorithms_with_results) > 1 else 0
+							algo2 = st.selectbox(
+								"Second Algorithm",
+								algorithms_with_results,
+								index=default_idx,
+								key="compare_algo2"
+							)
+
+						# Get cluster labels for selected algorithms
+						labels1 = None
+						labels2 = None
+
+						if algo1 == "K-means":
+							labels1 = st.session_state.kmeans_labels
+						elif algo1 == "Hierarchical":
+							labels1 = st.session_state.hierarchical_labels
+						elif algo1 == "DBSCAN":
+							labels1 = st.session_state.dbscan_labels
+
+						if algo2 == "K-means":
+							labels2 = st.session_state.kmeans_labels
+						elif algo2 == "Hierarchical":
+							labels2 = st.session_state.hierarchical_labels
+						elif algo2 == "DBSCAN":
+							labels2 = st.session_state.dbscan_labels
+
+						# Create comparison if we have both labels
+						if labels1 is not None and labels2 is not None:
+							# Create contingency table
+							contingency = pd.crosstab(
+								labels1,
+								labels2,
+								rownames=[f"{algo1} Clusters"],
+								colnames=[f"{algo2} Clusters"]
+							)
+
+							# Display contingency table
+							st.markdown(f"<h5>Agreement between {algo1} and {algo2}</h5>", unsafe_allow_html=True)
+							st.dataframe(contingency, use_container_width=True)
+
+							# Create heatmap
+							fig = px.imshow(
+								contingency,
+								labels=dict(x=f"{algo2} Clusters", y=f"{algo1} Clusters", color="Count"),
+								title=f"Cluster Assignment Comparison: {algo1} vs {algo2}",
+								color_continuous_scale="Viridis"
+							)
+							st.plotly_chart(fig, use_container_width=True)
+
+							# Calculate agreement metrics
+							from sklearn.metrics import adjusted_rand_score, adjusted_mutual_info_score
+
+							# Handle noise points in DBSCAN (exclude from comparison)
+							if algo1 == "DBSCAN" or algo2 == "DBSCAN":
+								# Create mask for non-noise points
+								mask1 = labels1 != -1 if algo1 == "DBSCAN" else pd.Series(True, index=labels1.index)
+								mask2 = labels2 != -1 if algo2 == "DBSCAN" else pd.Series(True, index=labels2.index)
+
+								# Combined mask
+								combined_mask = mask1 & mask2
+
+								# Filter labels
+								compare_labels1 = labels1[combined_mask]
+								compare_labels2 = labels2[combined_mask]
+
+								# Note about noise points
+								st.info("Noise points (cluster -1) from DBSCAN are excluded from the agreement calculation.")
+							else:
+								compare_labels1 = labels1
+								compare_labels2 = labels2
+
+							# Calculate metrics
+							ari = adjusted_rand_score(compare_labels1, compare_labels2)
+							ami = adjusted_mutual_info_score(compare_labels1, compare_labels2)
+
+							# Display metrics
+							st.markdown(f"""
+							**Agreement Metrics:**
+							- Adjusted Rand Index (ARI): {ari:.4f} (ranges from -1 to 1, where 1 means perfect agreement)
+							- Adjusted Mutual Information (AMI): {ami:.4f} (ranges from 0 to 1, where 1 means perfect agreement)
+							""")
+
+							# Interpret agreement
+							if ari > 0.8:
+								st.success("The two clustering algorithms show very strong agreement in their results.")
+							elif ari > 0.5:
+								st.info("The two clustering algorithms show moderate agreement in their results.")
+							elif ari > 0.2:
+								st.warning("The two clustering algorithms show weak agreement in their results.")
+							else:
+								st.error("The two clustering algorithms show very little agreement in their results.")
+					else:
+						st.info("Run at least two clustering algorithms to compare their results.")
+				else:
+					st.warning("No clustering results available. Please run at least one clustering algorithm first.")
+
+				# Load and Compare Models Section
+				st.markdown("<h4>Load and Compare Saved Models</h4>", unsafe_allow_html=True)
+
+				# File uploader for saved models
+				uploaded_model = st.file_uploader(
+					"Load a saved clustering model (PKL file)",
+					type=["pkl"]
+				)
+
+				if uploaded_model is not None:
+					try:
+						# Read the uploaded model
+						model_bytes = uploaded_model.read()
+
+						# Create a BytesIO object
+						bytes_io = BytesIO(model_bytes)
+
+						# Load the model
+						model = pickle.load(bytes_io)
+
+						# Get model type
+						if isinstance(model, KMeans):
+							model_type = "kmeans"
+						elif isinstance(model, AgglomerativeClustering):
+							model_type = "hierarchical"
+						elif isinstance(model, DBSCAN):
+							model_type = "dbscan"
+						elif 'model' in model and isinstance(model['model'], LatentDirichletAllocation):
+							model_type = "lda"
+						else:
+							model_type = "unknown"
+
+						# Show model info
+						st.success(f"Successfully loaded {model_type.upper()} model from {uploaded_model.name}")
+
+						# Store model for comparison
+						model_name = f"loaded_{model_type}"
+
+						# Store in clustering analyzer
+						self.clustering_analyzer.load_model(bytes_io, model_name)
+
+						# Show option to apply model to current data
+						if st.button("Apply Loaded Model to Current Data"):
+							# Check if we have input data
+							if st.session_state.clustering_input_data is not None:
+								try:
+									with st.spinner(f"Applying loaded {model_type.upper()} model to current data..."):
+										# Apply model based on type
+										if model_type == "kmeans":
+											# Predict clusters
+											labels = pd.Series(
+												model.predict(st.session_state.clustering_input_data),
+												index=st.session_state.clustering_input_data.index,
+												name="cluster"
+											)
+
+											# Store labels
+											st.session_state.kmeans_labels = labels
+
+											# Calculate metrics
+											metrics = self.clustering_analyzer.evaluate_clustering(
+												st.session_state.clustering_input_data,
+												labels,
+												"kmeans"
+											)
+
+											# Show success message
+											st.success(f"""
+											Applied K-means model to current data.
+											- Number of clusters: {model.n_clusters}
+											- Silhouette score: {metrics['silhouette_score']:.4f}
+											- Davies-Bouldin index: {metrics['davies_bouldin_score']:.4f}
+											- Calinski-Harabasz index: {metrics['calinski_harabasz_score']:.4f}
+											""")
+
+										elif model_type == "hierarchical":
+											# Predict clusters
+											labels = pd.Series(
+												model.fit_predict(st.session_state.clustering_input_data),
+												index=st.session_state.clustering_input_data.index,
+												name="cluster"
+											)
+
+											# Store labels
+											st.session_state.hierarchical_labels = labels
+
+											# Calculate metrics
+											metrics = self.clustering_analyzer.evaluate_clustering(
+												st.session_state.clustering_input_data,
+												labels,
+												"hierarchical"
+											)
+
+											# Show success message
+											st.success(f"""
+											Applied Hierarchical Clustering model to current data.
+											- Number of clusters: {model.n_clusters}
+											- Silhouette score: {metrics['silhouette_score']:.4f}
+											- Davies-Bouldin index: {metrics['davies_bouldin_score']:.4f}
+											- Calinski-Harabasz index: {metrics['calinski_harabasz_score']:.4f}
+											""")
+
+										elif model_type == "dbscan":
+											# Predict clusters
+											labels = pd.Series(
+												model.fit_predict(st.session_state.clustering_input_data),
+												index=st.session_state.clustering_input_data.index,
+												name="cluster"
+											)
+
+											# Store labels
+											st.session_state.dbscan_labels = labels
+
+											# Count clusters and noise points
+											n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+											n_noise = list(labels).count(-1)
+
+											# Calculate metrics
+											if n_clusters > 1:
+												# Exclude noise points
+												non_noise_mask = labels != -1
+												metrics = self.clustering_analyzer.evaluate_clustering(
+													st.session_state.clustering_input_data[non_noise_mask],
+													labels[non_noise_mask],
+													"dbscan"
+												)
+
+												# Show success message
+												st.success(f"""
+												Applied DBSCAN model to current data.
+												- Number of clusters: {n_clusters}
+												- Number of noise points: {n_noise} ({n_noise/len(labels)*100:.2f}%)
+												- Silhouette score: {metrics['silhouette_score']:.4f}
+												- Davies-Bouldin index: {metrics['davies_bouldin_score']:.4f}
+												- Calinski-Harabasz index: {metrics['calinski_harabasz_score']:.4f}
+												""")
+											else:
+												st.warning(f"""
+												Applied DBSCAN model to current data.
+												- Number of clusters: {n_clusters}
+												- Number of noise points: {n_noise} ({n_noise/len(labels)*100:.2f}%)
+												- No metrics available with fewer than 2 clusters.
+												""")
+
+										elif model_type == "lda":
+											st.warning("""
+											LDA models cannot be applied directly to the current data.
+											Please run a new LDA model on your current text data.
+											""")
+								except Exception as e:
+									st.error(f"Error applying loaded model to current data: {str(e)}")
+							else:
+								st.warning("No input data available. Please prepare data in the Data Selection tab first.")
+					except Exception as e:
+						st.error(f"Error loading model: {str(e)}")
+
 
 
 if __name__ == "__main__":

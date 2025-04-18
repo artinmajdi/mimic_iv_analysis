@@ -27,6 +27,7 @@
 	],
 	"settings": {
 		"hide-files.files": [],
-		"explorer.excludeGitIgnore": true
+		"explorer.excludeGitIgnore": true,
+		"python.languageServer": "None"
 	}
 }
