@@ -1,3 +1,46 @@
+"""
+MIMIC-IV Analysis Dashboard using PyHealth
+========================================
+
+This file implements a Streamlit dashboard for analyzing MIMIC-IV v3.1 data using PyHealth.
+
+Key Components:
+-------------
+1. ExtendedMIMIC4Dataset: Extends PyHealth's MIMIC4Dataset to handle additional tables
+   - Supports both hosp/ and icu/ directory structures
+   - Handles custom table parsing for unsupported tables
+   - Maintains extra_tables dict for additional data
+
+2. Data Loading & Processing:
+   - Handles MIMIC-IV v3.1 directory structure
+   - Supports code mapping between medical coding systems
+   - Includes development mode for smaller data subsets
+   - Verifies table existence and provides warnings
+
+3. Features:
+   - Patient demographics analysis
+   - Diagnoses and procedures analysis
+   - Medications and lab tests analysis
+   - ICU stays analysis
+   - Predictive tasks (mortality, readmission, etc.)
+   - Model training and evaluation
+
+Recent Changes:
+-------------
+- Fixed event access methods:
+  * Changed visit.get_event_names() to list(visit.event_list_dict.keys())
+  * Changed visit.get_event_from_type() to visit.get_event_list()
+
+Important Notes:
+-------------
+- Visit events are accessed through visit.event_list_dict
+- The ExtendedMIMIC4Dataset expects root path to point to hosp/ directory
+- Supported predictive tasks: drug recommendation, mortality prediction,
+  readmission prediction, length of stay prediction
+- Available models: Transformer, RETAIN, RNN, MLP, CNN
+"""
+
+
 # Standard library imports
 import json
 import os
