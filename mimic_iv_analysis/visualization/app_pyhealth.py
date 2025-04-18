@@ -167,16 +167,13 @@ st.markdown("This app allows you to load, explore, and analyze MIMIC-IV v3.1 hea
 
 # Sidebar for navigation and settings
 st.sidebar.title("Navigation")
-app_mode = st.sidebar.selectbox(
-    "Choose a mode",
-    ["Home", "Data Loading", "Data Exploration", "Predictive Tasks", "Model Training & Evaluation", "Patient Analytics"]
-)
+app_mode = st.sidebar.selectbox("Choose a mode", ["Home", "Data Loading", "Data Exploration", "Predictive Tasks", "Model Training & Evaluation", "Patient Analytics"])
 
 # Global variables
-dataset = None
+dataset       = None
 mimic4_sample = None
-task_fn = None
-model = None
+task_fn       = None
+model         = None
 
 # Helper functions
 def load_mimic_data(root_path, tables, code_mapping=None, dev=False):

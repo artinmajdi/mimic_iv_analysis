@@ -57,12 +57,12 @@ DEV_REQUIREMENTS = [
 ]
 
 KEYWORDS = [
-        "healthcare",
-        "clinical-data",
-        "mimic-iv",
-        "data-analysis",
-        "machine-learning",
-        "medical-research",
+    "healthcare",
+    "clinical-data",
+    "mimic-iv",
+    "data-analysis",
+    "machine-learning",
+    "medical-research",
 ]
 
 
@@ -99,15 +99,9 @@ setup(
     python_requires=">=3.10,<3.13",
     install_requires=requirements,
     extras_require=EXTRA_REQUIRES,
-    packages=find_packages(where="src", exclude=["tests*", "docs*"]),
-    package_dir={"": "src"},
+    packages=find_packages(exclude=["tests*", "docs*"]),
     include_package_data=True,
     zip_safe=False,
-    entry_points={
-        "console_scripts": [
-            "mimic-iv-analysis=agent.app:main",
-        ],
-    },
     keywords=KEYWORDS,
     project_urls={
         "Issue Tracker": f"{URL}/issues",

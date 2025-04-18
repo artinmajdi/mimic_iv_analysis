@@ -1,13 +1,9 @@
 # Standard library imports
 import os
-import sys
-import glob
 import logging
 import datetime
 import pickle
 from io import BytesIO
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 # Data processing imports
 import numpy as np
@@ -29,273 +25,30 @@ from sklearn.decomposition import LatentDirichletAllocation
 # Streamlit import
 import streamlit as st
 
-# Optional imports (importing separately for better error handling)
-try:
-	import umap
-except ImportError:
-	pass  # Handle missing umap import
+from mimic_iv_analysis.core import MIMICClusteringAnalysis, MIMICFeatureEngineer, MIMICDataLoader, MIMICVisualizer
 
-# Add the parent directory to the path to import from src
-sys.path.append(str(Path(__file__).parent.parent.parent))
 
 
 # Constants
-DEFAULT_MIMIC_PATH = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1"
+DEFAULT_MIMIC_PATH      = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1"
 LARGE_FILE_THRESHOLD_MB = 100
-DEFAULT_SAMPLE_SIZE = 1000
-RANDOM_STATE = 42
+DEFAULT_SAMPLE_SIZE     = 1000
+RANDOM_STATE            = 42
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-
-# --- Data Handling Class ---
-class MIMICDataHandler:
-	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
-	def __init__(self):
-		pass
-
-	def _format_size(self, size_mb: float) -> str:
-		"""Format file size into KB, MB, or GB string."""
-		if size_mb < 0.001:
-			 return "(< 1 KB)"
-		elif size_mb < 1:
-			return f"({size_mb * 1024:.1f} KB)"
-		elif size_mb < 1000:
-			return f"({size_mb:.1f} MB)"
-		else:
-			return f"({size_mb / 1000:.1f} GB)"
-
-
-	def scan_mimic_directory(self, mimic_path: str) -> Tuple[Dict, Dict, Dict, Dict]:
-		"""Scans the MIMIC-IV directory structure and returns table info."""
-		available_tables = {}
-		file_paths = {}
-		file_sizes = {}
-		table_display_names = {}
-
-		if not os.path.exists(mimic_path):
-			return available_tables, file_paths, file_sizes, table_display_names
-
-		modules = ['hosp', 'icu']
-		for module in modules:
-			module_path = os.path.join(mimic_path, module)
-			if os.path.exists(module_path):
-				available_tables[module] = []
-				current_module_tables = {}
-
-				csv_files = glob.glob(os.path.join(module_path, '*.csv'))
-				csv_gz_files = glob.glob(os.path.join(module_path, '*.csv.gz'))
-
-				all_files = csv_files + csv_gz_files
-
-				for file_path in all_files:
-					is_gz = file_path.endswith('.csv.gz')
-					table_name = os.path.basename(file_path).replace('.csv.gz' if is_gz else '.csv', '')
-
-					if table_name in current_module_tables and not is_gz:
-						current_module_tables[table_name] = file_path
-					elif table_name not in current_module_tables:
-						current_module_tables[table_name] = file_path
-
-				for table_name, file_path in current_module_tables.items():
-					available_tables[module].append(table_name)
-					file_paths[(module, table_name)] = file_path
-					try:
-						file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-					except OSError:
-						file_size_mb = 0
-					file_sizes[(module, table_name)] = file_size_mb
-					size_str = self._format_size(file_size_mb)
-					table_display_names[(module, table_name)] = f"{table_name} {size_str}"
-
-				available_tables[module].sort()
-
-		return available_tables, file_paths, file_sizes, table_display_names
-
-	def load_mimic_table(self, file_path: str, sample_size: int = DEFAULT_SAMPLE_SIZE, encoding: str = 'latin-1') -> Optional[pd.DataFrame]:
-		"""Loads a specific MIMIC-IV table, handling large files and sampling."""
-		try:
-			file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-			is_compressed = file_path.endswith('.gz')
-			compression = 'gzip' if is_compressed else None
-
-			read_params = {
-				'encoding': encoding,
-				'compression': compression,
-				'low_memory': False
-			}
-
-			if file_size_mb > LARGE_FILE_THRESHOLD_MB:
-				df = pd.read_csv(file_path, nrows=sample_size, **read_params)
-			else:
-				df = pd.read_csv(file_path, **read_params)
-				if len(df) > sample_size:
-					df = df.sample(sample_size, random_state=RANDOM_STATE)
-			return df
-		except Exception as e:
-			logging.error(f"Error loading data from {os.path.basename(file_path)}: {str(e)}")
-			return None
-
-
-	def get_table_info(self, module: str, table_name: str) -> str:
-		"""Get descriptive information about a specific MIMIC-IV table."""
-		table_info = {
-			('hosp', 'admissions'): "Patient hospital admissions information",
-			('hosp', 'patients'): "Patient demographic data",
-			('hosp', 'labevents'): "Laboratory measurements (large file)",
-			('hosp', 'microbiologyevents'): "Microbiology test results",
-			('hosp', 'pharmacy'): "Pharmacy orders",
-			('hosp', 'prescriptions'): "Medication prescriptions",
-			('hosp', 'procedures_icd'): "Patient procedures",
-			('hosp', 'diagnoses_icd'): "Patient diagnoses",
-			('hosp', 'emar'): "Electronic medication administration records",
-			('hosp', 'emar_detail'): "Detailed medication administration data",
-			('hosp', 'poe'): "Provider order entries",
-			('hosp', 'poe_detail'): "Detailed order information",
-			('hosp', 'd_hcpcs'): "HCPCS code definitions",
-			('hosp', 'd_icd_diagnoses'): "ICD diagnosis code definitions",
-			('hosp', 'd_icd_procedures'): "ICD procedure code definitions",
-			('hosp', 'd_labitems'): "Laboratory test definitions",
-			('hosp', 'hcpcsevents'): "HCPCS events",
-			('hosp', 'drgcodes'): "Diagnosis-related group codes",
-			('hosp', 'services'): "Hospital services",
-			('hosp', 'transfers'): "Patient transfers",
-			('hosp', 'provider'): "Provider information",
-			('hosp', 'omr'): "Order monitoring results",
-			('icu', 'chartevents'): "Patient charting data (vital signs, etc.)",
-			('icu', 'datetimeevents'): "Date/time-based events",
-			('icu', 'inputevents'): "Patient intake data",
-			('icu', 'outputevents'): "Patient output data",
-			('icu', 'procedureevents'): "ICU procedures",
-			('icu', 'ingredientevents'): "Detailed medication ingredients",
-			('icu', 'd_items'): "Dictionary of ICU items",
-			('icu', 'icustays'): "ICU stay information",
-			('icu', 'caregiver'): "Caregiver information"
-		}
-		return table_info.get((module, table_name), "No description available")
-
-	def convert_to_parquet(self, df: pd.DataFrame, table_name: str, current_file_path: str) -> Optional[str]:
-		"""Converts the loaded DataFrame to Parquet format. Returns path or None."""
-		try:
-			parquet_dir = os.path.join(os.path.dirname(current_file_path), 'parquet_files')
-			os.makedirs(parquet_dir, exist_ok=True)
-			parquet_file = os.path.join(parquet_dir, f"{table_name}.parquet")
-			table = pa.Table.from_pandas(df)
-			pq.write_table(table, parquet_file)
-			return parquet_file
-		except Exception as e:
-			logging.error(f"Error converting {table_name} to Parquet: {str(e)}")
-			return None
-
-
-# --- Visualization Class ---
-class MIMICVisualizer:
-	def __init__(self):
-		pass
-
-	def display_dataset_statistics(self, df: Optional[pd.DataFrame]):
-		"""Displays key statistics about the loaded DataFrame."""
-		if df is not None:
-			st.markdown("<h2 class='sub-header'>Dataset Statistics</h2>", unsafe_allow_html=True)
-
-			col1, col2 = st.columns(2)
-			with col1:
-				st.markdown("<div class='info-box'>", unsafe_allow_html=True)
-				st.markdown(f"**Number of rows:** {len(df)}")
-				st.markdown(f"**Number of columns:** {len(df.columns)}")
-				st.markdown("</div>", unsafe_allow_html=True)
-
-			with col2:
-				st.markdown("<div class='info-box'>", unsafe_allow_html=True)
-				st.markdown(f"**Memory usage:** {df.memory_usage(deep=True).sum() / (1024 * 1024):.2f} MB")
-				st.markdown(f"**Missing values:** {df.isna().sum().sum()}")
-				st.markdown("</div>", unsafe_allow_html=True)
-
-			# Display column information
-			st.markdown("<h3>Column Information</h3>", unsafe_allow_html=True)
-			try:
-				col_info = pd.DataFrame({
-					'Column': df.columns,
-					'Type': df.dtypes.values,
-					'Non-Null Count': df.count().values,
-					'Missing Values (%)': (df.isna().sum() / len(df) * 100).values.round(2),
-					'Unique Values': [df[col].nunique() for col in df.columns]
-				})
-				st.dataframe(col_info, use_container_width=True)
-			except Exception as e:
-				st.error(f"Error generating column info: {e}")
-		else:
-			st.info("No data loaded to display statistics.")
-
-	# Function to display data preview
-	def display_data_preview(self, df: Optional[pd.DataFrame]):
-		if df is not None:
-			st.markdown("<h2 class='sub-header'>Data Preview</h2>", unsafe_allow_html=True)
-			st.dataframe(df.head(10), use_container_width=True)
-
-	# Function to display visualizations
-	def display_visualizations(self, df: Optional[pd.DataFrame]):
-		if df is not None:
-			st.markdown("<h2 class='sub-header'>Data Visualization</h2>", unsafe_allow_html=True)
-
-			# Select columns for visualization
-			numeric_cols    : List[str] = df.select_dtypes(include=['number']).columns.tolist()
-			categorical_cols: List[str] = df.select_dtypes(include=['object', 'category']).columns.tolist()
-
-			if len(numeric_cols) > 0:
-				st.markdown("<h3>Numeric Data Visualization</h3>", unsafe_allow_html=True)
-
-				# Histogram
-				selected_num_col = st.selectbox("Select a numeric column for histogram", numeric_cols)
-				if selected_num_col:
-					fig = px.histogram(df, x=selected_num_col, title=f"Distribution of {selected_num_col}")
-					st.plotly_chart(fig, use_container_width=True)
-
-				# Scatter plot (if at least 2 numeric columns)
-				if len(numeric_cols) >= 2:
-					st.markdown("<h3>Scatter Plot</h3>", unsafe_allow_html=True)
-					col1, col2 = st.columns(2)
-					with col1:
-						x_col = st.selectbox("Select X-axis", numeric_cols)
-					with col2:
-						y_col = st.selectbox("Select Y-axis", numeric_cols, index=min(1, len(numeric_cols)-1))
-
-					if x_col and y_col:
-						fig = px.scatter(df, x=x_col, y=y_col, title=f"{y_col} vs {x_col}")
-						st.plotly_chart(fig, use_container_width=True)
-
-			if len(categorical_cols) > 0:
-				st.markdown("<h3>Categorical Data Visualization</h3>", unsafe_allow_html=True)
-
-				# Bar chart
-				selected_cat_col = st.selectbox("Select a categorical column for bar chart", categorical_cols)
-				if selected_cat_col:
-					value_counts = df[selected_cat_col].value_counts().reset_index()
-					value_counts.columns = [selected_cat_col, 'Count']
-
-					# Limit to top 20 categories if there are too many
-					if len(value_counts) > 20:
-						value_counts = value_counts.head(20)
-						title = f"Top 20 values in {selected_cat_col}"
-					else:
-						title = f"Distribution of {selected_cat_col}"
-
-					fig = px.bar(value_counts, x=selected_cat_col, y='Count', title=title)
-					st.plotly_chart(fig, use_container_width=True)
-
-
-# --- Main Application Class ---
 class MIMICDashboardApp:
 	def __init__(self):
 		logging.info("Initializing MIMICDashboardApp...")
-		self.data_handler = MIMICDataHandler()
-		self.visualizer = MIMICVisualizer()
-		self.feature_engineer = MIMICFeatureEngineer()  # Initialize feature engineer
-		self.clustering_analyzer = MIMICClusteringAnalysis()  # Initialize clustering analyzer
+		self.data_handler        = MIMICDataLoader()
+		self.visualizer          = MIMICVisualizer()
+		self.feature_engineer    = MIMICFeatureEngineer()
+		self.clustering_analyzer = MIMICClusteringAnalysis()
 		self.init_session_state()
 		logging.info("MIMICDashboardApp initialized.")
+
 
 	@staticmethod
 	def init_session_state():
@@ -370,6 +123,7 @@ class MIMICDashboardApp:
 
 		logging.info("Session state initialized.")
 
+
 	def run(self):
 		"""Run the main application loop."""
 		logging.info("Starting MIMICDashboardApp run...")
@@ -412,6 +166,7 @@ class MIMICDashboardApp:
 		# Call the method to display the main content with tabs
 		self._display_main_content_with_tabs()
 		logging.info("MIMICDashboardApp run finished.")
+
 
 	def _display_sidebar(self):
 		"""Handles the display and logic of the sidebar components."""
@@ -499,6 +254,7 @@ class MIMICDashboardApp:
 							st.session_state.detected_order_cols = self.feature_engineer.detect_order_columns(df)
 							st.session_state.detected_time_cols = self.feature_engineer.detect_temporal_columns(df)
 							st.session_state.detected_patient_id_col = self.feature_engineer.detect_patient_id_column(df)
+
 
 	def _display_main_content_with_tabs(self):
 		"""Handles the display of the main content area with tabs."""
@@ -622,15 +378,12 @@ class MIMICDashboardApp:
 			</div>
 			""", unsafe_allow_html=True)
 
+
 	def _display_export_options(self, data, feature_type='order_frequency_matrix'):
 		"""Helper function to display export options for engineered features."""
 		with st.expander("#### Export Options"):
 
-			cols = st.columns([1,2,1])
-
 			save_format = st.radio("Save Format", ["CSV", "Parquet"], horizontal=True)
-
-			export_name = st.text_input("File Name", f"mimic_{feature_type}")
 
 			if st.button("Save Frequency Matrix"):
 				try:

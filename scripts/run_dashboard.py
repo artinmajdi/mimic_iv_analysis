@@ -52,7 +52,7 @@ def main():
     # Get the project root directory (one level up from scripts directory)
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
-    visualization_dir = os.path.join(project_root, 'src', 'visualization')
+    visualization_dir = os.path.join(project_root, 'mimic_iv_analysis', 'visualization')
 
     # Make sure the project root is in the Python path
     if project_root not in sys.path:
