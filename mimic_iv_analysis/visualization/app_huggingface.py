@@ -28,6 +28,18 @@ import streamlit as st
 from mimic_iv_analysis.core import MIMICClusteringAnalysis, MIMICClusterAnalyzer, MIMICFeatureEngineer, MIMICDataLoader, MIMICVisualizer
 
 
+""" TODO: Remove the _display_analysis_visualization_tab() function from here as well as the MIMICClusterAnalyzer class from the clustering.py. thn run the following command in claude with the remaining code:
+
+Please enhance my MIMIC-IV Streamlit dashboard (src/visualization/app_huggingface.py) by adding the following advanced analytics modules. Implement each step sequentially, ensuring the code is well-structured and documented:
+	3. Analysis & Visualization
+	- Implement length of stay comparison across identified clusters
+	- Create interactive visualizations of order patterns using Plotly
+	- Add statistical significance testing between clusters
+	- Generate downloadable cluster characterization reports
+	- Include heatmaps of feature importance for each cluster
+
+	old claude link: https://claude.ai/chat/fce25354-341f-4228-aa56-fe71e406a08f
+"""
 
 # Constants
 DEFAULT_MIMIC_PATH      = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1"
@@ -293,7 +305,7 @@ class MIMICDashboardApp:
 				"Export Options"
 			])
 
-# Tab 1: Exploration & Visualization
+			# Tab 1: Exploration & Visualization
 			with tab1:
 				# Data preview
 				self.visualizer.display_data_preview(st.session_state.df)
