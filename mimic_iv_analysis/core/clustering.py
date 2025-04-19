@@ -16,6 +16,8 @@ from sklearn.manifold import TSNE
 from sklearn.metrics import calinski_harabasz_score, davies_bouldin_score, silhouette_score
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, normalize
 
+# import go
+import plotly.graph_objects as go
 
 RANDOM_STATE = 42
 
@@ -595,3 +597,591 @@ class MIMICClusteringAnalysis:
 		return summary.T
 
 
+class MIMICClusterAnalyzer:
+	"""Handles advanced analytics and visualization for cluster analysis."""
+
+	def __init__(self):
+		self.random_state = 42
+		self.analysis_results = {}
+
+	def calculate_length_of_stay(self, df: pd.DataFrame,
+								admission_col: str,
+								discharge_col: str,
+								patient_id_col: str = None) -> pd.Series:
+		"""Calculate length of stay in days for each patient."""
+		if admission_col not in df.columns or discharge_col not in df.columns:
+			raise ValueError(f"Columns {admission_col} or {discharge_col} not found in DataFrame")
+
+		# Ensure datetime format
+		if df[admission_col].dtype != 'datetime64[ns]':
+			df[admission_col] = pd.to_datetime(df[admission_col])
+		if df[discharge_col].dtype != 'datetime64[ns]':
+			df[discharge_col] = pd.to_datetime(df[discharge_col])
+
+		# Calculate length of stay in days
+		los = (df[discharge_col] - df[admission_col]).dt.total_seconds() / (24 * 60 * 60)
+
+		# Create a Series with patient ID as index if provided
+		if patient_id_col and patient_id_col in df.columns:
+			los = pd.Series(los.values, index=df[patient_id_col], name='length_of_stay')
+		else:
+			los = pd.Series(los.values, name='length_of_stay')
+
+		return los
+
+	def compare_los_across_clusters(self,
+								  los_data: pd.Series,
+								  cluster_labels: pd.Series) -> pd.DataFrame:
+		"""Compare length of stay statistics across clusters."""
+		# Combine LOS and cluster labels
+		combined = pd.DataFrame({
+			'length_of_stay': los_data,
+			'cluster': cluster_labels
+		})
+
+		# Calculate stats by cluster
+		stats = combined.groupby('cluster')['length_of_stay'].agg([
+			'count', 'mean', 'std', 'min', 'max',
+			lambda x: x.quantile(0.25).round(2),
+			lambda x: x.quantile(0.5).round(2),
+			lambda x: x.quantile(0.75).round(2)
+		]).reset_index()
+
+		# Rename columns
+		stats.columns = ['Cluster', 'Count', 'Mean LOS', 'Std Dev', 'Min LOS', 'Max LOS', '25th Perc', 'Median', '75th Perc']
+
+		# Store results
+		self.analysis_results['los_comparison'] = stats
+
+		return stats
+
+	def statistical_testing(self,
+						  data: pd.DataFrame,
+						  feature_cols: List[str],
+						  cluster_col: str = 'cluster',
+						  method: str = 'anova') -> pd.DataFrame:
+		"""Perform statistical tests to compare features between clusters."""
+		# Initialize results
+		results = []
+
+		# Perform statistical tests for each feature
+		for feature in feature_cols:
+			if method == 'anova':
+				# Group data by cluster
+				groups = [data[data[cluster_col] == cluster][feature].dropna().values
+						 for cluster in data[cluster_col].unique() if cluster != -1]  # Exclude noise points
+
+				# Only perform test if we have at least 2 clusters with data
+				if len(groups) >= 2 and all(len(g) > 0 for g in groups):
+					try:
+						# Perform one-way ANOVA
+						from scipy import stats
+						f_stat, p_value = stats.f_oneway(*groups)
+						significant = p_value < 0.05
+
+						results.append({
+							'Feature': feature,
+							'Test': 'ANOVA',
+							'Statistic': f_stat,
+							'P-Value': p_value,
+							'Significant': significant
+						})
+					except Exception as e:
+						results.append({
+							'Feature': feature,
+							'Test': 'ANOVA',
+							'Statistic': None,
+							'P-Value': None,
+							'Significant': False,
+							'Error': str(e)
+						})
+			elif method == 'kruskal':
+				# Non-parametric Kruskal-Wallis H-test
+				groups = [data[data[cluster_col] == cluster][feature].dropna().values
+						 for cluster in data[cluster_col].unique() if cluster != -1]
+
+				if len(groups) >= 2 and all(len(g) > 0 for g in groups):
+					try:
+						from scipy import stats
+						h_stat, p_value = stats.kruskal(*groups)
+						significant = p_value < 0.05
+
+						results.append({
+							'Feature': feature,
+							'Test': 'Kruskal-Wallis',
+							'Statistic': h_stat,
+							'P-Value': p_value,
+							'Significant': Significant
+						})
+					except Exception as e:
+						results.append({
+							'Feature': feature,
+							'Test': 'Kruskal-Wallis',
+							'Statistic': None,
+							'P-Value': None,
+							'Significant': False,
+							'Error': str(e)
+						})
+
+		# Create DataFrame of results
+		results_df = pd.DataFrame(results)
+
+		# Apply multiple testing correction if we have results
+		if len(results_df) > 0 and 'P-Value' in results_df.columns:
+			# Bonferroni correction
+			results_df['Adjusted P-Value'] = results_df['P-Value'] * len(results_df)
+			results_df['Adjusted P-Value'] = results_df['Adjusted P-Value'].clip(upper=1.0)
+			results_df['Significant (Adjusted)'] = results_df['Adjusted P-Value'] < 0.05
+
+		# Store results
+		self.analysis_results['statistical_tests'] = results_df
+
+		return results_df
+
+	def calculate_feature_importance(self,
+								   data: pd.DataFrame,
+								   cluster_col: str = 'cluster') -> pd.DataFrame:
+		"""Calculate feature importance for distinguishing between clusters."""
+		from sklearn.ensemble import RandomForestClassifier
+		from sklearn.preprocessing import StandardScaler
+		import numpy as np
+
+		# Extract features and target
+		X = data.drop(columns=[cluster_col])
+		y = data[cluster_col]
+
+		# Standardize features
+		scaler = StandardScaler()
+		X_scaled = scaler.fit_transform(X)
+
+		# Train a Random Forest classifier
+		rf = RandomForestClassifier(n_estimators=100, random_state=42)
+		rf.fit(X_scaled, y)
+
+		# Get feature importance
+		importance = rf.feature_importances_
+
+		# Create DataFrame with feature importance
+		importance_df = pd.DataFrame({
+			'Feature': X.columns,
+			'Importance': importance
+		}).sort_values('Importance', ascending=False)
+
+		# Store results
+		self.analysis_results['feature_importance'] = importance_df
+
+		return importance_df
+
+	def generate_cluster_characterization(self,
+										data: pd.DataFrame,
+										cluster_col: str = 'cluster',
+										patient_id_col: str = None,
+										important_features: List[str] = None) -> Dict:
+		"""Generate comprehensive characterization for each cluster."""
+		# Check if 'cluster' column exists
+		if cluster_col not in data.columns:
+			raise ValueError(f"Column '{cluster_col}' not found in DataFrame")
+
+		# Get unique clusters
+		clusters = data[cluster_col].unique()
+
+		# If no important features specified, use all features except cluster
+		if important_features is None:
+			important_features = [col for col in data.columns if col != cluster_col]
+			if patient_id_col in important_features:
+				important_features.remove(patient_id_col)
+
+		# Initialize results
+		characterization = {}
+
+		# For each cluster
+		for cluster in clusters:
+			# Skip noise points (if DBSCAN was used)
+			if cluster == -1:
+				continue
+
+			# Get data for this cluster
+			cluster_data = data[data[cluster_col] == cluster]
+
+			# Calculate basic statistics
+			stats = {
+				'size': len(cluster_data),
+				'percentage': (len(cluster_data) / len(data)) * 100,
+				'features': {}
+			}
+
+			# Calculate statistics for each feature
+			for feature in important_features:
+				if feature in cluster_data.columns:
+					# Skip non-numeric features
+					if not np.issubdtype(cluster_data[feature].dtype, np.number):
+						continue
+
+					feature_stats = {
+						'mean': cluster_data[feature].mean(),
+						'std': cluster_data[feature].std(),
+						'min': cluster_data[feature].min(),
+						'max': cluster_data[feature].max(),
+						'median': cluster_data[feature].median(),
+						'25th': cluster_data[feature].quantile(0.25),
+						'75th': cluster_data[feature].quantile(0.75)
+					}
+
+					# Compare to overall dataset
+					if np.issubdtype(data[feature].dtype, np.number):
+						overall_mean = data[feature].mean()
+						if overall_mean != 0:
+							feature_stats['diff_from_mean'] = (feature_stats['mean'] - overall_mean) / overall_mean * 100
+						else:
+							feature_stats['diff_from_mean'] = 0
+
+					stats['features'][feature] = feature_stats
+
+			# Store cluster stats
+			characterization[f"Cluster {cluster}"] = stats
+
+		# Store results
+		self.analysis_results['cluster_characterization'] = characterization
+
+		return characterization
+
+
+	def generate_html_report(self,
+						   title: str = "Cluster Analysis Report",
+						   include_plots: bool = True) -> str:
+		"""Generate an HTML report from analysis results."""
+		# Check if we have analysis results
+		if not self.analysis_results:
+			raise ValueError("No analysis results available. Run analysis methods first.")
+
+		# Initialize HTML content
+		html = f"""
+		<!DOCTYPE html>
+		<html>
+		<head>
+			<title>{title}</title>
+			<style>
+				body {{ font-family: Arial, sans-serif; margin: 20px; }}
+				h1 {{ color: #2c3e50; }}
+				h2 {{ color: #3498db; margin-top: 30px; }}
+				table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
+				th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+				th {{ background-color: #f2f2f2; }}
+				tr:nth-child(even) {{ background-color: #f9f9f9; }}
+				.significant {{ background-color: #d4efdf; }}
+				.not-significant {{ background-color: #fadbd8; }}
+				.plot-container {{ margin: 20px 0; }}
+			</style>
+			<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+		</head>
+		<body>
+			<h1>{title}</h1>
+			<p>Report generated on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+		"""
+
+		# Add Length of Stay comparison if available
+		if 'los_comparison' in self.analysis_results:
+			los_df = self.analysis_results['los_comparison']
+			html += """
+			<h2>Length of Stay Analysis</h2>
+			<table>
+				<tr>
+			"""
+			# Add column headers
+			for col in los_df.columns:
+				html += f"<th>{col}</th>"
+			html += "</tr>"
+
+			# Add rows
+			for _, row in los_df.iterrows():
+				html += "<tr>"
+				for col in los_df.columns:
+					html += f"<td>{row[col]}</td>"
+				html += "</tr>"
+			html += "</table>"
+
+			# Add LOS plot if requested
+			if include_plots:
+				html += """
+				<div id="los-plot" class="plot-container" style="height: 400px;"></div>
+				<script>
+					var losData = [
+				"""
+				# Create data for each cluster
+				for cluster in los_df['Cluster'].unique():
+					cluster_data = los_df[los_df['Cluster'] == cluster]
+					html += f"""
+					{{
+						type: 'box',
+						name: 'Cluster {cluster}',
+						y: [{cluster_data['Mean LOS'].values[0]}],
+						boxpoints: false,
+						jitter: 0.3,
+						pointpos: -1.8,
+						boxmean: true
+					}},
+					"""
+
+				html += """
+				];
+
+				var losLayout = {
+					title: 'Length of Stay by Cluster',
+					yaxis: {title: 'Length of Stay (days)'}
+				};
+
+				Plotly.newPlot('los-plot', losData, losLayout);
+				</script>
+				"""
+
+		# Add Statistical Tests if available
+		if 'statistical_tests' in self.analysis_results:
+			test_df = self.analysis_results['statistical_tests']
+			html += """
+			<h2>Statistical Tests</h2>
+			<table>
+				<tr>
+			"""
+			# Add column headers
+			for col in test_df.columns:
+				html += f"<th>{col}</th>"
+			html += "</tr>"
+
+			# Add rows
+			for _, row in test_df.iterrows():
+				# Highlight significant results
+				sig_class = "significant" if row.get('Significant (Adjusted)', False) else "not-significant"
+				html += f'<tr class="{sig_class}">'
+				for col in test_df.columns:
+					value = row[col]
+					# Format p-values
+					if 'P-Value' in col and value is not None:
+						value = f"{value:.4f}"
+					html += f"<td>{value}</td>"
+				html += "</tr>"
+			html += "</table>"
+
+		# Add Feature Importance if available
+		if 'feature_importance' in self.analysis_results:
+			imp_df = self.analysis_results['feature_importance']
+			html += """
+			<h2>Feature Importance</h2>
+			<table>
+				<tr>
+					<th>Feature</th>
+					<th>Importance</th>
+				</tr>
+			"""
+
+			# Add rows (show top 10 features)
+			for _, row in imp_df.head(10).iterrows():
+				html += f"""
+				<tr>
+					<td>{row['Feature']}</td>
+					<td>{row['Importance']:.4f}</td>
+				</tr>
+				"""
+			html += "</table>"
+
+			# Add feature importance plot if requested
+			if include_plots:
+				html += """
+				<div id="importance-plot" class="plot-container" style="height: 500px;"></div>
+				<script>
+					var impData = [{
+						type: 'bar',
+						x: [
+				"""
+
+				# Add feature names
+				for _, row in imp_df.head(10).iterrows():
+					html += f"'{row['Feature']}', "
+
+				html += """
+						],
+						y: [
+				"""
+
+				# Add importance values
+				for _, row in imp_df.head(10).iterrows():
+					html += f"{row['Importance']:.4f}, "
+
+				html += """
+						],
+						marker: {
+							color: 'rgba(55, 128, 191, 0.7)',
+							line: {
+								color: 'rgba(55, 128, 191, 1.0)',
+								width: 2
+							}
+						}
+					}];
+
+					var impLayout = {
+						title: 'Feature Importance',
+						xaxis: {title: 'Feature'},
+						yaxis: {title: 'Importance'}
+					};
+
+					Plotly.newPlot('importance-plot', impData, impLayout);
+				</script>
+				"""
+
+		# Add Cluster Characterization if available
+		if 'cluster_characterization' in self.analysis_results:
+			characterization = self.analysis_results['cluster_characterization']
+			html += """
+			<h2>Cluster Characterization</h2>
+			"""
+
+			# For each cluster
+			for cluster, stats in characterization.items():
+				html += f"""
+				<h3>{cluster}</h3>
+				<p><strong>Size:</strong> {stats['size']} patients ({stats['percentage']:.2f}% of dataset)</p>
+
+				<h4>Key Features</h4>
+				<table>
+					<tr>
+						<th>Feature</th>
+						<th>Mean</th>
+						<th>Median</th>
+						<th>Std Dev</th>
+						<th>Diff from Overall Mean (%)</th>
+					</tr>
+				"""
+
+				# Add rows for each feature (show top 10 by diff from mean)
+				features_sorted = sorted(
+					stats['features'].items(),
+					key=lambda x: abs(x[1].get('diff_from_mean', 0)),
+					reverse=True
+				)
+
+				for feature, feature_stats in features_sorted[:10]:
+					html += f"""
+					<tr>
+						<td>{feature}</td>
+						<td>{feature_stats['mean']:.2f}</td>
+						<td>{feature_stats['median']:.2f}</td>
+						<td>{feature_stats['std']:.2f}</td>
+						<td>{feature_stats.get('diff_from_mean', 0):.2f}%</td>
+					</tr>
+					"""
+
+				html += "</table>"
+
+		# Close HTML document
+		html += """
+		</body>
+		</html>
+		"""
+
+		return html
+
+
+	def visualize_order_patterns(self, order_sequences: Dict[Any, List[str]], cluster_labels: pd.Series, max_orders: int = 20, max_patients: int = 50) -> go.Figure:
+		"""
+		Create interactive visualizations of order patterns by cluster.
+
+		Args:
+			order_sequences: Dictionary mapping patient IDs to lists of orders
+			cluster_labels: Series with patient IDs as index and cluster labels as values
+			max_orders: Maximum number of order types to include (most frequent)
+			max_patients: Maximum number of patients to visualize per cluster
+
+		Returns:
+			Plotly figure with order pattern visualization
+		"""
+		# Match patient IDs between sequences and cluster labels
+		common_patients = set(order_sequences.keys()) & set(cluster_labels.index)
+		if not common_patients:
+			raise ValueError("No matching patient IDs between order sequences and cluster labels")
+
+		# Get unique clusters
+		clusters = cluster_labels.loc[common_patients].unique()
+
+		# Count order frequencies
+		all_orders = []
+		for patient_id in common_patients:
+			all_orders.extend(order_sequences[patient_id])
+
+		# Get most frequent orders
+		order_counts = pd.Series(all_orders).value_counts()
+		top_orders = order_counts.head(max_orders).index.tolist()
+
+		# Create subplots - one for each cluster
+		n_clusters = len(clusters)
+		fig = make_subplots(
+			rows=n_clusters,
+			cols=1,
+			subplot_titles=[f"Cluster {c}" for c in clusters],
+			vertical_spacing=0.05
+		)
+
+		# For each cluster
+		for i, cluster in enumerate(clusters):
+			# Get patients in this cluster
+			cluster_patients = cluster_labels[cluster_labels == cluster].index
+			cluster_patients = list(set(cluster_patients) & common_patients)
+
+			# Sample patients if too many
+			if len(cluster_patients) > max_patients:
+				cluster_patients = random.sample(cluster_patients, max_patients)
+
+			# Create heatmap data
+			heatmap_data = []
+			y_labels = []
+
+			for j, patient_id in enumerate(cluster_patients):
+				# Get sequence for this patient
+				sequence = order_sequences[patient_id]
+
+				# Filter to top orders
+				filtered_sequence = [order for order in sequence if order in top_orders]
+
+				# Create patient row
+				patient_row = [0] * len(top_orders)
+
+				# Count occurrences of each order
+				for order in filtered_sequence:
+					idx = top_orders.index(order)
+					patient_row[idx] += 1
+
+				# Add to heatmap data
+				heatmap_data.append(patient_row)
+				y_labels.append(f"Patient {patient_id}")
+
+			# Create heatmap if we have data
+			if heatmap_data:
+				fig.add_trace(
+					go.Heatmap(
+						z=heatmap_data,
+						x=top_orders,
+						y=y_labels,
+						colorscale='Viridis',
+						name=f"Cluster {cluster}"
+					),
+					row=i+1,
+					col=1
+				)
+
+		# Update layout
+		fig.update_layout(
+			height=300 * n_clusters,
+			title="Order Patterns by Cluster",
+			xaxis_title="Order Type",
+			yaxis_title="Patient"
+		)
+
+		# Adjust x-axis for readability
+		for i in range(1, n_clusters + 1):
+			fig.update_xaxes(tickangle=45, row=i, col=1)
+
+		# Store results
+		self.analysis_results['order_patterns'] = {
+			'figure': fig,
+			'top_orders': top_orders
+		}
+
+		return fig

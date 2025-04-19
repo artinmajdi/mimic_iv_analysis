@@ -9,9 +9,9 @@ Components:
 - Pattern detection algorithms for sequential clinical events
 """
 
-from .clustering import MIMICClusteringAnalysis
+from .clustering import MIMICClusteringAnalysis, MIMICClusterAnalyzer
 from .feature_engineering import MIMICFeatureEngineer
 from .data_loader import MIMICDataLoader
 from .visualizer import MIMICVisualizer
 
-__all__ = ['MIMICClusteringAnalysis', 'MIMICFeatureEngineer', 'MIMICDataLoader', 'MIMICVisualizer']
+__all__ = ['MIMICClusteringAnalysis', 'MIMICClusterAnalyzer', 'MIMICFeatureEngineer', 'MIMICDataLoader', 'MIMICVisualizer']

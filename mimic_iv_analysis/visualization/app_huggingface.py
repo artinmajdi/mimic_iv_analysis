@@ -25,7 +25,7 @@ from sklearn.decomposition import LatentDirichletAllocation
 # Streamlit import
 import streamlit as st
 
-from mimic_iv_analysis.core import MIMICClusteringAnalysis, MIMICFeatureEngineer, MIMICDataLoader, MIMICVisualizer
+from mimic_iv_analysis.core import MIMICClusteringAnalysis, MIMICClusterAnalyzer, MIMICFeatureEngineer, MIMICDataLoader, MIMICVisualizer
 
 
 
@@ -46,6 +46,7 @@ class MIMICDashboardApp:
 		self.visualizer          = MIMICVisualizer()
 		self.feature_engineer    = MIMICFeatureEngineer()
 		self.clustering_analyzer = MIMICClusteringAnalysis()
+		self.cluster_analyzer    = MIMICClusterAnalyzer()
 		self.init_session_state()
 		logging.info("MIMICDashboardApp initialized.")
 
@@ -120,6 +121,10 @@ class MIMICDashboardApp:
 			st.session_state.optimal_k = None
 		if 'optimal_eps' not in st.session_state:
 			st.session_state.optimal_eps = None
+
+		# Analysis states
+		if 'length_of_stay' not in st.session_state:
+			st.session_state.length_of_stay = None
 
 		logging.info("Session state initialized.")
 
@@ -280,14 +285,15 @@ class MIMICDashboardApp:
 			st.markdown("</div>", unsafe_allow_html=True)
 
 			# Create tabs
-			tab1, tab2, tab3, tab4 = st.tabs([
+			tab1, tab2, tab3, tab4, tab5 = st.tabs([
 				"Exploration & Visualization",
 				"Feature Engineering",
 				"Clustering Analysis",
+				"Analysis & Visualization",  # Add this new tab
 				"Export Options"
 			])
 
-			# Tab 1: Exploration & Visualization
+# Tab 1: Exploration & Visualization
 			with tab1:
 				# Data preview
 				self.visualizer.display_data_preview(st.session_state.df)
@@ -306,8 +312,12 @@ class MIMICDashboardApp:
 			with tab3:
 				self._display_clustering_analysis_tab()
 
-			# Tab 4: Export Options
+			# Tab 4: Analysis & Visualization
 			with tab4:
+				self._display_analysis_visualization_tab()
+
+			# Tab 5: Export Options
+			with tab5:
 				st.markdown("<h2 class='sub-header'>Export Options</h2>", unsafe_allow_html=True)
 				col1, col2 = st.columns(2)
 
@@ -2837,6 +2847,768 @@ class MIMICDashboardApp:
 					except Exception as e:
 						st.error(f"Error loading model: {str(e)}")
 
+
+	def _display_analysis_visualization_tab(self):
+		"""Display the analysis and visualization tab content."""
+		st.markdown("<h2 class='sub-header'>Analysis & Visualization</h2>", unsafe_allow_html=True)
+
+		# Introductory text
+		st.markdown("""
+		<div class='info-box'>
+		This section provides deeper insights into identified clusters, with statistical analysis,
+		feature importance, and comprehensive visualizations of patient patterns.
+		</div>
+		""", unsafe_allow_html=True)
+
+		# Analysis subtabs
+		analysis_tabs = st.tabs([
+			"📊 Length of Stay Analysis",
+			"📈 Order Pattern Visualization",
+			"🔍 Statistical Testing",
+			"📋 Cluster Characterization",
+			"🔥 Feature Importance"
+		])
+
+		# Check if we have clustering results
+		has_kmeans = st.session_state.kmeans_labels is not None
+		has_hierarchical = st.session_state.hierarchical_labels is not None
+		has_dbscan = st.session_state.dbscan_labels is not None
+
+		# Check if we have sufficient data for analysis
+		if not any([has_kmeans, has_hierarchical, has_dbscan]):
+			st.warning("No clustering results found. Please run clustering algorithms first.")
+			return
+
+		# Allow user to select which clustering result to analyze
+		cluster_options = []
+		if has_kmeans:
+			cluster_options.append("K-means")
+		if has_hierarchical:
+			cluster_options.append("Hierarchical")
+		if has_dbscan:
+			cluster_options.append("DBSCAN")
+
+		selected_clustering = st.selectbox(
+			"Select Clustering Results to Analyze",
+			cluster_options
+		)
+
+		# Get appropriate cluster labels
+		if selected_clustering == "K-means":
+			cluster_labels = st.session_state.kmeans_labels
+		elif selected_clustering == "Hierarchical":
+			cluster_labels = st.session_state.hierarchical_labels
+		else:  # DBSCAN
+			cluster_labels = st.session_state.dbscan_labels
+
+		# Get appropriate data
+		if st.session_state.reduced_data is not None:
+			analysis_data = st.session_state.reduced_data.copy()
+		else:
+			analysis_data = st.session_state.clustering_input_data.copy()
+
+		if analysis_data is not None:
+			# Add cluster labels to data
+			analysis_data['cluster'] = cluster_labels
+
+		# 1. Length of Stay Analysis tab
+		with analysis_tabs[0]:
+			st.markdown("<h3>Length of Stay Analysis by Cluster</h3>", unsafe_allow_html=True)
+
+			if st.session_state.df is not None:
+				# Select admission and discharge columns
+				time_columns = st.session_state.df.select_dtypes(include=['datetime64']).columns.tolist()
+				object_columns = st.session_state.df.select_dtypes(include=['object']).columns.tolist()
+
+				# If no datetime columns, check if we can convert object columns
+				potential_date_columns = []
+				for col in object_columns:
+					# Check first few values for date-like strings
+					sample = st.session_state.df[col].dropna().head(5).astype(str)
+					date_patterns = [r'\d{4}-\d{2}-\d{2}', r'\d{2}/\d{2}/\d{4}']
+
+					if any(sample.str.contains(pattern).any() for pattern in date_patterns):
+						potential_date_columns.append(col)
+
+				time_columns = time_columns + potential_date_columns
+
+				if time_columns:
+					col1, col2 = st.columns(2)
+
+					with col1:
+						admission_col = st.selectbox(
+							"Select Admission Time Column",
+							time_columns,
+							key="los_admission_col"
+						)
+
+					with col2:
+						# Try to suggest discharge column based on naming
+						discharge_idx = 0
+						for idx, col in enumerate(time_columns):
+							if "discharge" in col.lower() or "end" in col.lower():
+								discharge_idx = idx
+								break
+
+						discharge_col = st.selectbox(
+							"Select Discharge Time Column",
+							time_columns,
+							index=discharge_idx,
+							key="los_discharge_col"
+						)
+
+					patient_id_col = st.selectbox(
+						"Select Patient ID Column",
+						st.session_state.df.columns.tolist(),
+						index=0,
+						key="los_patient_id_col"
+					)
+
+					# Button to calculate LOS
+					if st.button("Calculate Length of Stay"):
+						try:
+							# Copy dataframe to avoid modifying original
+							df_copy = st.session_state.df.copy()
+
+							# Convert columns to datetime if needed
+							for col in [admission_col, discharge_col]:
+								if df_copy[col].dtype != 'datetime64[ns]':
+									df_copy[col] = pd.to_datetime(df_copy[col], errors='coerce')
+
+							# Calculate LOS
+							los = self.cluster_analyzer.calculate_length_of_stay(
+								df_copy,
+								admission_col,
+								discharge_col,
+								patient_id_col
+							)
+
+							# Store in session state
+							st.session_state.length_of_stay = los
+
+							# Compare across clusters
+							los_comparison = self.cluster_analyzer.compare_los_across_clusters(
+								los,
+								cluster_labels
+							)
+
+							# Display results
+							st.success("Length of stay calculated successfully!")
+							st.dataframe(los_comparison, use_container_width=True)
+
+							# Create boxplot
+							los_data = pd.DataFrame({
+								'length_of_stay': los,
+								'cluster': cluster_labels
+							})
+
+							fig = px.box(
+								los_data,
+								x='cluster',
+								y='length_of_stay',
+								title="Length of Stay by Cluster",
+								labels={
+									'cluster': 'Cluster',
+									'length_of_stay': 'Length of Stay (days)'
+								},
+								color='cluster'
+							)
+
+							st.plotly_chart(fig, use_container_width=True)
+
+							# Statistical test for LOS differences
+							st.markdown("<h4>Statistical Analysis of LOS Differences</h4>", unsafe_allow_html=True)
+
+							# Use ANOVA if more than 2 clusters, otherwise t-test
+							from scipy import stats
+							unique_clusters = los_data['cluster'].unique()
+
+							if len(unique_clusters) > 2:
+								# Group data by cluster
+								groups = [
+									los_data[los_data['cluster'] == cluster]['length_of_stay'].dropna().values
+									for cluster in unique_clusters if cluster != -1  # Exclude noise points
+								]
+
+								# Perform ANOVA if we have valid groups
+								if len(groups) >= 2 and all(len(g) > 0 for g in groups):
+									f_stat, p_value = stats.f_oneway(*groups)
+
+									st.markdown(f"""
+									**One-way ANOVA Test Results:**
+									- F-statistic: {f_stat:.4f}
+									- P-value: {p_value:.4f}
+									- Significant difference: {"Yes" if p_value < 0.05 else "No"}
+									""")
+							elif len(unique_clusters) == 2:
+								# Get the two clusters
+								c1, c2 = unique_clusters
+
+								# Get data for each cluster
+								group1 = los_data[los_data['cluster'] == c1]['length_of_stay'].dropna().values
+								group2 = los_data[los_data['cluster'] == c2]['length_of_stay'].dropna().values
+
+								# Perform t-test
+								if len(group1) > 0 and len(group2) > 0:
+									t_stat, p_value = stats.ttest_ind(group1, group2, equal_var=False)
+
+									st.markdown(f"""
+									**Independent t-test Results:**
+									- t-statistic: {t_stat:.4f}
+									- P-value: {p_value:.4f}
+									- Significant difference: {"Yes" if p_value < 0.05 else "No"}
+									""")
+
+						except Exception as e:
+							st.error(f"Error calculating length of stay: {str(e)}")
+				else:
+					st.warning("No suitable datetime columns found for length of stay calculation.")
+			else:
+				st.warning("No dataset loaded. Please load data first.")
+
+		# 2. Order Pattern Visualization tab
+		with analysis_tabs[1]:
+			st.markdown("<h3>Order Pattern Visualization</h3>", unsafe_allow_html=True)
+
+			# Check if we have order sequences
+			if st.session_state.order_sequences is not None:
+				st.markdown("""
+				<div class='info-box'>
+				Visualize patterns of orders across different clusters to identify characteristic
+				ordering behaviors for each patient group.
+				</div>
+				""", unsafe_allow_html=True)
+
+				# Parameters for visualization
+				col1, col2 = st.columns(2)
+
+				with col1:
+					max_orders = st.slider(
+						"Maximum Order Types",
+						min_value=5,
+						max_value=50,
+						value=20,
+						help="Maximum number of order types to include (most frequent)"
+					)
+
+				with col2:
+					max_patients = st.slider(
+						"Maximum Patients per Cluster",
+						min_value=10,
+						max_value=100,
+						value=30,
+						help="Maximum number of patients to visualize per cluster"
+					)
+
+				# Button to generate visualization
+				if st.button("Generate Order Pattern Visualization"):
+					try:
+						# Create visualization
+						fig = self.cluster_analyzer.visualize_order_patterns(
+							st.session_state.order_sequences,
+							cluster_labels,
+							max_orders=max_orders,
+							max_patients=max_patients
+						)
+
+						# Display figure
+						st.plotly_chart(fig, use_container_width=True)
+
+						# Create sankey diagram of order transitions
+						st.markdown("<h4>Order Transition Patterns by Cluster</h4>", unsafe_allow_html=True)
+
+						# Create transition data by cluster
+						from collections import defaultdict
+
+						# Get top clusters (limit to top 3 for clarity)
+						top_clusters = cluster_labels.value_counts().head(3).index.tolist()
+
+						# For each cluster
+						for cluster in top_clusters:
+							# Get patients in this cluster
+							cluster_patients = cluster_labels[cluster_labels == cluster].index
+							cluster_patients = list(set(cluster_patients) & set(st.session_state.order_sequences.keys()))
+
+							# Skip if no patients
+							if not cluster_patients:
+								continue
+
+							# Count transitions
+							transitions = defaultdict(int)
+
+							for patient_id in cluster_patients:
+								sequence = st.session_state.order_sequences[patient_id]
+
+								# Count transitions between orders
+								for i in range(len(sequence) - 1):
+									from_order = sequence[i]
+									to_order = sequence[i + 1]
+									transitions[(from_order, to_order)] += 1
+
+							# Create sankey data (limit to top 20 transitions)
+							top_transitions = sorted(transitions.items(), key=lambda x: x[1], reverse=True)[:20]
+
+							# Get unique orders involved in top transitions
+							unique_orders = set()
+							for (from_order, to_order), _ in top_transitions:
+								unique_orders.add(from_order)
+								unique_orders.add(to_order)
+
+							# Map orders to indices
+							order_to_idx = {order: i for i, order in enumerate(unique_orders)}
+
+							# Create node and link data
+							node_labels = list(unique_orders)
+							source_indices = []
+							target_indices = []
+							values = []
+
+							for (from_order, to_order), count in top_transitions:
+								source_indices.append(order_to_idx[from_order])
+								target_indices.append(order_to_idx[to_order])
+								values.append(count)
+
+							# Create sankey diagram
+							if node_labels and source_indices and target_indices and values:
+								fig = go.Figure(data=[go.Sankey(
+									node=dict(
+										pad=15,
+										thickness=20,
+										line=dict(color="black", width=0.5),
+										label=node_labels
+									),
+									link=dict(
+										source=source_indices,
+										target=target_indices,
+										value=values
+									)
+								)])
+
+								fig.update_layout(
+									title_text=f"Top Order Transitions in Cluster {cluster}",
+									font_size=10
+								)
+
+								st.plotly_chart(fig, use_container_width=True)
+
+					except Exception as e:
+						st.error(f"Error generating order pattern visualization: {str(e)}")
+			else:
+				st.warning("No order sequences available. Please generate them in the Feature Engineering tab first.")
+
+		# 3. Statistical Testing tab
+		with analysis_tabs[2]:
+			st.markdown("<h3>Statistical Testing Between Clusters</h3>", unsafe_allow_html=True)
+
+			if analysis_data is not None:
+				st.markdown("""
+				<div class='info-box'>
+				Perform statistical tests to identify significant differences in features between clusters.
+				This helps understand what characteristics distinguish each patient group.
+				</div>
+				""", unsafe_allow_html=True)
+
+				# Get feature columns (exclude cluster column)
+				feature_cols = [col for col in analysis_data.columns if col != 'cluster']
+
+				# Let user select features
+				selected_features = st.multiselect(
+					"Select Features for Testing",
+					feature_cols,
+					default=feature_cols[:min(5, len(feature_cols))]
+				)
+
+				# Test method
+				test_method = st.radio(
+					"Statistical Test Method",
+					["ANOVA (parametric)", "Kruskal-Wallis (non-parametric)"],
+					horizontal=True
+				)
+
+				# Map to method name
+				method_map = {
+					"ANOVA (parametric)": "anova",
+					"Kruskal-Wallis (non-parametric)": "kruskal"
+				}
+
+				# Button to run tests
+				if st.button("Run Statistical Tests") and selected_features:
+					try:
+						# Run tests
+						results = self.cluster_analyzer.statistical_testing(
+							analysis_data,
+							selected_features,
+							cluster_col='cluster',
+							method=method_map[test_method]
+						)
+
+						# Display results
+						st.success("Statistical tests completed!")
+
+						# Format p-values
+						results_display = results.copy()
+						for col in ['P-Value', 'Adjusted P-Value']:
+							if col in results_display.columns:
+								results_display[col] = results_display[col].apply(
+									lambda x: f"{x:.4f}" if pd.notnull(x) else "N/A"
+								)
+
+						# Display as table with highlighting
+						st.markdown("<h4>Test Results</h4>", unsafe_allow_html=True)
+
+						# Custom styling
+						def color_significant(val):
+							if val == True:
+								return 'background-color: #d4efdf'
+							elif val == False:
+								return 'background-color: #fadbd8'
+							else:
+								return ''
+
+						# Apply styling and display
+						styled_results = results_display.style.applymap(
+							color_significant,
+							subset=['Significant', 'Significant (Adjusted)']
+						)
+
+						st.dataframe(styled_results, use_container_width=True)
+
+						# Show visualization of p-values
+						st.markdown("<h4>Feature Significance Visualization</h4>", unsafe_allow_html=True)
+
+						# Create bar chart of -log(p-value)
+						log_p_values = -np.log10(results['P-Value'])
+						significance_threshold = -np.log10(0.05)
+
+						# Create color list (red if significant, grey if not)
+						colors = ['rgba(255, 99, 132, 0.8)' if p < 0.05 else 'rgba(203, 213, 232, 0.8)'
+								for p in results['P-Value']]
+
+						fig = go.Figure()
+
+						fig.add_trace(go.Bar(
+							x=results['Feature'],
+							y=log_p_values,
+							marker_color=colors,
+							text=results['P-Value'].apply(lambda x: f"p={x:.4f}"),
+							name='Feature Significance'
+						))
+
+						# Add significance threshold line
+						fig.add_shape(
+							type='line',
+							x0=-0.5,
+							y0=significance_threshold,
+							x1=len(results['Feature']) - 0.5,
+							y1=significance_threshold,
+							line=dict(
+								color='red',
+								width=2,
+								dash='dash'
+							)
+						)
+
+						fig.update_layout(
+							title='Feature Significance by -log10(p-value)',
+							xaxis_title='Feature',
+							yaxis_title='-log10(p-value)',
+							xaxis_tickangle=-45,
+							showlegend=False
+						)
+
+						# Add annotation for threshold
+						fig.add_annotation(
+							x=len(results['Feature']) - 1,
+							y=significance_threshold,
+							text='p=0.05',
+							showarrow=False,
+							yshift=10
+						)
+
+						st.plotly_chart(fig, use_container_width=True)
+					except Exception as e:
+						st.error(f"Error performing statistical tests: {str(e)}")
+			else:
+				st.warning("No data available for statistical testing.")
+
+		# 4. Cluster Characterization tab
+		with analysis_tabs[3]:
+			st.markdown("<h3>Cluster Characterization</h3>", unsafe_allow_html=True)
+
+			if analysis_data is not None:
+				st.markdown("""
+				<div class='info-box'>
+				Generate comprehensive profiles of each cluster to understand their key characteristics
+				and differences. This provides insights into the clinical meaning of each patient group.
+				</div>
+				""", unsafe_allow_html=True)
+
+				# Get original feature columns if available
+				if st.session_state.clustering_input_data is not None:
+					orig_cols = list(st.session_state.clustering_input_data.columns)
+				else:
+					orig_cols = list(analysis_data.columns)
+					if 'cluster' in orig_cols:
+						orig_cols.remove('cluster')
+
+				# Let user select important features
+				selected_features = st.multiselect(
+					"Select Key Features for Characterization",
+					orig_cols,
+					default=orig_cols[:min(10, len(orig_cols))]
+				)
+
+				# Button to generate characterization
+				if st.button("Generate Cluster Characterization") and selected_features:
+					try:
+						# Generate characterization
+						characterization = self.cluster_analyzer.generate_cluster_characterization(
+							analysis_data,
+							cluster_col='cluster',
+							important_features=selected_features
+						)
+
+						# Display characterization
+						st.success("Cluster characterization generated!")
+
+						# Create tabs for each cluster
+						cluster_tabs = st.tabs([f"Cluster {c}" for c in characterization.keys()])
+
+						# For each cluster
+						for i, (cluster_name, stats) in enumerate(characterization.items()):
+							with cluster_tabs[i]:
+								# Basic info
+								st.markdown(f"""
+								**Size:** {stats['size']} patients ({stats['percentage']:.2f}% of dataset)
+								""")
+
+								# Feature statistics table
+								st.markdown("### Key Feature Statistics")
+
+								# Create dataframe of feature stats
+								feature_stats = []
+								for feature, f_stats in stats['features'].items():
+									feature_stats.append({
+										'Feature': feature,
+										'Mean': f_stats['mean'],
+										'Median': f_stats['median'],
+										'Std Dev': f_stats['std'],
+										'Min': f_stats['min'],
+										'Max': f_stats['max'],
+										'Diff from Mean (%)': f_stats.get('diff_from_mean', 0)
+									})
+
+								# Convert to dataframe and sort by difference from mean
+								feature_df = pd.DataFrame(feature_stats)
+								feature_df = feature_df.sort_values('Diff from Mean (%)', key=abs, ascending=False)
+
+								# Format numeric columns
+								numeric_cols = ['Mean', 'Median', 'Std Dev', 'Min', 'Max', 'Diff from Mean (%)']
+								for col in numeric_cols:
+									feature_df[col] = feature_df[col].round(2)
+
+								# Apply styling to highlight distinguishing features
+								def color_diff(val):
+									if pd.isna(val):
+										return ''
+									if abs(val) > 50:
+										return 'background-color: rgba(255, 99, 132, 0.6)'
+									elif abs(val) > 25:
+										return 'background-color: rgba(255, 205, 86, 0.6)'
+									elif abs(val) > 10:
+										return 'background-color: rgba(75, 192, 192, 0.4)'
+									else:
+										return ''
+
+								# Apply styling
+								styled_df = feature_df.style.applymap(
+									color_diff,
+									subset=['Diff from Mean (%)']
+								)
+
+								# Display table
+								st.dataframe(styled_df, use_container_width=True)
+
+								# Radar chart of key features
+								st.markdown("### Feature Profile")
+
+								# Get top N differentiating features
+								top_n = min(8, len(feature_df))
+								top_features = feature_df.head(top_n)
+
+								# Create radar chart
+								categories = top_features['Feature'].tolist()
+								values = top_features['Diff from Mean (%)'].tolist()
+
+								fig = go.Figure()
+
+								fig.add_trace(go.Scatterpolar(
+									r=values,
+									theta=categories,
+									fill='toself',
+									name=cluster_name
+								))
+
+								fig.update_layout(
+									polar=dict(
+										radialaxis=dict(
+											visible=True,
+											range=[-100, 100]
+										)
+									),
+									showlegend=False,
+									title=f"Feature Profile for {cluster_name}"
+								)
+
+								st.plotly_chart(fig, use_container_width=True)
+
+						# Generate report button
+						st.markdown("### Generate PDF Report")
+						st.markdown("""
+						Generate a comprehensive PDF report with all cluster characteristics and visualizations
+						for sharing or documentation.
+						""")
+
+						report_title = st.text_input(
+							"Report Title",
+							value=f"{selected_clustering} Cluster Analysis Report"
+						)
+
+						include_plots = st.checkbox("Include Visualizations", value=True)
+
+						if st.button("Generate HTML Report"):
+							try:
+								# Generate HTML report
+								html_report = self.cluster_analyzer.generate_html_report(
+									title=report_title,
+									include_plots=include_plots
+								)
+
+								# Provide download link
+								st.success("Report generated! Click below to download.")
+
+								st.download_button(
+									label="Download HTML Report",
+									data=html_report,
+									file_name=f"cluster_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
+									mime="text/html"
+								)
+							except Exception as e:
+								st.error(f"Error generating report: {str(e)}")
+
+					except Exception as e:
+						st.error(f"Error generating cluster characterization: {str(e)}")
+			else:
+				st.warning("No data available for cluster characterization.")
+
+		# 5. Feature Importance tab
+		with analysis_tabs[4]:
+			st.markdown("<h3>Feature Importance Analysis</h3>", unsafe_allow_html=True)
+
+			if analysis_data is not None:
+				st.markdown("""
+				<div class='info-box'>
+				Analyze the importance of different features in distinguishing between clusters.
+				This helps identify which characteristics are most influential in defining patient groups.
+				</div>
+				""", unsafe_allow_html=True)
+
+				# Button to calculate feature importance
+				if st.button("Calculate Feature Importance"):
+					try:
+						# Prepare data (remove non-numeric columns)
+						numeric_data = analysis_data.select_dtypes(include=['number'])
+
+						# Skip cluster column if it exists
+						if 'cluster' in numeric_data.columns:
+							feature_data = numeric_data.drop(columns=['cluster'])
+							labels = numeric_data['cluster']
+						else:
+							feature_data = numeric_data
+							labels = cluster_labels
+
+						# Skip if empty
+						if feature_data.empty:
+							st.error("No numeric features available for importance calculation.")
+							return
+
+						# Create combined DataFrame
+						combined_data = feature_data.copy()
+						combined_data['cluster'] = labels
+
+						# Calculate feature importance
+						importance_df = self.cluster_analyzer.calculate_feature_importance(
+							combined_data,
+							cluster_col='cluster'
+						)
+
+						# Display results
+						st.success("Feature importance calculated!")
+
+						# Show table
+						st.markdown("### Feature Importance Ranking")
+						st.dataframe(importance_df, use_container_width=True)
+
+						# Create bar chart
+						fig = px.bar(
+							importance_df,
+							y='Feature',
+							x='Importance',
+							orientation='h',
+							title="Feature Importance for Cluster Differentiation",
+							labels={'Importance': 'Importance Score', 'Feature': 'Feature'},
+							color='Importance',
+							color_continuous_scale='Viridis'
+						)
+
+						fig.update_layout(yaxis={'categoryorder': 'total ascending'})
+
+						st.plotly_chart(fig, use_container_width=True)
+
+						# Create heatmap of feature values across clusters
+						st.markdown("### Feature Values Across Clusters")
+
+						# Get top 10 important features
+						top_features = importance_df.head(10)['Feature'].tolist()
+
+						# Calculate mean values by cluster
+						cluster_means = combined_data.groupby('cluster')[top_features].mean()
+
+						# Create heatmap
+						fig = px.imshow(
+							cluster_means,
+							labels=dict(x="Feature", y="Cluster", color="Value"),
+							x=top_features,
+							y=cluster_means.index,
+							title="Feature Values Across Clusters (Mean)",
+							color_continuous_scale='Viridis',
+							aspect="auto"
+						)
+
+						st.plotly_chart(fig, use_container_width=True)
+
+						# Feature correlation analysis
+						st.markdown("### Feature Correlation Analysis")
+
+						# Calculate correlation matrix of top features
+						corr_matrix = combined_data[top_features].corr()
+
+						# Create heatmap
+						fig = px.imshow(
+							corr_matrix,
+							x=corr_matrix.columns,
+							y=corr_matrix.columns,
+							title="Feature Correlation Matrix",
+							color_continuous_scale='RdBu_r',
+							range_color=[-1, 1]
+						)
+
+						st.plotly_chart(fig, use_container_width=True)
+
+					except Exception as e:
+						st.error(f"Error calculating feature importance: {str(e)}")
+			else:
+				st.warning("No data available for feature importance analysis.")
 
 
 if __name__ == "__main__":

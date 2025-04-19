@@ -12,7 +12,7 @@ This module provides:
 """
 
 # Import submodules to make them available when importing the package
-from .core import MIMICClusteringAnalysis, MIMICFeatureEngineer, MIMICDataLoader, MIMICVisualizer
+from .core import MIMICClusteringAnalysis, MIMICClusterAnalyzer, MIMICFeatureEngineer, MIMICDataLoader, MIMICVisualizer
 from .configurations import load_config
 from .visualization import MIMICDashboardApp
 
@@ -22,6 +22,7 @@ __all__ = [
 
     # Core analytical modules
     'MIMICClusteringAnalysis',
+    'MIMICClusterAnalyzer',
     'MIMICFeatureEngineer',
     'MIMICDataLoader',
     'MIMICVisualizer',
