@@ -25,8 +25,16 @@ from sklearn.decomposition import LatentDirichletAllocation
 # Streamlit import
 import streamlit as st
 
-from mimic_iv_analysis.core import MIMICClusteringAnalysis, MIMICClusterAnalyzer, MIMICFeatureEngineer, MIMICDataLoader, MIMICVisualizer
+from mimic_iv_analysis.core import (
+    MIMICClusteringAnalysis,
+    MIMICClusterAnalyzer,
+    MIMICFeatureEngineer,
+    MIMICDataLoader,
+    MIMICVisualizer
+)
 from mimic_iv_analysis.visualization.app_components import FilteringTab
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 # TODO: Remove the _display_analysis_visualization_tab() function from here as well as the MIMICClusterAnalyzer class from the clustering.py. thn run the following command in claude with the remaining code:

@@ -2,15 +2,11 @@
 import os
 import logging
 import datetime
-import pickle
 from io import BytesIO
-from collections import defaultdict, Counter
 
 # Data processing imports
 import numpy as np
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 
 # Visualization imports
 import matplotlib.pyplot as plt
@@ -21,36 +17,23 @@ from plotly.subplots import make_subplots
 # Machine learning imports
 from scipy.cluster.hierarchy import dendrogram
 from scipy import stats
-from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
-from sklearn.decomposition import LatentDirichletAllocation
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.metrics import adjusted_rand_score, adjusted_mutual_info_score
+
+from sklearn.metrics import adjusted_rand_score
+from sklearn.preprocessing import MinMaxScaler
 
 # Streamlit import
 import streamlit as st
 
 # Local application imports (assuming these exist in the specified structure)
 # If these imports cause errors, ensure the paths and class names are correct.
-try:
-    from mimic_iv_analysis.core import (
-        MIMICClusteringAnalysis,
-        MIMICClusterAnalyzer,
-        MIMICFeatureEngineer,
-        MIMICDataLoader,
-        MIMICVisualizer
-    )
-    from mimic_iv_analysis.visualization.app_components import FilteringTab
-except ImportError:
-    # Fallback if the local structure is different or classes are not found
-    st.error("Could not import local MIMIC analysis modules. Please ensure the project structure is correct.")
-    # Define dummy classes to prevent NameErrors later, allowing the app structure to load
-    class MIMICDataLoader: pass
-    class MIMICVisualizer: pass
-    class MIMICFeatureEngineer: pass
-    class MIMICClusteringAnalysis: pass
-    class MIMICClusterAnalyzer: pass
-    class FilteringTab:
-        def render(self, *args, **kwargs): st.warning("FilteringTab component not loaded.")
+from mimic_iv_analysis.core import (
+    MIMICClusteringAnalysis,
+    MIMICClusterAnalyzer,
+    MIMICFeatureEngineer,
+    MIMICDataLoader,
+    MIMICVisualizer
+)
+from mimic_iv_analysis.visualization.app_components import FilteringTab
 
 
 # Constants
@@ -919,7 +902,6 @@ class ClusteringAnalysisTab:
 
                     elif reduction_method == "UMAP":
                         try:
-                            import umap # Check if UMAP is installed
                             umap_col1, umap_col2 = st.columns(2)
                             with umap_col1:
                                 n_neighbors = st.slider("Number of Neighbors", min_value=2, max_value=min(100, input_shape[0]-1), value=min(15, input_shape[0]-1), help="Controls local/global embedding (must be < n_samples)")
@@ -1922,18 +1904,18 @@ class ClusteringAnalysisTab:
                 metrics_to_plot = [col for col in float_cols if metrics_df[col].notna().any()] # Only plot metrics with values
 
                 if metrics_to_plot:
-                     # Use melt for easier plotting with Plotly
-                     plot_df = metrics_df.melt(id_vars=['Algorithm'], value_vars=metrics_to_plot, var_name='Metric', value_name='Score')
-                     plot_df = plot_df.dropna() # Remove rows where metrics couldn't be calculated
+                    # Use melt for easier plotting with Plotly
+                    plot_df = metrics_df.melt(id_vars=['Algorithm'], value_vars=metrics_to_plot, var_name='Metric', value_name='Score')
+                    plot_df = plot_df.dropna() # Remove rows where metrics couldn't be calculated
 
-                     if not plot_df.empty:
-                          fig_comp = px.bar(plot_df, x='Metric', y='Score', color='Algorithm', barmode='group',
-                                           title="Comparison of Clustering Evaluation Metrics")
-                          st.plotly_chart(fig_comp, use_container_width=True)
-                     else:
-                          st.info("No valid metrics available to plot.")
+                    if not plot_df.empty:
+                        fig_comp = px.bar(plot_df, x='Metric', y='Score', color='Algorithm', barmode='group',
+                                        title="Comparison of Clustering Evaluation Metrics")
+                        st.plotly_chart(fig_comp, use_container_width=True)
+                    else:
+                        st.info("No valid metrics available to plot.")
                 else:
-                     st.info("No evaluation metrics were calculated or available for comparison.")
+                    st.info("No evaluation metrics were calculated or available for comparison.")
 
 
                 # --- Cluster Agreement (if >1 result) ---
@@ -1958,20 +1940,20 @@ class ClusteringAnalysisTab:
                                 # Ensure labels are aligned by index (important if sampling occurred)
                                 common_index = labels1.index.intersection(labels2.index)
                                 if len(common_index) < 2:
-                                     ari = np.nan # Cannot compare if indices don't overlap sufficiently
+                                    ari = np.nan # Cannot compare if indices don't overlap sufficiently
                                 else:
-                                     l1_common = labels1.loc[common_index]
-                                     l2_common = labels2.loc[common_index]
+                                    l1_common = labels1.loc[common_index]
+                                    l2_common = labels2.loc[common_index]
 
-                                     # Filter noise points (-1) for ARI calculation
-                                     mask1 = l1_common != -1
-                                     mask2 = l2_common != -1
-                                     valid_mask = mask1 & mask2
+                                    # Filter noise points (-1) for ARI calculation
+                                    mask1 = l1_common != -1
+                                    mask2 = l2_common != -1
+                                    valid_mask = mask1 & mask2
 
-                                     if valid_mask.sum() < 2:
-                                          ari = np.nan # Not enough non-noise points to compare
-                                     else:
-                                          ari = adjusted_rand_score(l1_common[valid_mask], l2_common[valid_mask])
+                                    if valid_mask.sum() < 2:
+                                        ari = np.nan # Not enough non-noise points to compare
+                                    else:
+                                        ari = adjusted_rand_score(l1_common[valid_mask], l2_common[valid_mask])
 
                                 agreement_scores.loc[algo1_name, algo2_name] = ari
                                 agreement_scores.loc[algo2_name, algo1_name] = ari # Symmetric matrix
@@ -2015,9 +1997,9 @@ class AnalysisVisualizationTab:
             available_labels['DBSCAN'] = st.session_state.dbscan_labels
         # Add LDA dominant topic if available
         if 'lda_results' in st.session_state and st.session_state.lda_results:
-             doc_topic_df = st.session_state.lda_results['doc_topic_matrix']
-             if not doc_topic_df.empty:
-                  available_labels['LDA Dominant Topic'] = doc_topic_df.idxmax(axis=1)
+            doc_topic_df = st.session_state.lda_results['doc_topic_matrix']
+            if not doc_topic_df.empty:
+                available_labels['LDA Dominant Topic'] = doc_topic_df.idxmax(axis=1)
 
 
         if not available_labels:
@@ -2034,32 +2016,32 @@ class AnalysisVisualizationTab:
         # Prefer original preprocessed data for interpretation if possible
         analysis_data = None
         if 'clustering_input_data' in st.session_state and st.session_state.clustering_input_data is not None:
-             analysis_data = st.session_state.clustering_input_data.copy()
-             # Align data with labels (important if sampling occurred, e.g., hierarchical)
-             common_index = analysis_data.index.intersection(cluster_labels.index)
-             if len(common_index) != len(cluster_labels):
-                  st.warning(f"Analysis data index ({len(analysis_data)}) does not fully match cluster label index ({len(cluster_labels)}). Analyzing subset with {len(common_index)} common points.")
-             analysis_data = analysis_data.loc[common_index]
-             cluster_labels = cluster_labels.loc[common_index]
+            analysis_data = st.session_state.clustering_input_data.copy()
+            # Align data with labels (important if sampling occurred, e.g., hierarchical)
+            common_index = analysis_data.index.intersection(cluster_labels.index)
+            if len(common_index) != len(cluster_labels):
+                st.warning(f"Analysis data index ({len(analysis_data)}) does not fully match cluster label index ({len(cluster_labels)}). Analyzing subset with {len(common_index)} common points.")
+            analysis_data = analysis_data.loc[common_index]
+            cluster_labels = cluster_labels.loc[common_index]
 
         elif 'df' in st.session_state and st.session_state.df is not None:
-             # Fallback to original df if preprocessed is missing, but warn user
-             analysis_data = st.session_state.df.copy()
-             common_index = analysis_data.index.intersection(cluster_labels.index)
-             analysis_data = analysis_data.loc[common_index]
-             cluster_labels = cluster_labels.loc[common_index]
-             st.warning("Using original loaded table data for analysis as preprocessed clustering input is unavailable. Results might be less meaningful if data wasn't scaled/numeric.")
-             # Try to select only numeric columns for some analyses
-             analysis_data_numeric = analysis_data.select_dtypes(include=np.number)
-             if not analysis_data_numeric.empty:
-                  analysis_data = analysis_data_numeric
-             else:
-                  st.error("No numeric data available in the original table for analysis.")
-                  analysis_data = None # Cannot proceed
+            # Fallback to original df if preprocessed is missing, but warn user
+            analysis_data = st.session_state.df.copy()
+            common_index = analysis_data.index.intersection(cluster_labels.index)
+            analysis_data = analysis_data.loc[common_index]
+            cluster_labels = cluster_labels.loc[common_index]
+            st.warning("Using original loaded table data for analysis as preprocessed clustering input is unavailable. Results might be less meaningful if data wasn't scaled/numeric.")
+            # Try to select only numeric columns for some analyses
+            analysis_data_numeric = analysis_data.select_dtypes(include=np.number)
+            if not analysis_data_numeric.empty:
+                analysis_data = analysis_data_numeric
+            else:
+                st.error("No numeric data available in the original table for analysis.")
+                analysis_data = None # Cannot proceed
 
         else:
-             st.error("No suitable data found for cluster analysis (neither preprocessed input nor original table).")
-             return # Cannot proceed
+            st.error("No suitable data found for cluster analysis (neither preprocessed input nor original table).")
+            return # Cannot proceed
 
 
         if analysis_data is not None and not analysis_data.empty:
@@ -2067,7 +2049,7 @@ class AnalysisVisualizationTab:
             analysis_data['cluster'] = cluster_labels.astype(str) # Use string for categorical coloring/grouping
             # Handle DBSCAN noise label
             if selected_clustering_name == 'DBSCAN':
-                 analysis_data['cluster'] = analysis_data['cluster'].replace('-1', 'Noise')
+                analysis_data['cluster'] = analysis_data['cluster'].replace('-1', 'Noise')
 
             # Filter out noise for some analyses if needed
             analysis_data_no_noise = analysis_data[analysis_data['cluster'] != 'Noise'] if 'Noise' in analysis_data['cluster'].unique() else analysis_data
@@ -2102,7 +2084,6 @@ class AnalysisVisualizationTab:
 
                     if profile_features:
                         # Normalize data for radar plot (e.g., Min-Max scaling across all data)
-                        from sklearn.preprocessing import MinMaxScaler
                         scaler = MinMaxScaler()
                         radar_data = analysis_data_no_noise[profile_features].copy()
                         # Handle potential NaNs before scaling
@@ -3070,23 +3051,5 @@ class MIMICDashboardApp:
 # =============================================
 
 if __name__ == "__main__":
-    # Ensure necessary classes are defined or imported before instantiation
-    # This check helps if running the script directly without the full package structure
-    required_classes = {
-        "MIMICDataLoader": MIMICDataLoader,
-        "MIMICVisualizer": MIMICVisualizer,
-        "MIMICFeatureEngineer": MIMICFeatureEngineer,
-        "MIMICClusteringAnalysis": MIMICClusteringAnalysis,
-        "MIMICClusterAnalyzer": MIMICClusterAnalyzer,
-        "FilteringTab": FilteringTab,
-        "FeatureEngineeringTab": FeatureEngineeringTab,
-        "ClusteringAnalysisTab": ClusteringAnalysisTab,
-        "AnalysisVisualizationTab": AnalysisVisualizationTab
-    }
-    # Basic check if classes seem functional (not just 'pass')
-    if all(getattr(cls, '__init__', None) != object.__init__ for cls in required_classes.values() if cls is not object):
-        app = MIMICDashboardApp()
-        app.run()
-    else:
-        st.error("Core application classes appear to be missing or are placeholders. Cannot start the application.")
-        st.info("Please ensure the necessary Python files (`core.py`, `visualization/app_components.py`, etc.) are present and correctly define the required classes.")
+    app = MIMICDashboardApp()
+    app.run()

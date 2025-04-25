@@ -2,9 +2,7 @@
 import os
 import logging
 import datetime
-import pickle
 from io import BytesIO
-from collections import defaultdict, Counter
 
 # Data processing imports
 import numpy as np
@@ -20,85 +18,19 @@ from plotly.subplots import make_subplots
 
 # Machine learning imports
 from scipy.cluster.hierarchy import dendrogram
-from scipy import stats
-from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
-from sklearn.decomposition import LatentDirichletAllocation
-from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.metrics import adjusted_rand_score, adjusted_mutual_info_score
 
 # Streamlit import
 import streamlit as st
 
-# Local application imports (assuming these exist in the specified structure)
-try:
-    from mimic_iv_analysis.core import (
-        MIMICClusteringAnalysis,
-        MIMICClusterAnalyzer,
-        MIMICFeatureEngineer,
-        MIMICDataLoader,
-        MIMICVisualizer
-    )
-    from mimic_iv_analysis.visualization.app_components import FilteringTab
-except ImportError:
-    # Provide dummy classes if the core library is not available
-    # This allows the Streamlit app structure to be viewed/run partially
-    st.warning("Could not import core 'mimic_iv_analysis' library. Using dummy classes.")
-    class DummyClass:
-        def __getattr__(self, name):
-            def method(*args, **kwargs):
-                st.info(f"Called dummy method: {name}")
-                if name in ['create_order_frequency_matrix', 'extract_temporal_order_sequences',
-                            'get_order_type_distributions', 'create_order_timing_features',
-                            'preprocess_data', 'apply_dimensionality_reduction',
-                            'run_kmeans_clustering', 'find_optimal_k_for_kmeans',
-                            'run_hierarchical_clustering', 'run_dbscan_clustering',
-                            'find_optimal_eps_for_dbscan', 'run_lda_topic_modeling',
-                            'get_top_terms_per_topic', 'calculate_length_of_stay',
-                            'compare_los_across_clusters', 'visualize_order_patterns',
-                            'statistical_testing', 'generate_cluster_characterization',
-                            'calculate_feature_importance', 'generate_html_report',
-                            'save_features', 'save_model', 'load_model', 'evaluate_clustering',
-                            'scan_mimic_directory', 'load_mimic_table', 'get_table_info',
-                            'display_data_preview', 'display_dataset_statistics', 'display_visualizations',
-                            'detect_order_columns', 'detect_temporal_columns', 'detect_patient_id_column']:
-                     # Return dummy data structures where appropriate
-                    if name == 'create_order_frequency_matrix': return pd.DataFrame({'feature1': [1, 2], 'feature2': [3, 4]}, index=[101, 102])
-                    if name == 'extract_temporal_order_sequences': return {101: ['orderA', 'orderB'], 102: ['orderC']}
-                    if name == 'get_order_type_distributions': return pd.DataFrame({'order_type': ['A', 'B'], 'frequency': [10, 5]}), pd.DataFrame({'patient_id': [101, 101, 102], 'order_type': ['A', 'B', 'C'], 'frequency': [1, 1, 1]})
-                    if name == 'create_order_timing_features': return pd.DataFrame({'total_orders': [2, 1]}, index=[101, 102])
-                    if name == 'preprocess_data': return pd.DataFrame({'f1': [0.1, 0.2], 'f2': [0.3, 0.4]})
-                    if name == 'apply_dimensionality_reduction': return pd.DataFrame({'dim1': [1, 2], 'dim2': [3, 4]})
-                    if name == 'run_kmeans_clustering': return pd.Series([0, 1]), KMeans(n_clusters=2)
-                    if name == 'find_optimal_k_for_kmeans': return 3, pd.DataFrame({'k': [2, 3, 4], 'metric': [0.5, 0.7, 0.6]})
-                    if name == 'run_hierarchical_clustering': return pd.Series([0, 1]), {'linkage_matrix': np.array([[0,1,0.5,2]])}
-                    if name == 'run_dbscan_clustering': return pd.Series([0, -1]), DBSCAN(eps=0.5)
-                    if name == 'find_optimal_eps_for_dbscan': return 0.5, np.array([0.1, 0.2, 0.5, 0.6])
-                    if name == 'run_lda_topic_modeling': return LatentDirichletAllocation(), pd.DataFrame({'Topic 1': [0.8, 0.2]}), pd.DataFrame({'Term 1': [0.6, 0.1]})
-                    if name == 'get_top_terms_per_topic': return pd.DataFrame({'Topic 1': ['termA', 'termB']})
-                    if name == 'calculate_length_of_stay': return pd.Series([5.2, 3.1], index=[101, 102])
-                    if name == 'compare_los_across_clusters': return pd.DataFrame({'Cluster': [0, 1], 'Mean LOS': [5.2, 3.1]})
-                    if name == 'visualize_order_patterns': return go.Figure()
-                    if name == 'statistical_testing': return pd.DataFrame({'Feature': ['f1'], 'P-Value': [0.01], 'Significant': [True]})
-                    if name == 'generate_cluster_characterization': return {0: {'size': 1, 'percentage': 50.0, 'features': {'f1': {'mean': 0.1}}}}
-                    if name == 'calculate_feature_importance': return pd.DataFrame({'Feature': ['f1'], 'Importance': [0.9]})
-                    if name == 'generate_html_report': return "<html><body>Dummy Report</body></html>"
-                    if name == 'evaluate_clustering': return {'silhouette_score': 0.6, 'davies_bouldin_score': 0.8, 'calinski_harabasz_score': 150.0}
-                    if name == 'scan_mimic_directory': return ({'hosp': ['patients', 'admissions']}, {('hosp', 'patients'): 'path1'}, {('hosp', 'patients'): 10.5}, {('hosp', 'patients'): 'Patients (10.5 MB)'})
-                    if name == 'load_mimic_table': return pd.DataFrame({'subject_id': [1, 2], 'colA': ['a', 'b']}), 2
-                    if name == 'get_table_info': return "Dummy table info"
-                    if name == 'detect_order_columns': return ['order_col']
-                    if name == 'detect_temporal_columns': return ['time_col']
-                    if name == 'detect_patient_id_column': return 'subject_id'
-                return None # Default return for other methods
-            return method
-
-    MIMICClusteringAnalysis = DummyClass
-    MIMICClusterAnalyzer = DummyClass
-    MIMICFeatureEngineer = DummyClass
-    MIMICDataLoader = DummyClass
-    MIMICVisualizer = DummyClass
-    FilteringTab = DummyClass # Assuming FilteringTab is also part of the library
-
+from mimic_iv_analysis.core import (
+    MIMICClusteringAnalysis,
+    MIMICClusterAnalyzer,
+    MIMICFeatureEngineer,
+    MIMICDataLoader,
+    MIMICVisualizer
+)
+from mimic_iv_analysis.visualization.app_components import FilteringTab
 
 # Constants
 DEFAULT_MIMIC_PATH      = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1" # Replace with your path or leave empty
@@ -1238,11 +1170,11 @@ class MIMICDashboardApp:
         """Run the main application loop."""
         logging.info("Starting MIMICDashboardApp run...")
         # Set page config (do this only once at the start)
-        st.set_page_config(
-        	page_title="MIMIC-IV Explorer",
-        	page_icon="🏥",
-        	layout="wide"
-        )
+        # st.set_page_config(
+        # 	page_title="MIMIC-IV Explorer",
+        # 	page_icon="🏥",
+        # 	layout="wide"
+        # )
 
         # Custom CSS
         st.markdown("""

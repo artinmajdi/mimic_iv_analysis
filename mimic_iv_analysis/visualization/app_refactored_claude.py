@@ -2272,3 +2272,9 @@ class MIMICDashboardApp:
             <p>For more information, visit <a href="https://physionet.org/content/mimiciv/3.1/">MIMIC-IV on PhysioNet</a>.</p>
             </div>
             """, unsafe_allow_html=True)
+
+
+
+if __name__ == "__main__":
+    app = MIMICDashboardApp()
+    app.run()
