@@ -203,12 +203,10 @@ class MIMICDashboardApp:
 		# Display the sidebar
 		self._display_sidebar()
 
-		# Display content based on the selected view
 		if st.session_state.current_view == 'data_explorer':
-			# Call the method to display the main content with tabs
-			self._display_main_content_with_tabs()
-		else:  # filtering view
-			self._display_filtering_view()
+			self._exploration_visualization_tab()
+		else:
+			self.filtering_tab.render( data_handler=self.data_handler, feature_engineer=self.feature_engineer )
 
 		logging.info("MIMICDashboardApp run finished.")
 
@@ -326,7 +324,7 @@ class MIMICDashboardApp:
 							st.session_state.detected_patient_id_col = self.feature_engineer.detect_patient_id_column(df)
 
 
-	def _display_main_content_with_tabs(self):
+	def _exploration_visualization_tab(self):
 		"""Handles the display of the main content area with tabs."""
 		if st.session_state.df is not None:
 			# Dataset info
@@ -371,15 +369,15 @@ class MIMICDashboardApp:
 
 			# Tab 2: Feature Engineering
 			with tab2:
-				self._display_feature_engineering_tab()
+				self._feature_engineering_tab()
 
 			# Tab 3: Clustering Analysis
 			with tab3:
-				self._display_clustering_analysis_tab()
+				self._clustering_analysis_tab()
 
 			# Tab 4: Analysis & Visualization
 			with tab4:
-				self._display_analysis_visualization_tab()
+				self._analysis_visualization_tab()
 
 			# Tab 5: Export Options
 			with tab5:
@@ -454,82 +452,7 @@ class MIMICDashboardApp:
 			""", unsafe_allow_html=True)
 
 
-	def _display_filtering_view(self):
-		"""Display the filtering view with inclusion and exclusion criteria."""
-		st.markdown("<h1 class='sub-header'>MIMIC-IV Data Filtering</h1>", unsafe_allow_html=True)
-
-		# Display information about filtering
-		st.markdown("""
-		<div class='info-box'>
-		<p>This page allows you to define inclusion and exclusion criteria for filtering the MIMIC-IV dataset.</p>
-		<p>These filters will be applied when loading data for analysis in the Data Explorer view.</p>
-		<p><strong>Note:</strong> You need to have scanned and loaded a MIMIC-IV table before applying filters.</p>
-		</div>
-		""", unsafe_allow_html=True)
-
-		# Check if data is loaded
-		if st.session_state.df is not None:
-			st.markdown("<h3 class='sub-header'>Current Dataset</h3>", unsafe_allow_html=True)
-			st.markdown(f"""
-			<div class='info-box'>
-			<p><strong>Module:</strong> {st.session_state.selected_module}</p>
-			<p><strong>Table:</strong> {st.session_state.selected_table}</p>
-			<p><strong>Rows:</strong> {len(st.session_state.df)} (sample) / {st.session_state.total_row_count if 'total_row_count' in st.session_state else len(st.session_state.df)} (total)</p>
-			</div>
-			""", unsafe_allow_html=True)
-
-		# Render the filtering tab UI
-		filter_params = self.filtering_tab.render()
-
-		# Apply filters button
-		if st.button("Load Data with Filters", key="load_with_filters"):
-			if st.session_state.current_file_path:
-				with st.spinner("Loading and filtering data..."):
-					df, total_rows = self.data_handler.load_mimic_table(
-						file_path=st.session_state.current_file_path,
-						sample_size=st.session_state.sample_size,
-						encoding="latin-1",
-						use_dask=st.session_state.get('use_dask', False),
-						filter_params=filter_params
-					)
-
-				if df is not None:
-					st.session_state.df = df
-					st.session_state.total_row_count = total_rows
-					st.success(f"Data loaded and filtered successfully! {len(df)} rows remain after filtering.")
-
-					# Auto-detect columns for feature engineering
-					st.session_state.detected_order_cols     = self.feature_engineer.detect_order_columns(df)
-					st.session_state.detected_time_cols      = self.feature_engineer.detect_temporal_columns(df)
-					st.session_state.detected_patient_id_col = self.feature_engineer.detect_patient_id_column(df)
-
-					# Switch to data explorer view
-					st.session_state.current_view = 'data_explorer'
-					# st.experimental_rerun()
-				else:
-					st.error("Error loading data with filters.")
-
-			else:
-				st.error("No data file selected. Please load a table first.")
-		else:
-			# Welcome message when no data is loaded
-			st.markdown("""
-			<div class='info-box'>
-			<h3>No Data Loaded</h3>
-			<p>To use the filtering functionality, you need to first load a MIMIC-IV table:</p>
-			<ol>
-				<li>Switch to the Data Explorer view using the sidebar</li>
-				<li>Enter the path to your local MIMIC-IV dataset</li>
-				<li>Click "Scan MIMIC-IV Directory" to detect available tables</li>
-				<li>Select a module and table to explore</li>
-				<li>Click "Load Table" to load the data</li>
-				<li>Return to this Filtering view to apply filters</li>
-			</ol>
-			</div>
-			""", unsafe_allow_html=True)
-
-
-	def _display_export_options(self, data, feature_type='order_frequency_matrix'):
+	def _export_tab(self, data, feature_type='order_frequency_matrix'):
 		"""Helper function to display export options for engineered features."""
 		with st.expander("#### Export Options"):
 
@@ -545,7 +468,7 @@ class MIMICDashboardApp:
 					st.error(f"Error saving frequency matrix: {str(e)}")
 
 
-	def _display_feature_engineering_tab(self):
+	def _feature_engineering_tab(self):
 		"""Display the feature engineering tab content."""
 		st.markdown("<h2 class='sub-header'>Order Data Feature Engineering</h2>", unsafe_allow_html=True)
 
@@ -636,7 +559,7 @@ class MIMICDashboardApp:
 				st.plotly_chart(fig, use_container_width=True)
 
 				# Save options
-				self._display_export_options(data=st.session_state.freq_matrix)
+				self._export_tab(data=st.session_state.freq_matrix)
 
 		# 2. Temporal Order Sequences tab
 		with feature_tabs[1]:
@@ -1064,7 +987,7 @@ class MIMICDashboardApp:
 							st.error(f"Error saving timing features: {str(e)}")
 
 
-	def _display_clustering_analysis_tab(self):
+	def _clustering_analysis_tab(self):
 			"""Display the clustering analysis tab content."""
 			st.markdown("<h2 class='sub-header'>Clustering Analysis</h2>", unsafe_allow_html=True)
 
@@ -2960,7 +2883,7 @@ class MIMICDashboardApp:
 						st.error(f"Error loading model: {str(e)}")
 
 
-	def _display_analysis_visualization_tab(self):
+	def _analysis_visualization_tab(self):
 		"""Display the analysis and visualization tab content."""
 		st.markdown("<h2 class='sub-header'>Analysis & Visualization</h2>", unsafe_allow_html=True)
 
