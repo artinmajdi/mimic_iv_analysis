@@ -28,18 +28,17 @@ import streamlit as st
 from mimic_iv_analysis.core import MIMICClusteringAnalysis, MIMICClusterAnalyzer, MIMICFeatureEngineer, MIMICDataLoader, MIMICVisualizer
 
 
-""" TODO: Remove the _display_analysis_visualization_tab() function from here as well as the MIMICClusterAnalyzer class from the clustering.py. thn run the following command in claude with the remaining code:
+# TODO: Remove the _display_analysis_visualization_tab() function from here as well as the MIMICClusterAnalyzer class from the clustering.py. thn run the following command in claude with the remaining code:
 
-Please enhance my MIMIC-IV Streamlit dashboard (src/visualization/app_huggingface.py) by adding the following advanced analytics modules. Implement each step sequentially, ensuring the code is well-structured and documented:
-	3. Analysis & Visualization
-	- Implement length of stay comparison across identified clusters
-	- Create interactive visualizations of order patterns using Plotly
-	- Add statistical significance testing between clusters
-	- Generate downloadable cluster characterization reports
-	- Include heatmaps of feature importance for each cluster
+# Please enhance my MIMIC-IV Streamlit dashboard (src/visualization/app_huggingface.py) by adding the following advanced analytics modules. Implement each step sequentially, ensuring the code is well-structured and documented:
+# 	3. Analysis & Visualization
+# 	- Implement length of stay comparison across identified clusters
+# 	- Create interactive visualizations of order patterns using Plotly
+# 	- Add statistical significance testing between clusters
+# 	- Generate downloadable cluster characterization reports
+# 	- Include heatmaps of feature importance for each cluster
+# old claude link: https://claude.ai/chat/fce25354-341f-4228-aa56-fe71e406a08f
 
-	old claude link: https://claude.ai/chat/fce25354-341f-4228-aa56-fe71e406a08f
-"""
 
 # Constants
 DEFAULT_MIMIC_PATH      = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1"
@@ -145,11 +144,11 @@ class MIMICDashboardApp:
 		"""Run the main application loop."""
 		logging.info("Starting MIMICDashboardApp run...")
 		# Set page config
-		st.set_page_config(
-			page_title="MIMIC-IV Explorer",
-			page_icon="🏥",
-			layout="wide"
-		)
+		# st.set_page_config(
+		# 	page_title="MIMIC-IV Explorer",
+		# 	page_icon="🏥",
+		# 	layout="wide"
+		# )
 
 		# Custom CSS for better styling
 		st.markdown("""
@@ -255,21 +254,40 @@ class MIMICDashboardApp:
 				# Advanced options
 				with st.sidebar.expander("Advanced Options"):
 					encoding = st.selectbox("Encoding", ["latin-1", "utf-8"], index=0)
-					st.session_state.sample_size = st.number_input("Sample Size", 100, 10000, 1000, 100)
+					st.session_state.sample_size = st.number_input("Sample Size", min_value=100, max_value=1000000, value=1000, step=100)
+					# Add option to use Dask for large files
+					st.session_state.use_dask = st.checkbox(
+						"Use Dask for large files", 
+						value=False, 
+						help="Enable Dask for more efficient processing of very large files"
+					)
 
 				# Load button
 				if st.sidebar.button("Load Table"):
 					file_path = st.session_state.file_paths.get((module, table))
 					if file_path:
 						st.session_state.current_file_path = file_path
-						df = self.data_handler.load_mimic_table( file_path=file_path, sample_size=st.session_state.sample_size, encoding=encoding )
+						
+						# Get use_dask value from session state (default to False if not set)
+						use_dask = st.session_state.get('use_dask', False)
+						
+						# Show loading message with framework info
+						framework = "Dask" if use_dask else "Pandas"
+						with st.spinner(f"Loading data using {framework}..."):
+							df, total_rows = self.data_handler.load_mimic_table(
+								file_path=file_path, 
+								sample_size=st.session_state.sample_size, 
+								encoding=encoding,
+								use_dask=use_dask
+							)
+						st.session_state.total_row_count = total_rows
 
 						if df is not None:
 							st.session_state.df = df
 
 							# Auto-detect columns for feature engineering
-							st.session_state.detected_order_cols = self.feature_engineer.detect_order_columns(df)
-							st.session_state.detected_time_cols = self.feature_engineer.detect_temporal_columns(df)
+							st.session_state.detected_order_cols     = self.feature_engineer.detect_order_columns(df)
+							st.session_state.detected_time_cols      = self.feature_engineer.detect_temporal_columns(df)
 							st.session_state.detected_patient_id_col = self.feature_engineer.detect_patient_id_column(df)
 
 
@@ -293,7 +311,7 @@ class MIMICDashboardApp:
 				size_str = f"{file_size_mb/1000:.2f} GB"
 
 			st.markdown(f"**File Size:** {size_str}")
-			st.markdown(f"**Sample Size:** {min(len(st.session_state.df), st.session_state.sample_size)} rows out of {len(st.session_state.df)}") # TODO: Need total row count
+			st.markdown(f"**Sample Size:** {min(len(st.session_state.df), st.session_state.sample_size)} rows out of {st.session_state.total_row_count if 'total_row_count' in st.session_state else len(st.session_state.df)}")
 			st.markdown("</div>", unsafe_allow_html=True)
 
 			# Create tabs

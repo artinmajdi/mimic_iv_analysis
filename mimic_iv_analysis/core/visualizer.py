@@ -58,7 +58,7 @@ class MIMICVisualizer:
 		"""Displays a preview of the loaded DataFrame."""
 		if df is not None:
 			st.markdown("<h2 class='sub-header'>Data Preview</h2>", unsafe_allow_html=True)
-			st.dataframe(df.head(10), use_container_width=True)
+			st.dataframe(df, use_container_width=True)
 
 
 	def display_visualizations(self, df: Optional[pd.DataFrame]):
