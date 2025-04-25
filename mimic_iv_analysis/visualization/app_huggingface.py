@@ -251,14 +251,14 @@ class MIMICDashboardApp:
 				table_info = self.data_handler.get_table_info(module, table)
 				st.sidebar.info(table_info)
 
-				# Advanced options
-				with st.sidebar.expander("Advanced Options"):
+				# Advance options
+				with st.sidebar.expander("Advance Options", expanded=True):
 					encoding = st.selectbox("Encoding", ["latin-1", "utf-8"], index=0)
 					st.session_state.sample_size = st.number_input("Sample Size", min_value=100, max_value=1000000, value=1000, step=100)
 					# Add option to use Dask for large files
 					st.session_state.use_dask = st.checkbox(
-						"Use Dask for large files", 
-						value=False, 
+						"Use Dask for large files",
+						value=False,
 						help="Enable Dask for more efficient processing of very large files"
 					)
 
@@ -267,16 +267,16 @@ class MIMICDashboardApp:
 					file_path = st.session_state.file_paths.get((module, table))
 					if file_path:
 						st.session_state.current_file_path = file_path
-						
+
 						# Get use_dask value from session state (default to False if not set)
 						use_dask = st.session_state.get('use_dask', False)
-						
+
 						# Show loading message with framework info
 						framework = "Dask" if use_dask else "Pandas"
 						with st.spinner(f"Loading data using {framework}..."):
 							df, total_rows = self.data_handler.load_mimic_table(
-								file_path=file_path, 
-								sample_size=st.session_state.sample_size, 
+								file_path=file_path,
+								sample_size=st.session_state.sample_size,
 								encoding=encoding,
 								use_dask=use_dask
 							)
@@ -537,33 +537,21 @@ class MIMICDashboardApp:
 			col1, col2, col3 = st.columns(3)
 			with col1:
 				# Suggest patient ID column
-				default_patient_idx = 0
-				if st.session_state.detected_patient_id_col in all_columns:
-					default_patient_idx = all_columns.index(st.session_state.detected_patient_id_col)
-
 				seq_patient_id_col = st.selectbox(
 					"Select Patient ID Column",
 					all_columns,
-					index=default_patient_idx,
+					index=all_columns.index('subject_id') if 'subject_id' in all_columns else 0,
 					key="seq_patient_id_col",
 					help="Column containing unique patient identifiers"
 				)
 
 			with col2:
 				# Suggest order column
-				default_order_idx = 0
-				if st.session_state.detected_order_cols and st.session_state.detected_order_cols[0] in all_columns:
-					default_order_idx = all_columns.index(st.session_state.detected_order_cols[0])
-
-				seq_order_col = st.selectbox( "Select Order Type Column", all_columns, index=default_order_idx, key="seq_order_col", help="Column containing order types/names" )
+				seq_order_col = st.selectbox( "Select Order Type Column", all_columns, index=all_columns.index('order_type') if 'order_type' in all_columns else 0, key="seq_order_col", help="Column containing order types/names" )
 
 			with col3:
 				# Suggest time column
-				default_time_idx = 0
-				if st.session_state.detected_time_cols and st.session_state.detected_time_cols[0] in all_columns:
-					default_time_idx = all_columns.index(st.session_state.detected_time_cols[0])
-
-				seq_time_col = st.selectbox( "Select Timestamp Column", all_columns, index=default_time_idx, key="seq_time_col", help="Column containing order timestamps" )
+				seq_time_col = st.selectbox( "Select Timestamp Column", all_columns, index=all_columns.index('ordertime') if 'ordertime' in all_columns else 0, key="seq_time_col", help="Column containing order timestamps" )
 
 			# Options
 			max_seq_length = st.slider("Maximum Sequence Length", min_value=5, max_value=100, value=20, help="Maximum number of orders to include in each sequence")
@@ -654,28 +642,20 @@ class MIMICDashboardApp:
 			col1, col2 = st.columns(2)
 			with col1:
 				# Suggest patient ID column
-				default_patient_idx = 0
-				if st.session_state.detected_patient_id_col in all_columns:
-					default_patient_idx = all_columns.index(st.session_state.detected_patient_id_col)
-
 				dist_patient_id_col = st.selectbox(
 					"Select Patient ID Column",
 					all_columns,
-					index=default_patient_idx,
+					index=all_columns.index('subject_id') if 'subject_id' in all_columns else 0,
 					key="dist_patient_id_col",
 					help="Column containing unique patient identifiers"
 				)
 
 			with col2:
 				# Suggest order column
-				default_order_idx = 0
-				if st.session_state.detected_order_cols and st.session_state.detected_order_cols[0] in all_columns:
-					default_order_idx = all_columns.index(st.session_state.detected_order_cols[0])
-
 				dist_order_col = st.selectbox(
 					"Select Order Type Column",
 					all_columns,
-					index=default_order_idx,
+					index=all_columns.index('order_type') if 'order_type' in all_columns else 0,
 					key="dist_order_col",
 					help="Column containing order types/names"
 				)
@@ -810,43 +790,33 @@ class MIMICDashboardApp:
 			col1, col2 = st.columns(2)
 			with col1:
 				# Suggest patient ID column
-				default_patient_idx = 0
 				if st.session_state.detected_patient_id_col in all_columns:
-					default_patient_idx = all_columns.index(st.session_state.detected_patient_id_col)
-
-				timing_patient_id_col = st.selectbox(
-					"Select Patient ID Column",
-					all_columns,
-					index=default_patient_idx,
-					key="timing_patient_id_col",
-					help="Column containing unique patient identifiers"
-				)
+					timing_patient_id_col = st.selectbox(
+						"Select Patient ID Column",
+						all_columns,
+						index=all_columns.index('subject_id') if 'subject_id' in all_columns else 0,
+						key="timing_patient_id_col",
+						help="Column containing unique patient identifiers"
+					)
 
 			with col2:
 				# Suggest order column
-				default_order_idx = 0
 				if st.session_state.detected_order_cols and st.session_state.detected_order_cols[0] in all_columns:
-					default_order_idx = all_columns.index(st.session_state.detected_order_cols[0])
-
-				timing_order_col = st.selectbox(
-					"Select Order Type Column",
-					all_columns,
-					index=default_order_idx,
-					key="timing_order_col",
-					help="Column containing order types/names"
-				)
+					timing_order_col = st.selectbox(
+						"Select Order Type Column",
+						all_columns,
+						index=all_columns.index('order_type') if 'order_type' in all_columns else 0,
+						key="timing_order_col",
+						help="Column containing order types/names"
+					)
 
 			# Time columns
 			col1, col2 = st.columns(2)
 			with col1:
-				default_time_idx = 0
-				if st.session_state.detected_time_cols and st.session_state.detected_time_cols[0] in all_columns:
-					default_time_idx = all_columns.index(st.session_state.detected_time_cols[0])
-
 				order_time_col = st.selectbox(
 					"Select Order Time Column",
 					all_columns,
-					index=default_time_idx,
+					index=all_columns.index('ordertime') if 'ordertime' in all_columns else 0,
 					key="order_time_col",
 					help="Column containing order timestamps"
 				)
@@ -857,6 +827,7 @@ class MIMICDashboardApp:
 					"Select Admission Time Column (Optional)",
 					["None"] + all_columns,
 					index=0,
+					key="admission_time_col",
 					help="Column containing admission timestamps (for relative timing features)"
 				)
 
@@ -868,6 +839,7 @@ class MIMICDashboardApp:
 				"Select Discharge Time Column (Optional)",
 				["None"] + all_columns,
 				index=0,
+				key="discharge_time_col",
 				help="Column containing discharge timestamps (for relative timing features)"
 			)
 
@@ -879,12 +851,12 @@ class MIMICDashboardApp:
 				try:
 					with st.spinner("Generating order timing features..."):
 						timing_features = self.feature_engineer.create_order_timing_features(
-							st.session_state.df,
-							timing_patient_id_col,
-							timing_order_col,
-							order_time_col,
-							admission_time_col,
-							discharge_time_col
+							df                    = st.session_state.df,
+							timing_patient_id_col = timing_patient_id_col,
+							timing_order_col      = timing_order_col,
+							order_time_col        = order_time_col,
+							admission_time_col    = admission_time_col,
+							discharge_time_col    = discharge_time_col
 						)
 						st.session_state.timing_features = timing_features
 				except Exception as e:
