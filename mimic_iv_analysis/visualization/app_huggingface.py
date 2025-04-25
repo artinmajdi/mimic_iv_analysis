@@ -204,7 +204,7 @@ class MIMICDashboardApp:
 		self._display_sidebar()
 
 		if st.session_state.current_view == 'data_explorer':
-			self._exploration_visualization_tab()
+			self._show_all_tabs()
 		else:
 			self.filtering_tab.render( data_handler=self.data_handler, feature_engineer=self.feature_engineer )
 
@@ -324,7 +324,7 @@ class MIMICDashboardApp:
 							st.session_state.detected_patient_id_col = self.feature_engineer.detect_patient_id_column(df)
 
 
-	def _exploration_visualization_tab(self):
+	def _show_all_tabs(self):
 		"""Handles the display of the main content area with tabs."""
 		if st.session_state.df is not None:
 			# Dataset info

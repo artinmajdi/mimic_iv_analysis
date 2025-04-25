@@ -5,24 +5,8 @@
 			"path": "."
 		},
 		{
-			"name": "mimic_iv_am_pyhealth",
-			"path": "../mimic_iv_am_pyhealth"
-		},
-		{
-			"name": "mimic-code",
-			"path": "../mimic-code"
-		},
-		{
-			"name": "pipeline",
-			"path": "../pipeline"
-		},
-		{
 			"name": "dataset",
 			"path": "../dataset"
-		},
-		{
-			"name": "PyHealth",
-			"path": "../PyHealth"
 		}
 	],
 	"settings": {
