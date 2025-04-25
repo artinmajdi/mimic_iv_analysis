@@ -2,13 +2,19 @@
 import os
 import glob
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List, Any
 
 # Data processing imports
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import dask.dataframe as dd
+
+# Streamlit import
+import streamlit as st
+
+# Import filtering functionality
+from mimic_iv_analysis.core.filtering import Filtering
 # Constants
 DEFAULT_MIMIddC_PATH    = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1"
 LARGE_FILE_THRESHOLD_MB = 100
@@ -19,7 +25,8 @@ class MIMICDataLoader:
 	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
 
 	def __init__(self):
-		pass
+		"""Initialize the MIMICDataLoader class."""
+		self.filtering = Filtering()
 
 
 	def _format_size(self, size_mb: float) -> str:
@@ -84,7 +91,7 @@ class MIMICDataLoader:
 		return available_tables, file_paths, file_sizes, table_display_names
 
 
-	def load_mimic_table(self, file_path: str, sample_size: int = DEFAULT_SAMPLE_SIZE, encoding: str = 'latin-1', use_dask: bool = False) -> Tuple[Optional[pd.DataFrame], int]:
+	def load_mimic_table(self, file_path: str, sample_size: int = DEFAULT_SAMPLE_SIZE, encoding: str = 'latin-1', use_dask: bool = False, filter_params: Optional[Dict[str, Any]] = None) -> Tuple[Optional[pd.DataFrame], int]:
 		"""Loads a specific MIMIC-IV table, handling large files and sampling.
 
 		Args:
@@ -171,11 +178,98 @@ class MIMICDataLoader:
 					if len(df) > sample_size:
 						df = df.sample(sample_size, random_state=RANDOM_STATE)
 
+			# Apply filtering if filter_params are provided
+			if filter_params is not None and df is not None:
+				df = self.apply_filters(df, filter_params)
+				# Update total_rows to reflect filtered count
+				total_rows = len(df) if not use_dask else int(df.shape[0].compute() if hasattr(df, 'compute') else df.shape[0])
+
 			return df, total_rows
 		except Exception as e:
 			logging.error(f"Error loading data from {os.path.basename(file_path)}: {str(e)}")
 			return None, 0
 
+
+	def apply_filters(self, df: pd.DataFrame, filter_params: Dict[str, Any]) -> pd.DataFrame:
+		"""
+		Apply filters to the DataFrame based on the provided filter parameters.
+		
+		This method loads necessary related tables (patients, admissions, diagnoses_icd, transfers)
+		and applies the specified filters using the Filtering class.
+		
+		Args:
+			df: DataFrame to filter
+			filter_params: Dictionary containing filter parameters
+			
+		Returns:
+			Filtered DataFrame
+		"""
+		logging.info("Applying filters to DataFrame...")
+		
+		# Check if filtering is enabled
+		if not any(filter_params.get(f, False) for f in [
+			'apply_encounter_timeframe', 'apply_age_range', 'apply_t2dm_diagnosis',
+			'apply_valid_admission_discharge', 'apply_inpatient_stay', 'exclude_in_hospital_death'
+		]):
+			logging.info("No filters enabled. Returning original DataFrame.")
+			return df
+		
+		# Load necessary related tables if they're not already in the DataFrame
+		patients_df = None
+		admissions_df = None
+		diagnoses_df = None
+		transfers_df = None
+		
+		# Check if we need to load the patients table
+		if filter_params.get('apply_encounter_timeframe', False) or filter_params.get('apply_age_range', False):
+			if 'anchor_year_group' not in df.columns or 'anchor_age' not in df.columns:
+				patients_path = os.path.join(st.session_state.mimic_path, 'hosp', 'patients.csv.gz')
+				if os.path.exists(patients_path):
+					patients_df, _ = self.load_mimic_table(patients_path, filter_params=None)
+				else:
+					logging.warning("Patients table not found. Some filters may not be applied.")
+		
+		# Check if we need to load the admissions table
+		if filter_params.get('apply_valid_admission_discharge', False) or \
+		   filter_params.get('apply_inpatient_stay', False) or \
+		   filter_params.get('exclude_in_hospital_death', False):
+			if 'admittime' not in df.columns or 'dischtime' not in df.columns or \
+			   'admission_type' not in df.columns or 'deathtime' not in df.columns:
+				admissions_path = os.path.join(st.session_state.mimic_path, 'hosp', 'admissions.csv.gz')
+				if os.path.exists(admissions_path):
+					admissions_df, _ = self.load_mimic_table(admissions_path, filter_params=None)
+				else:
+					logging.warning("Admissions table not found. Some filters may not be applied.")
+		
+		# Check if we need to load the diagnoses_icd table
+		if filter_params.get('apply_t2dm_diagnosis', False):
+			if 'icd_code' not in df.columns or 'seq_num' not in df.columns:
+				diagnoses_path = os.path.join(st.session_state.mimic_path, 'hosp', 'diagnoses_icd.csv.gz')
+				if os.path.exists(diagnoses_path):
+					diagnoses_df, _ = self.load_mimic_table(diagnoses_path, filter_params=None)
+				else:
+					logging.warning("Diagnoses_icd table not found. T2DM diagnosis filter may not be applied.")
+		
+		# Check if we need to load the transfers table
+		if filter_params.get('apply_inpatient_stay', False) and filter_params.get('require_inpatient_transfer', False):
+			if 'careunit' not in df.columns:
+				transfers_path = os.path.join(st.session_state.mimic_path, 'hosp', 'transfers.csv.gz')
+				if os.path.exists(transfers_path):
+					transfers_df, _ = self.load_mimic_table(transfers_path, filter_params=None)
+				else:
+					logging.warning("Transfers table not found. Inpatient transfer filter may not be applied.")
+		
+		# Apply filters using the Filtering class
+		filtered_df = self.filtering.apply_filters(
+			df=df,
+			filter_params=filter_params,
+			patients_df=patients_df,
+			admissions_df=admissions_df,
+			diagnoses_df=diagnoses_df,
+			transfers_df=transfers_df
+		)
+		
+		return filtered_df
 
 	def get_table_info(self, module: str, table_name: str) -> str:
 		"""Get descriptive information about a specific MIMIC-IV table."""
