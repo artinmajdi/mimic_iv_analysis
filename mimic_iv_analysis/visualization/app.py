@@ -2748,7 +2748,29 @@ class MIMICDashboardApp:
 				selected_display = self._select_table(module=module)
 
 				# Load Table(s)
-				self._load_table(selected_display=selected_display)
+				st.sidebar.markdown("---")
+
+				# Sampling options
+				load_full = st.sidebar.checkbox("Load Full Table (Ignore Sampling)", value=False, key="load_full")
+
+				st.session_state.sample_size = st.sidebar.number_input(
+					"Sample Size (Rows)",
+					min_value = 100,
+					max_value = 6000000,
+					disabled  = load_full,
+					key       = "sample_size_input",
+					step      = 100,
+					value     = st.session_state.sample_size,
+					help      = "Number of rows to load if 'Load Full Table' is unchecked. Applied randomly."
+				)
+
+				# Encoding (less critical for parquet, but keep for CSV)
+				encoding = st.sidebar.selectbox("Encoding (for CSV)", ["utf-8", "latin-1", "iso-8859-1"], index=0, key="encoding_select")
+
+				# Dask option (only relevant if dask is installed and intended)
+				st.session_state.use_dask = st.sidebar.checkbox("Use Dask for large files", value=st.session_state.use_dask, help="Enable Dask for potentially faster processing of very large files (requires Dask installation)")
+
+			self._load_table(encoding=encoding, load_full=load_full, selected_display=selected_display)
 
 		else:
 			st.sidebar.info("Scan a MIMIC-IV directory to select and load tables.")
@@ -2763,43 +2785,45 @@ class MIMICDashboardApp:
 		Returns:
 			str: The selected display name for the table
 		"""
+		# TODO: need to fix the merged table mode. currently it is not working.
+
 		# Get sorted table options for the selected module
 		table_options = sorted(st.session_state.available_tables[module])
 
-		# Create display options list with the special connected tables option first
-		table_display_options = ["Load Connected Tables (Patient-centered)"]
+		# Create display options list with the special merged_table option first
+		tables_list_w_size_info = ["merged_table"]
 
 		# Create display-to-table mapping for reverse lookup
-		display_to_table = {}
+		display_to_table_map = {}
 
 		# Format each table with size information
 		for table in table_options:
 			display_name = st.session_state.table_display_names.get((module, table), table)
-			size_mb = st.session_state.file_sizes.get((module, table), 0)
+			size_mb      = st.session_state.file_sizes.get((module, table), 0)
 			# Format size as MB or KB based on value
-			size_str = f"{size_mb:.1f} MB" if size_mb > 0.1 else f"{int(size_mb*1024)} KB"
+			size_str     = f"{size_mb:.1f} MB" if size_mb > 0.1 else f"{int(size_mb*1024)} KB"
 
 			# Create the display string and add to options
 			display_string = f"{display_name} ({size_str})"
-			table_display_options.append(display_string)
+			tables_list_w_size_info.append(display_string)
 
 			# Map display string back to table name
-			display_to_table[display_string] = table
+			display_to_table_map[display_string] = table
 
 		# Determine default selection index (prefer 'poe' table if available)
 		default_index = table_options.index('poe') if 'poe' in table_options else 0
 
 		# Display the table selection dropdown
-		selected_display = st.sidebar.selectbox(
-			"Select Table",
-			table_display_options,
-			index=default_index,
-			key="table_select",
-			help="Select which table to load (file size shown in parentheses)"
+		selected_table_w_size_info = st.sidebar.selectbox(
+			label   = "Select Table",
+			options = tables_list_w_size_info,
+			index   = default_index,
+			key     = "table_select",
+			help    = "Select which table to load (file size shown in parentheses)"
 		)
 
 		# Determine the actual table name from the selected display
-		table = None if selected_display == "Load Connected Tables (Patient-centered)" else display_to_table[selected_display]
+		table = None if selected_table_w_size_info == "merged_table" else display_to_table_map[selected_table_w_size_info]
 
 		# Update session state if table selection changed
 		if table != st.session_state.selected_table:
@@ -2810,7 +2834,8 @@ class MIMICDashboardApp:
 		if st.session_state.selected_table:
 			self._display_table_info(module, st.session_state.selected_table)
 
-		return selected_display
+		return selected_table_w_size_info
+
 
 	def _display_table_info(self, module: str, table: str) -> None:
 		"""Display table description information in sidebar.
@@ -2831,26 +2856,9 @@ class MIMICDashboardApp:
 		except Exception as e:
 			st.sidebar.warning(f"Could not retrieve table info: {e}")
 
-	def _load_table(self, selected_display: str = None) -> Tuple[Optional[pd.DataFrame], int]:
 
-		# Separator
-		st.sidebar.markdown("---")
-
-		# Sampling options
-		load_full = st.sidebar.checkbox("Load Full Table (Ignore Sampling)", value=False, key="load_full")
-
-		st.session_state.sample_size = st.sidebar.number_input(
-			"Sample Size (Rows)", min_value=100, max_value=6000000, disabled=load_full, key="sample_size_input", step=100,
-			value=st.session_state.sample_size,
-			help="Number of rows to load if 'Load Full Table' is unchecked. Applied randomly."
-		)
-
-		# Encoding (less critical for parquet, but keep for CSV)
-		encoding = st.sidebar.selectbox("Encoding (for CSV)", ["utf-8", "latin-1", "iso-8859-1"], index=0, key="encoding_select")
-
-		# Dask option (only relevant if dask is installed and intended)
-		st.session_state.use_dask = st.sidebar.checkbox("Use Dask for large files", value=st.session_state.use_dask, help="Enable Dask for potentially faster processing of very large files (requires Dask installation)")
-
+	def _load_table(self, encoding: str = 'latin-1', load_full: bool = False, selected_display: str = None) -> Tuple[Optional[pd.DataFrame], int]:
+		"""Load a specific MIMIC-IV table, handling large files and sampling."""
 
 		if st.sidebar.button("Load Selected Table", key="load_button"):
 
@@ -2859,125 +2867,93 @@ class MIMICDashboardApp:
 				st.sidebar.warning("Please select a module and table first.")
 				return
 
-			# Special case for "Load Connected Tables (Patient-centered)" option
-			if selected_display == "Load Connected Tables (Patient-centered)":
+			# Determine sample size to use
+			load_sample_size = None if load_full else st.session_state.sample_size
 
-				mimic_path = st.session_state.mimic_path
-				if not mimic_path or not os.path.exists(mimic_path):
-					st.sidebar.error(f"MIMIC-IV directory not found: {mimic_path}. Please set correct path and re-scan.")
+			# Framework info (currently just Pandas, add Dask logic if implemented)
+			framework       = "Dask" if st.session_state.use_dask else "Pandas"
+			loading_message = f"Loading { 'full table' if load_full else f'{load_sample_size} rows (sampled)' } using {framework}..."
+
+			# TODO: see if I can merge this two into one. so that I can be sure that the merged table is shown everywhere.
+
+			# Special case for "merged_table" option
+			if selected_display == "merged_table":
+
+				dataset_path = st.session_state.mimic_path
+				if not dataset_path or not os.path.exists(dataset_path):
+					st.sidebar.error(f"MIMIC-IV directory not found: {dataset_path}. Please set correct path and re-scan.")
 					return
 
-				# Determine sample size to use
-				load_sample_size = None if load_full else st.session_state.sample_size
-
-				# Framework info
-				framework = "Dask" if st.session_state.use_dask else "Pandas"
-				loading_message = f"Loading connected tables using {framework}..."
-
 				with st.spinner(loading_message):
-					try:
-						# Load connected tables with merged view
-						with st.spinner("Loading and merging connected tables..."):
-							result = self.data_handler.load_connected_tables( mimic_path=mimic_path, sample_size=load_sample_size, encoding=encoding, use_dask=st.session_state.use_dask, merged_view=True )
 
-						# Unpack the result (tables dict and merged dataframe)
-						if len(result) == 2:  # Successful with merged view
-							connected_tables, merged_df = result
+					# Load connected tables with merged view
+					with st.spinner("Loading and merging connected tables..."):
+						result = self.data_handler.load_connected_tables( mimic_path=dataset_path, sample_size=load_sample_size, encoding=encoding, use_dask=st.session_state.use_dask, merged_view=True )
 
-							# Store all tables in session state for later access
-							st.session_state.connected_tables = connected_tables
+					# Unpack the result (tables dict and merged dataframe)
+					if len(result) == 2:  # Successful with merged view
+						connected_tables, merged_df = result
 
-							# Check if we have a valid merged dataframe
-							if not merged_df.empty:
-								# Set the merged dataframe for display
-								st.session_state.df = merged_df
-								st.session_state.total_rows = len(merged_df)
-								st.session_state.loaded_sample_size = len(merged_df)
-								st.session_state.current_file_path = "merged_tables"
-								st.session_state.table_display_name = "Merged MIMIC-IV View"
+						# Store all tables in session state for later access
+						st.session_state.connected_tables = connected_tables
 
-								# Clear previous analysis states
-								self._clear_analysis_states()
+						# Check if we have a valid merged dataframe
+						if merged_df.empty:
+							st.sidebar.error("Failed to load connected tables.")
+							return
 
-								# Show success message with table info
-								tables_loaded = [name for name, df in connected_tables.items() if not df.empty]
-								total_tables = len(tables_loaded)
-								st.sidebar.success(f"Successfully merged {total_tables} tables with {len(merged_df.columns)} columns and {len(merged_df)} rows!")
-							else:
-								# Fall back to patients table if merge fails
-								patients_df = connected_tables.get('patients', pd.DataFrame())
-								if not patients_df.empty:
-									st.session_state.df = patients_df
-									st.session_state.total_rows = len(patients_df)
-									st.session_state.loaded_sample_size = len(patients_df)
-									st.session_state.current_file_path = os.path.join(mimic_path, 'hosp', 'patients.csv')
-									st.session_state.table_display_name = "Patients Table (Merged View Failed)"
+						# Set the merged dataframe for display
+						st.session_state.df                 = merged_df
+						st.session_state.total_rows         = len(merged_df)
+						st.session_state.loaded_sample_size = len(merged_df)
+						st.session_state.current_file_path  = "merged_tables"
+						st.session_state.table_display_name = "Merged MIMIC-IV View"
 
-									# Show warning message
-									st.sidebar.warning("Could not create merged view. Displaying patients table only.")
-								else:
-									st.sidebar.error("Failed to load any tables. Check logs for details.")
-						else:
-							st.sidebar.error("Failed to load connected tables. Check logs for details.")
-					except Exception as e:
-						logging.error(f"Error loading connected tables: {str(e)}")
-						st.sidebar.error(f"Error loading connected tables: {str(e)}")
+						# Clear previous analysis states
+						self._clear_analysis_states()
+
+						# Show success message with table info
+						tables_loaded = [name for name, df in connected_tables.items() if not df.empty]
+						total_tables = len(tables_loaded)
+						st.sidebar.success(f"Successfully merged {total_tables} tables with {len(merged_df.columns)} columns and {len(merged_df)} rows!")
 
 			else:
-
 				file_path = st.session_state.file_paths.get((st.session_state.selected_module, st.session_state.selected_table))
+
 				if not file_path or not os.path.exists(file_path):
 					st.sidebar.error(f"File path not found for {st.session_state.selected_module}/{st.session_state.selected_table}. Please re-scan.")
+					return
 
-				else:
-					st.session_state.current_file_path = file_path
-					# Determine sample size to use
-					load_sample_size = None if load_full else st.session_state.sample_size
+				st.session_state.current_file_path = file_path
 
-					# Framework info (currently just Pandas, add Dask logic if implemented)
-					framework = "Dask" if st.session_state.use_dask else "Pandas"
-					loading_message = f"Loading { 'full table' if load_full else f'{load_sample_size} rows (sampled)' } using {framework}..."
+				with st.spinner(loading_message):
 
-					with st.spinner(loading_message):
-						try:
-							df, total_rows = self.data_handler.load_mimic_table( file_path   = file_path, sample_size = load_sample_size, encoding    = encoding, use_dask    = st.session_state.use_dask )
-							st.session_state.total_row_count = total_rows
+					df, total_rows = self.data_handler.load_mimic_table( file_path=file_path, sample_size=load_sample_size, encoding=encoding, use_dask=st.session_state.use_dask )
 
-							if df is not None and not df.empty:
-								st.session_state.df = df
-								st.sidebar.success(f"Loaded {len(df)} rows out of {total_rows}.")
-								# Clear previous analysis results when new data is loaded
-								self._clear_analysis_states()
+					st.session_state.total_row_count = total_rows
 
-								# Auto-detect columns for feature engineering
-								try:
-									st.session_state.detected_order_cols = self.feature_engineer.detect_order_columns(df)
-									st.session_state.detected_time_cols = self.feature_engineer.detect_temporal_columns(df)
-									st.session_state.detected_patient_id_col = self.feature_engineer.detect_patient_id_column(df)
-									st.sidebar.write("Detected Columns (for Feature Eng):")
-									st.sidebar.caption(f"Patient ID: {st.session_state.detected_patient_id_col}, Order: {st.session_state.detected_order_cols}, Time: {st.session_state.detected_time_cols}")
-								except AttributeError:
-									st.sidebar.warning("Feature Engineer missing column detection methods.")
-								except Exception as e_detect:
-									st.sidebar.warning(f"Error during column detection: {e_detect}")
+					if df is not None and not df.empty:
+						st.session_state.df = df
+						st.sidebar.success(f"Loaded {len(df)} rows out of {total_rows}.")
 
-							elif df is not None and df.empty:
-								st.sidebar.warning("Loaded table is empty.")
-								st.session_state.df = None # Set to None if empty
-							else: # df is None
-								st.sidebar.error("Failed to load table. Check logs or file format.")
-								st.session_state.df = None
+						# Clear previous analysis results when new data is loaded
+						self._clear_analysis_states()
 
-						except AttributeError:
-							st.sidebar.error("Data Handler is not initialized or does not have a 'load_mimic_table' method.")
-						except FileNotFoundError:
-							st.sidebar.error(f"File not found: {file_path}. Please re-scan directory.")
-						except pd.errors.ParserError:
-							st.sidebar.error(f"Error parsing file: {file_path}. Check format, encoding, or potential corruption.")
-						except Exception as e:
-							st.sidebar.error(f"Error loading table: {str(e)}")
-							logging.exception(f"Error loading table {file_path}")
-							st.session_state.df = None
+						# Auto-detect columns for feature engineering
+						st.session_state.detected_order_cols     = self.feature_engineer.detect_order_columns(df)
+						st.session_state.detected_time_cols      = self.feature_engineer.detect_temporal_columns(df)
+						st.session_state.detected_patient_id_col = self.feature_engineer.detect_patient_id_column(df)
+						st.sidebar.write("Detected Columns (for Feature Eng):")
+						st.sidebar.caption(f"Patient ID: {st.session_state.detected_patient_id_col}, Order: {st.session_state.detected_order_cols}, Time: {st.session_state.detected_time_cols}")
+
+
+					elif df is not None and df.empty:
+						st.sidebar.warning("Loaded table is empty.")
+						st.session_state.df = None # Set to None if empty
+
+					else: # df is None
+						st.sidebar.error("Failed to load table. Check logs or file format.")
+						st.session_state.df = None
 
 
 	def _clear_analysis_states(self):
