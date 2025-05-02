@@ -15,8 +15,28 @@ import streamlit as st
 
 # Import filtering functionality
 from mimic_iv_analysis.core.filtering import Filtering
+
+# Utility functions
+def convert_string_dtypes(df):
+    """Convert pandas StringDtype to object type to avoid Arrow conversion issues in Streamlit.
+
+    Args:
+        df: Input DataFrame (pandas or Dask)
+
+    Returns:
+        DataFrame with StringDtype columns converted to object type
+    """
+    if hasattr(df, 'compute'):
+        # For Dask DataFrame, we need to compute it first
+        return df
+    else:
+        # For pandas DataFrame
+        for col in df.columns:
+            if hasattr(df[col], 'dtype') and str(df[col].dtype) == 'string':
+                df[col] = df[col].astype('object')
+        return df
 # Constants
-DEFAULT_MIMIddC_PATH    = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1"
+DEFAULT_MIMIC_PATH    = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1"
 LARGE_FILE_THRESHOLD_MB = 100
 DEFAULT_SAMPLE_SIZE     = 1000
 RANDOM_STATE            = 42
@@ -106,49 +126,48 @@ class MIMICDataLoader:
 				- Total row count in the original file
 		"""
 		try:
-			file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+			file_size_mb  = os.path.getsize(file_path) / (1024 * 1024)
 			is_compressed = file_path.endswith('.gz')
-			compression = 'gzip' if is_compressed else None
-
-			read_params = { 'encoding': encoding, 'compression': compression, 'low_memory': False }
+			compression   = 'gzip' if is_compressed else None
+			read_params   = { 'encoding': encoding, 'compression': compression, 'low_memory': False }
 
 			if use_dask:
 				# Using Dask for large file processing
 				try:
 					# First attempt to detect datetime columns by reading a small sample with pandas
 					sample_df = pd.read_csv(file_path, nrows=5, **read_params)
-					
+
 					# Identify potential datetime columns
 					datetime_cols = []
 					for col in sample_df.columns:
 						if 'time' in col.lower() or 'date' in col.lower():
 							datetime_cols.append(col)
-					
+
 					# Create a dtype dictionary for problematic columns
 					dtype_dict = {col: 'object' for col in datetime_cols}
-					
+
 					# Update read_params with the dtype dictionary
 					dask_read_params = read_params.copy()
 					dask_read_params['dtype'] = dtype_dict
-					
+
 					# Load the data with Dask using the updated parameters
 					dask_df = dd.read_csv(file_path, **dask_read_params)
-					
+
 					# Get total row count
 					total_rows = int(dask_df.shape[0].compute())
-					
+
 				except Exception as e:
 					logging.warning(f"Specific column error with Dask: {str(e)}")
 					logging.info("Falling back to generic object dtypes for all columns")
-					
+
 					# Fallback: use object dtype for all columns
 					dask_read_params = read_params.copy()
 					dask_read_params['dtype'] = 'object'
-					
+
 					# Try again with all columns as objects
 					dask_df = dd.read_csv(file_path, **dask_read_params)
 					total_rows = int(dask_df.shape[0].compute())
-				
+
 				# For large files or when sampling is needed
 				if total_rows > sample_size:
 					# Convert to pandas with sampling
@@ -184,6 +203,10 @@ class MIMICDataLoader:
 				# Update total_rows to reflect filtered count
 				total_rows = len(df) if not use_dask else int(df.shape[0].compute() if hasattr(df, 'compute') else df.shape[0])
 
+			# Convert StringDtype columns to avoid PyArrow conversion issues in Streamlit
+			if df is not None:
+				df = convert_string_dtypes(df)
+
 			return df, total_rows
 		except Exception as e:
 			logging.error(f"Error loading data from {os.path.basename(file_path)}: {str(e)}")
@@ -193,19 +216,19 @@ class MIMICDataLoader:
 	def apply_filters(self, df: pd.DataFrame, filter_params: Dict[str, Any]) -> pd.DataFrame:
 		"""
 		Apply filters to the DataFrame based on the provided filter parameters.
-		
+
 		This method loads necessary related tables (patients, admissions, diagnoses_icd, transfers)
 		and applies the specified filters using the Filtering class.
-		
+
 		Args:
 			df: DataFrame to filter
 			filter_params: Dictionary containing filter parameters
-			
+
 		Returns:
 			Filtered DataFrame
 		"""
 		logging.info("Applying filters to DataFrame...")
-		
+
 		# Check if filtering is enabled
 		if not any(filter_params.get(f, False) for f in [
 			'apply_encounter_timeframe', 'apply_age_range', 'apply_t2dm_diagnosis',
@@ -213,13 +236,13 @@ class MIMICDataLoader:
 		]):
 			logging.info("No filters enabled. Returning original DataFrame.")
 			return df
-		
+
 		# Load necessary related tables if they're not already in the DataFrame
 		patients_df = None
 		admissions_df = None
 		diagnoses_df = None
 		transfers_df = None
-		
+
 		# Check if we need to load the patients table
 		if filter_params.get('apply_encounter_timeframe', False) or filter_params.get('apply_age_range', False):
 			if 'anchor_year_group' not in df.columns or 'anchor_age' not in df.columns:
@@ -228,7 +251,7 @@ class MIMICDataLoader:
 					patients_df, _ = self.load_mimic_table(patients_path, filter_params=None)
 				else:
 					logging.warning("Patients table not found. Some filters may not be applied.")
-		
+
 		# Check if we need to load the admissions table
 		if filter_params.get('apply_valid_admission_discharge', False) or \
 		   filter_params.get('apply_inpatient_stay', False) or \
@@ -240,7 +263,7 @@ class MIMICDataLoader:
 					admissions_df, _ = self.load_mimic_table(admissions_path, filter_params=None)
 				else:
 					logging.warning("Admissions table not found. Some filters may not be applied.")
-		
+
 		# Check if we need to load the diagnoses_icd table
 		if filter_params.get('apply_t2dm_diagnosis', False):
 			if 'icd_code' not in df.columns or 'seq_num' not in df.columns:
@@ -249,7 +272,7 @@ class MIMICDataLoader:
 					diagnoses_df, _ = self.load_mimic_table(diagnoses_path, filter_params=None)
 				else:
 					logging.warning("Diagnoses_icd table not found. T2DM diagnosis filter may not be applied.")
-		
+
 		# Check if we need to load the transfers table
 		if filter_params.get('apply_inpatient_stay', False) and filter_params.get('require_inpatient_transfer', False):
 			if 'careunit' not in df.columns:
@@ -258,7 +281,7 @@ class MIMICDataLoader:
 					transfers_df, _ = self.load_mimic_table(transfers_path, filter_params=None)
 				else:
 					logging.warning("Transfers table not found. Inpatient transfer filter may not be applied.")
-		
+
 		# Apply filters using the Filtering class
 		filtered_df = self.filtering.apply_filters(
 			df=df,
@@ -268,7 +291,7 @@ class MIMICDataLoader:
 			diagnoses_df=diagnoses_df,
 			transfers_df=transfers_df
 		)
-		
+
 		return filtered_df
 
 	def get_table_info(self, module: str, table_name: str) -> str:
@@ -311,6 +334,7 @@ class MIMICDataLoader:
 
 	def convert_to_parquet(self, df: pd.DataFrame, table_name: str, current_file_path: str) -> Optional[str]:
 		"""Converts the loaded DataFrame to Parquet format. Returns path or None."""
+		# TODO: learng about the difference between pyarrow and dask. then if needed, include teh pyarrow logic to the code
 		try:
 			parquet_dir = os.path.join(os.path.dirname(current_file_path), 'parquet_files')
 			os.makedirs(parquet_dir, exist_ok=True)

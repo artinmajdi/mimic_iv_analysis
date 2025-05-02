@@ -126,13 +126,11 @@ class FeatureEngineeringTab:
 
             with col2:
                 # Suggest order column but allow selection from all columns
-                order_col_index = 0
-                if st.session_state.get('detected_order_cols') and st.session_state['detected_order_cols'][0] in all_columns:
-                    order_col_index = all_columns.index(st.session_state['detected_order_cols'][0])
+
                 order_col = st.selectbox(
                     "Select Order Type Column",
                     all_columns,
-                    index=order_col_index,
+                    index=all_columns.index('order_type') if 'order_type' in all_columns else 0,
                     key="freq_order_col",
                     help="Column containing order types/names"
                 )
@@ -147,13 +145,17 @@ class FeatureEngineeringTab:
             # Generate button
             if st.button("Generate Order Frequency Matrix"):
                 try:
-                    with st.spinner("Generating order frequency matrix..."):
+                    with st.spinner("Creating order frequency matrix..."):
+                        # Check if Dask was used to load the data
+                        use_dask = st.session_state.get('use_dask', False)
+
                         freq_matrix = feature_engineer.create_order_frequency_matrix(
-                            df             = st.session_state.df,
-                            patient_id_col = patient_id_col,
-                            order_col      = order_col,
-                            normalize      = normalize,
-                            top_n          = top_n
+                            st.session_state.df,
+                            patient_id_col=patient_id_col,
+                            order_col=order_col,
+                            normalize=normalize,
+                            top_n=top_n,
+                            use_dask=use_dask
                         )
                         # Store the frequency matrix
                         st.session_state.freq_matrix = freq_matrix
@@ -243,12 +245,16 @@ class FeatureEngineeringTab:
             if st.button("Extract Order Sequences"):
                 try:
                     with st.spinner("Extracting temporal order sequences..."):
+                        # Check if Dask was used to load the data
+                        use_dask = st.session_state.get('use_dask', False)
+
                         sequences = feature_engineer.extract_temporal_order_sequences(
                             df                  = st.session_state.df,
                             patient_id_col      = seq_patient_id_col,
                             order_col           = seq_order_col,
                             time_col            = seq_time_col,
-                            max_sequence_length = max_seq_length
+                            max_sequence_length = max_seq_length,
+                            use_dask            = use_dask
                         )
                         st.session_state.order_sequences = sequences
                         st.success(f"Extracted sequences for {len(sequences)} patients.")
@@ -677,14 +683,9 @@ class ClusteringAnalysisTab:
             if 'freq_matrix' in st.session_state and st.session_state.freq_matrix is not None:
                 default_data_source_index = 1
             elif 'timing_features' in st.session_state and st.session_state.timing_features is not None:
-                 default_data_source_index = 2
+                default_data_source_index = 2
 
-            data_source = st.radio(
-                "Select Data Source",
-                data_source_options,
-                index=default_data_source_index,
-                horizontal=True
-            )
+            data_source = st.radio( "Select Data Source", data_source_options, index=default_data_source_index, horizontal=True )
 
             input_data = None
             input_data_ready = False # Flag to track if data is loaded and ready
@@ -709,7 +710,7 @@ class ClusteringAnalysisTab:
                             st.dataframe(input_data.head(), use_container_width=True)
                             input_data_ready = True
                         else:
-                             st.warning("Please select at least one numeric column.")
+                            st.warning("Please select at least one numeric column.")
                     else:
                         st.warning("No numeric columns found in the current DataFrame. Please select another data source or load a table with numeric data.")
                 else:
@@ -818,11 +819,15 @@ class ClusteringAnalysisTab:
                 if st.button("Prepare Data for Clustering"):
                     try:
                         with st.spinner("Preprocessing data..."):
+                            # Check if Dask was used to load the data
+                            use_dask = st.session_state.get('use_dask', False)
+
                             # Apply preprocessing
                             processed_data = clustering_analyzer.preprocess_data(
                                 input_data, # Pass the loaded data
                                 method=preprocess_method_map[preprocess_method],
-                                handle_missing=handle_missing_map[handle_missing]
+                                handle_missing=handle_missing_map[handle_missing],
+                                use_dask=use_dask
                             )
 
                             # Check if data remains after preprocessing
@@ -922,6 +927,9 @@ class ClusteringAnalysisTab:
                             with st.spinner(f"Applying {reduction_method} dimensionality reduction..."):
                                 # Map method names
                                 method_map = {"PCA": "pca", "t-SNE": "tsne", "UMAP": "umap"}
+
+                                # Check if Dask was used to load the data
+                                use_dask = st.session_state.get('use_dask', False)
 
                                 # Apply reduction
                                 reduced_data = clustering_analyzer.apply_dimensionality_reduction(
@@ -1039,7 +1047,10 @@ class ClusteringAnalysisTab:
 
 
                 # K-means parameters
-                n_clusters_default = st.session_state.get('optimal_k', 5) # Use optimal_k if found, else 5
+                # Make sure n_clusters_default is an integer, not None
+                optimal_k = st.session_state.get('optimal_k')
+                n_clusters_default = 5 if optimal_k is None else optimal_k
+
                 n_clusters = st.number_input(
                     "Number of Clusters (k)",
                     min_value=2,
@@ -2563,9 +2574,9 @@ class MIMICDashboardApp:
         logging.info("Starting MIMICDashboardApp run...")
         # Set page config (do this only once at the start)
         st.set_page_config(
-        	page_title="MIMIC-IV Explorer",
-        	page_icon="🏥",
-        	layout="wide"
+            page_title="MIMIC-IV Explorer",
+            page_icon="🏥",
+            layout="wide"
         )
 
         # Custom CSS for better styling
@@ -2596,20 +2607,20 @@ class MIMICDashboardApp:
             font-size: 0.9em; /* Slightly smaller font */
         }
         .stTabs [aria-selected="true"] {
-             background-color: #ffffff; /* White background for selected tab */
-             font-weight: bold;
-         }
+            background-color: #ffffff; /* White background for selected tab */
+            font-weight: bold;
+        }
         .stButton>button {
-             border-radius: 4px;
-             padding: 8px 16px;
-         }
+            border-radius: 4px;
+            padding: 8px 16px;
+        }
         .stMultiSelect > div > div {
-             border-radius: 4px;
-         }
-         .stDataFrame {
-             border: 1px solid #eee;
-             border-radius: 4px;
-         }
+            border-radius: 4px;
+        }
+        .stDataFrame {
+            border: 1px solid #eee;
+            border-radius: 4px;
+        }
         </style>
         """, unsafe_allow_html=True)
 
@@ -2727,10 +2738,10 @@ class MIMICDashboardApp:
                 # Create display names with file size info
                 table_display_options = []
                 for table in table_options:
-                     display_name = st.session_state.table_display_names.get((module, table), table)
-                     size_mb = st.session_state.file_sizes.get((module, table), 0)
-                     size_str = f"{size_mb:.1f} MB" if size_mb >= 0.1 else f"{size_mb*1024:.0f} KB"
-                     table_display_options.append(f"{display_name} ({size_str})")
+                    display_name = st.session_state.table_display_names.get((module, table), table)
+                    size_mb = st.session_state.file_sizes.get((module, table), 0)
+                    size_str = f"{size_mb:.1f} MB" if size_mb >= 0.1 else f"{size_mb*1024:.0f} KB"
+                    table_display_options.append(f"{display_name} ({size_str})")
 
                 # Create mapping from display name back to actual table name
                 display_to_table = {display: table for table, display in zip(table_options, table_display_options)}
@@ -2747,7 +2758,7 @@ class MIMICDashboardApp:
                 selected_display = st.sidebar.selectbox(
                     "Select Table",
                     table_display_options,
-                    index=selected_table_index,
+                    index=table_options.index('poe') if 'poe' in table_options else 0,
                     key="table_select",
                     help="Select which table to load (file size shown in parentheses)"
                 )
@@ -2787,11 +2798,11 @@ class MIMICDashboardApp:
                 )
 
                 # Advanced options expander
-                with st.sidebar.expander("Advanced Loading Options"):
-                    # Encoding (less critical for parquet, but keep for CSV)
-                    encoding = st.selectbox("Encoding (for CSV)", ["utf-8", "latin-1", "iso-8859-1"], index=0, key="encoding_select")
-                    # Dask option (only relevant if dask is installed and intended)
-                    # st.session_state.use_dask = st.checkbox("Use Dask for large files", value=st.session_state.use_dask, help="Enable Dask for potentially faster processing of very large files (requires Dask installation)")
+                # with st.sidebar.expander("Advanced Loading Options"):
+                # Encoding (less critical for parquet, but keep for CSV)
+                encoding = st.sidebar.selectbox("Encoding (for CSV)", ["utf-8", "latin-1", "iso-8859-1"], index=0, key="encoding_select")
+                # Dask option (only relevant if dask is installed and intended)
+                st.session_state.use_dask = st.sidebar.checkbox("Use Dask for large files", value=st.session_state.use_dask, help="Enable Dask for potentially faster processing of very large files (requires Dask installation)")
 
 
                 # Load button
@@ -2808,16 +2819,16 @@ class MIMICDashboardApp:
                             load_sample_size = None if load_full else st.session_state.sample_size
 
                             # Framework info (currently just Pandas, add Dask logic if implemented)
-                            framework = "Pandas" # Add logic for Dask if st.session_state.use_dask is True
+                            framework = "Dask" if st.session_state.use_dask else "Pandas"
                             loading_message = f"Loading { 'full table' if load_full else f'{load_sample_size} rows (sampled)' } using {framework}..."
 
                             with st.spinner(loading_message):
                                 try:
                                     df, total_rows = self.data_handler.load_mimic_table(
-                                        file_path=file_path,
-                                        sample_size=load_sample_size,
-                                        encoding=encoding,
-                                        # use_dask=st.session_state.use_dask # Pass dask flag if using it
+                                        file_path   = file_path,
+                                        sample_size = load_sample_size,
+                                        encoding    = encoding,
+                                        use_dask    = st.session_state.use_dask # Pass dask flag if using it
                                     )
                                     st.session_state.total_row_count = total_rows
 
@@ -2829,29 +2840,29 @@ class MIMICDashboardApp:
 
                                         # Auto-detect columns for feature engineering
                                         try:
-                                             st.session_state.detected_order_cols = self.feature_engineer.detect_order_columns(df)
-                                             st.session_state.detected_time_cols = self.feature_engineer.detect_temporal_columns(df)
-                                             st.session_state.detected_patient_id_col = self.feature_engineer.detect_patient_id_column(df)
-                                             st.sidebar.write("Detected Columns (for Feature Eng):")
-                                             st.sidebar.caption(f"Patient ID: {st.session_state.detected_patient_id_col}, Order: {st.session_state.detected_order_cols}, Time: {st.session_state.detected_time_cols}")
+                                            st.session_state.detected_order_cols = self.feature_engineer.detect_order_columns(df)
+                                            st.session_state.detected_time_cols = self.feature_engineer.detect_temporal_columns(df)
+                                            st.session_state.detected_patient_id_col = self.feature_engineer.detect_patient_id_column(df)
+                                            st.sidebar.write("Detected Columns (for Feature Eng):")
+                                            st.sidebar.caption(f"Patient ID: {st.session_state.detected_patient_id_col}, Order: {st.session_state.detected_order_cols}, Time: {st.session_state.detected_time_cols}")
                                         except AttributeError:
-                                             st.sidebar.warning("Feature Engineer missing column detection methods.")
+                                            st.sidebar.warning("Feature Engineer missing column detection methods.")
                                         except Exception as e_detect:
-                                             st.sidebar.warning(f"Error during column detection: {e_detect}")
+                                            st.sidebar.warning(f"Error during column detection: {e_detect}")
 
                                     elif df is not None and df.empty:
-                                         st.sidebar.warning("Loaded table is empty.")
-                                         st.session_state.df = None # Set to None if empty
+                                        st.sidebar.warning("Loaded table is empty.")
+                                        st.session_state.df = None # Set to None if empty
                                     else: # df is None
-                                         st.sidebar.error("Failed to load table. Check logs or file format.")
-                                         st.session_state.df = None
+                                        st.sidebar.error("Failed to load table. Check logs or file format.")
+                                        st.session_state.df = None
 
                                 except AttributeError:
                                      st.sidebar.error("Data Handler is not initialized or does not have a 'load_mimic_table' method.")
                                 except FileNotFoundError:
                                      st.sidebar.error(f"File not found: {file_path}. Please re-scan directory.")
                                 except pd.errors.ParserError:
-                                     st.sidebar.error(f"Error parsing file: {file_path}. Check format, encoding, or potential corruption.")
+                                    st.sidebar.error(f"Error parsing file: {file_path}. Check format, encoding, or potential corruption.")
                                 except Exception as e:
                                     st.sidebar.error(f"Error loading table: {str(e)}")
                                     logging.exception(f"Error loading table {file_path}")
@@ -2910,17 +2921,17 @@ class MIMICDashboardApp:
 
             # About MIMIC-IV Section
             with st.expander("About MIMIC-IV"):
-                 st.markdown("""
-                 <p>MIMIC-IV (Medical Information Mart for Intensive Care IV) is a large, freely-available database comprising deidentified health-related data associated with patients who stayed in critical care units at the Beth Israel Deaconess Medical Center between 2008 - 2019.</p>
-                 <p>The database is organized into modules:</p>
-                 <ul>
-                     <li><strong>Hospital (hosp)</strong>: Hospital-wide EHR data (admissions, diagnoses, labs, prescriptions, etc.).</li>
-                     <li><strong>ICU (icu)</strong>: High-resolution ICU data (vitals, ventilator settings, inputs/outputs, etc.).</li>
-                     <li><strong>ED (ed)</strong>: Emergency department data.</li>
-                     <li><strong>CXRN (cxrn)</strong>: Chest X-ray reports (requires separate credentialing).</li>
-                 </ul>
-                 <p>For more information, visit the <a href="https://physionet.org/content/mimiciv/3.1/" target="_blank">MIMIC-IV PhysioNet page</a>.</p>
-                 """, unsafe_allow_html=True)
+                st.markdown("""
+                <p>MIMIC-IV (Medical Information Mart for Intensive Care IV) is a large, freely-available database comprising deidentified health-related data associated with patients who stayed in critical care units at the Beth Israel Deaconess Medical Center between 2008 - 2019.</p>
+                <p>The database is organized into modules:</p>
+                <ul>
+                    <li><strong>Hospital (hosp)</strong>: Hospital-wide EHR data (admissions, diagnoses, labs, prescriptions, etc.).</li>
+                    <li><strong>ICU (icu)</strong>: High-resolution ICU data (vitals, ventilator settings, inputs/outputs, etc.).</li>
+                    <li><strong>ED (ed)</strong>: Emergency department data.</li>
+                    <li><strong>CXRN (cxrn)</strong>: Chest X-ray reports (requires separate credentialing).</li>
+                </ul>
+                <p>For more information, visit the <a href="https://physionet.org/content/mimiciv/3.1/" target="_blank">MIMIC-IV PhysioNet page</a>.</p>
+                """, unsafe_allow_html=True)
 
         else:
             # Display Dataset Info if loaded
@@ -2931,20 +2942,20 @@ class MIMICDashboardApp:
                 st.metric("Module", st.session_state.selected_module or "N/A")
                 st.metric("Table", st.session_state.selected_table or "N/A")
             with col2:
-                 # Format file size
-                 file_size_mb = st.session_state.file_sizes.get((st.session_state.selected_module, st.session_state.selected_table), 0)
-                 if file_size_mb < 0.1: size_str = f"{file_size_mb*1024:.0f} KB"
-                 elif file_size_mb < 1024: size_str = f"{file_size_mb:.1f} MB"
-                 else: size_str = f"{file_size_mb/1024:.1f} GB"
-                 st.metric("File Size (Full)", size_str)
-                 st.metric("Total Rows (Full)", f"{st.session_state.total_row_count:,}")
+                # Format file size
+                file_size_mb = st.session_state.file_sizes.get((st.session_state.selected_module, st.session_state.selected_table), 0)
+                if file_size_mb < 0.1: size_str = f"{file_size_mb*1024:.0f} KB"
+                elif file_size_mb < 1024: size_str = f"{file_size_mb:.1f} MB"
+                else: size_str = f"{file_size_mb/1024:.1f} GB"
+                st.metric("File Size (Full)", size_str)
+                st.metric("Total Rows (Full)", f"{st.session_state.total_row_count:,}")
             with col3:
-                 st.metric("Rows Loaded", f"{len(st.session_state.df):,}")
-                 st.metric("Columns Loaded", f"{len(st.session_state.df.columns)}")
+                st.metric("Rows Loaded", f"{len(st.session_state.df):,}")
+                st.metric("Columns Loaded", f"{len(st.session_state.df.columns)}")
 
             # Display filename
             if st.session_state.current_file_path:
-                 st.caption(f"Source File: {os.path.basename(st.session_state.current_file_path)}")
+                st.caption(f"Source File: {os.path.basename(st.session_state.current_file_path)}")
             st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -2962,48 +2973,52 @@ class MIMICDashboardApp:
             with tab1:
                 st.markdown("<h2 class='sub-header'>Data Exploration & Visualization</h2>", unsafe_allow_html=True)
                 try:
-                    self.visualizer.display_data_preview(st.session_state.df)
-                    self.visualizer.display_dataset_statistics(st.session_state.df)
-                    self.visualizer.display_visualizations(st.session_state.df)
+                    # Check if Dask was used to load the data
+                    use_dask = st.session_state.get('use_dask', False)
+
+                    # Pass the use_dask parameter to all visualizer methods
+                    self.visualizer.display_data_preview(st.session_state.df, use_dask=use_dask)
+                    self.visualizer.display_dataset_statistics(st.session_state.df, use_dask=use_dask)
+                    self.visualizer.display_visualizations(st.session_state.df, use_dask=use_dask)
                 except AttributeError:
-                     st.error("Visualizer component is not properly initialized or lacks required methods.")
+                    st.error("Visualizer component is not properly initialized or lacks required methods.")
                 except Exception as e:
-                     st.error(f"An error occurred in the Exploration tab: {e}")
-                     logging.exception("Error in Exploration Tab")
+                    st.error(f"An error occurred in the Exploration tab: {e}")
+                    logging.exception("Error in Exploration Tab")
 
 
             # Tab 2: Feature Engineering
             with tab2:
                 try:
-                     self.feature_engineering_ui.render(self.feature_engineer)
+                    self.feature_engineering_ui.render(self.feature_engineer)
                 except AttributeError:
-                     st.error("Feature Engineering UI component is not properly initialized.")
+                    st.error("Feature Engineering UI component is not properly initialized.")
                 except Exception as e:
-                     st.error(f"An error occurred in the Feature Engineering tab: {e}")
-                     logging.exception("Error in Feature Engineering Tab")
+                    st.error(f"An error occurred in the Feature Engineering tab: {e}")
+                    logging.exception("Error in Feature Engineering Tab")
 
 
             # Tab 3: Clustering Analysis
             with tab3:
-                 try:
-                      # Pass both analyzers as needed by different parts of the tab
-                      self.clustering_analysis_ui.render(self.clustering_analyzer, self.feature_engineer)
-                 except AttributeError:
-                      st.error("Clustering Analysis UI component is not properly initialized.")
-                 except Exception as e:
-                      st.error(f"An error occurred in the Clustering Analysis tab: {e}")
-                      logging.exception("Error in Clustering Analysis Tab")
+                try:
+                    # Pass both analyzers as needed by different parts of the tab
+                    self.clustering_analysis_ui.render(self.clustering_analyzer, self.feature_engineer)
+                except AttributeError:
+                    st.error("Clustering Analysis UI component is not properly initialized.")
+                except Exception as e:
+                    st.error(f"An error occurred in the Clustering Analysis tab: {e}")
+                    logging.exception("Error in Clustering Analysis Tab")
 
 
             # Tab 4: Analysis & Visualization (Cluster Interpretation)
             with tab4:
                 try:
-                     self.analysis_visualization_ui.render(self.cluster_analyzer)
+                    self.analysis_visualization_ui.render(self.cluster_analyzer)
                 except AttributeError:
-                     st.error("Analysis & Visualization UI component is not properly initialized.")
+                    st.error("Analysis & Visualization UI component is not properly initialized.")
                 except Exception as e:
-                     st.error(f"An error occurred in the Cluster Interpretation tab: {e}")
-                     logging.exception("Error in Cluster Interpretation Tab")
+                    st.error(f"An error occurred in the Cluster Interpretation tab: {e}")
+                    logging.exception("Error in Cluster Interpretation Tab")
 
 
             # Tab 5: Export Options
@@ -3019,9 +3034,22 @@ class MIMICDashboardApp:
 
                     if export_format == "CSV":
                         try:
-                            csv_data = st.session_state.df.to_csv(index=False).encode('utf-8')
+                            # Check if Dask was used to load the data
+                            use_dask = st.session_state.get('use_dask', False)
+
+                            # Only compute if it's actually a Dask DataFrame
+                            if use_dask and hasattr(st.session_state.df, 'compute'):
+                                with st.spinner('Computing data for CSV export...'):
+                                    # Convert Dask DataFrame to pandas for export
+                                    df_export = st.session_state.df.compute()
+                                    csv_data = df_export.to_csv(index=False).encode('utf-8')
+                                    row_count = len(df_export)
+                            else:
+                                csv_data = st.session_state.df.to_csv(index=False).encode('utf-8')
+                                row_count = len(st.session_state.df)
+
                             st.download_button(
-                                label=f"Download as CSV ({len(st.session_state.df)} rows)",
+                                label=f"Download as CSV ({row_count} rows)",
                                 data=csv_data,
                                 file_name=export_filename,
                                 mime="text/csv",
@@ -3033,10 +3061,24 @@ class MIMICDashboardApp:
                          try:
                               # Use BytesIO to create an in-memory parquet file
                               buffer = BytesIO()
-                              st.session_state.df.to_parquet(buffer, index=False)
+
+                              # Check if Dask was used to load the data
+                              use_dask = st.session_state.get('use_dask', False)
+
+                              # Only compute if it's actually a Dask DataFrame
+                              if use_dask and hasattr(st.session_state.df, 'compute'):
+                                  with st.spinner('Computing data for Parquet export...'):
+                                      # Convert Dask DataFrame to pandas for export
+                                      df_export = st.session_state.df.compute()
+                                      df_export.to_parquet(buffer, index=False)
+                                      row_count = len(df_export)
+                              else:
+                                  st.session_state.df.to_parquet(buffer, index=False)
+                                  row_count = len(st.session_state.df)
+
                               buffer.seek(0)
                               st.download_button(
-                                   label=f"Download as Parquet ({len(st.session_state.df)} rows)",
+                                   label=f"Download as Parquet ({row_count} rows)",
                                    data=buffer,
                                    file_name=export_filename,
                                    mime="application/octet-stream", # Generic binary stream

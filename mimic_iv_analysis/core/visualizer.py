@@ -1,8 +1,9 @@
 # Standard library imports
-from typing import List, Optional
+from typing import List, Optional, Union
 
 # Data processing imports
 import pandas as pd
+import dask.dataframe as dd
 
 # Visualization imports
 import plotly.express as px
@@ -19,33 +20,47 @@ class MIMICVisualizer:
 		pass
 
 
-	def display_dataset_statistics(self, df: Optional[pd.DataFrame]):
-		"""Displays key statistics about the loaded DataFrame."""
+	def display_dataset_statistics(self, df, use_dask: bool = False):
+		"""Displays key statistics about the loaded DataFrame.
+		
+		Args:
+			df: DataFrame to display statistics for (can be pandas DataFrame or Dask DataFrame)
+			use_dask: If True, df is treated as a Dask DataFrame and computed when needed
+		"""
 		if df is not None:
 			st.markdown("<h2 class='sub-header'>Dataset Statistics</h2>", unsafe_allow_html=True)
-
+			
+			# Convert to pandas DataFrame if it's a Dask DataFrame
+			if use_dask and hasattr(df, 'compute'):
+				# For statistics, we need to compute the full DataFrame
+				# Show computing message for better UX
+				with st.spinner('Computing statistics from Dask DataFrame...'):
+					df_stats = df.compute()
+			else:
+				df_stats = df
+				
 			col1, col2 = st.columns(2)
 			with col1:
 				st.markdown("<div class='info-box'>", unsafe_allow_html=True)
-				st.markdown(f"**Number of rows:** {len(df)}")
-				st.markdown(f"**Number of columns:** {len(df.columns)}")
+				st.markdown(f"**Number of rows:** {len(df_stats)}")
+				st.markdown(f"**Number of columns:** {len(df_stats.columns)}")
 				st.markdown("</div>", unsafe_allow_html=True)
 
 			with col2:
 				st.markdown("<div class='info-box'>", unsafe_allow_html=True)
-				st.markdown(f"**Memory usage:** {df.memory_usage(deep=True).sum() / (1024 * 1024):.2f} MB")
-				st.markdown(f"**Missing values:** {df.isna().sum().sum()}")
+				st.markdown(f"**Memory usage:** {df_stats.memory_usage(deep=True).sum() / (1024 * 1024):.2f} MB")
+				st.markdown(f"**Missing values:** {df_stats.isna().sum().sum()}")
 				st.markdown("</div>", unsafe_allow_html=True)
 
 			# Display column information
 			st.markdown("<h3>Column Information</h3>", unsafe_allow_html=True)
 			try:
 				col_info = pd.DataFrame({
-					'Column': df.columns,
-					'Type': df.dtypes.values,
-					'Non-Null Count': df.count().values,
-					'Missing Values (%)': (df.isna().sum() / len(df) * 100).values.round(2),
-					'Unique Values': [df[col].nunique() for col in df.columns]
+					'Column': df_stats.columns,
+					'Type': df_stats.dtypes.values,
+					'Non-Null Count': df_stats.count().values,
+					'Missing Values (%)': (df_stats.isna().sum() / len(df_stats) * 100).values.round(2),
+					'Unique Values': [df_stats[col].nunique() for col in df_stats.columns]
 				})
 				st.dataframe(col_info, use_container_width=True)
 			except Exception as e:
@@ -54,21 +69,72 @@ class MIMICVisualizer:
 			st.info("No data loaded to display statistics.")
 
 
-	def display_data_preview(self, df: Optional[pd.DataFrame]):
-		"""Displays a preview of the loaded DataFrame."""
+	def display_data_preview(self, df, use_dask: bool = False):
+		"""Displays a preview of the loaded DataFrame.
+		
+		Args:
+			df: DataFrame to display (can be pandas DataFrame or Dask DataFrame)
+			use_dask: If True, df is treated as a Dask DataFrame and computed when needed
+		"""
 		if df is not None:
 			st.markdown("<h2 class='sub-header'>Data Preview</h2>", unsafe_allow_html=True)
-			st.dataframe(df, use_container_width=True)
+			
+			# If using Dask, compute the DataFrame for display
+			if use_dask and hasattr(df, 'compute'):
+				with st.spinner('Computing preview from Dask DataFrame...'):
+					# For preview, we can use .head() which is more efficient than computing the whole DataFrame
+					# Using a reasonable number of rows (100) for the preview
+					# Check if it's a Dask DataFrame by checking for compute method
+					if hasattr(df, 'compute'):
+						# This is a Dask DataFrame - handle it appropriately
+						try:
+							# Try with compute parameter (newer Dask versions)
+							preview_df = df.head(100, compute=True)
+						except TypeError:
+							# For older Dask versions
+							preview_df = df.head(100).compute()
+					else:
+						# Regular pandas DataFrame
+						preview_df = df.head(100)
+					st.dataframe(preview_df, use_container_width=True)
+			else:
+				st.dataframe(df, use_container_width=True)
 
 
-	def display_visualizations(self, df: Optional[pd.DataFrame]):
-		"""Displays visualizations of the loaded DataFrame."""
+	def display_visualizations(self, df, use_dask: bool = False):
+		"""Displays visualizations of the loaded DataFrame.
+		
+		Args:
+			df: DataFrame to visualize (can be pandas DataFrame or Dask DataFrame)
+			use_dask: If True, df is treated as a Dask DataFrame and computed when needed
+		"""
 		if df is not None:
 			st.markdown("<h2 class='sub-header'>Data Visualization</h2>", unsafe_allow_html=True)
+			
+			# Convert to pandas DataFrame if it's a Dask DataFrame
+			if use_dask and hasattr(df, 'compute'):
+				with st.spinner('Computing data for visualization from Dask DataFrame...'):
+					# For visualizations, we need the full DataFrame or at least a substantial sample
+					# Compute with a reasonable sample size for better performance
+					# Check if it's a Dask DataFrame by checking for compute method
+					if hasattr(df, 'compute'):
+						# This is a Dask DataFrame - handle it appropriately
+						try:
+							# Try with compute parameter (newer Dask versions)
+							viz_df = df.head(1000, compute=True)
+						except TypeError:
+							# For older Dask versions
+							viz_df = df.head(1000).compute()
+					else:
+						# Regular pandas DataFrame
+						viz_df = df.head(1000)
+					st.info('Visualizations are based on a sample of the data for better performance.')
+			else:
+				viz_df = df
 
 			# Select columns for visualization
-			numeric_cols    : List[str] = df.select_dtypes(include=['number']).columns.tolist()
-			categorical_cols: List[str] = df.select_dtypes(include=['object', 'category']).columns.tolist()
+			numeric_cols    : List[str] = viz_df.select_dtypes(include=['number']).columns.tolist()
+			categorical_cols: List[str] = viz_df.select_dtypes(include=['object', 'category']).columns.tolist()
 
 			if len(numeric_cols) > 0:
 				st.markdown("<h3>Numeric Data Visualization</h3>", unsafe_allow_html=True)
@@ -76,7 +142,7 @@ class MIMICVisualizer:
 				# Histogram
 				selected_num_col = st.selectbox("Select a numeric column for histogram", numeric_cols)
 				if selected_num_col:
-					fig = px.histogram(df, x=selected_num_col, title=f"Distribution of {selected_num_col}")
+					fig = px.histogram(viz_df, x=selected_num_col, title=f"Distribution of {selected_num_col}")
 					st.plotly_chart(fig, use_container_width=True)
 
 				# Scatter plot (if at least 2 numeric columns)
@@ -89,7 +155,7 @@ class MIMICVisualizer:
 						y_col = st.selectbox("Select Y-axis", numeric_cols, index=min(1, len(numeric_cols)-1))
 
 					if x_col and y_col:
-						fig = px.scatter(df, x=x_col, y=y_col, title=f"{y_col} vs {x_col}")
+						fig = px.scatter(viz_df, x=x_col, y=y_col, title=f"{y_col} vs {x_col}")
 						st.plotly_chart(fig, use_container_width=True)
 
 			if len(categorical_cols) > 0:
@@ -98,7 +164,7 @@ class MIMICVisualizer:
 				# Bar chart
 				selected_cat_col = st.selectbox("Select a categorical column for bar chart", categorical_cols)
 				if selected_cat_col:
-					value_counts = df[selected_cat_col].value_counts().reset_index()
+					value_counts = viz_df[selected_cat_col].value_counts().reset_index()
 					value_counts.columns = [selected_cat_col, 'Count']
 
 					# Limit to top 20 categories if there are too many

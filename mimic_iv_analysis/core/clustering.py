@@ -2,7 +2,7 @@ import datetime
 import logging
 import os
 import pickle
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -15,6 +15,12 @@ from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.manifold import TSNE
 from sklearn.metrics import calinski_harabasz_score, davies_bouldin_score, silhouette_score
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, normalize
+
+# Import Dask for large data handling
+import dask.dataframe as dd
+
+# Streamlit import
+import streamlit as st
 
 # import go
 import plotly.graph_objects as go
@@ -35,22 +41,34 @@ class MIMICClusteringAnalysis:
 		self.cluster_results = {}
 		self.cluster_metrics = {}
 
-	def preprocess_data(self, data: pd.DataFrame, method: str = 'standard', handle_missing: str = 'drop') -> pd.DataFrame:
+	def preprocess_data(self, data: Union[pd.DataFrame, dd.DataFrame], method: str = 'standard', handle_missing: str = 'drop', use_dask: bool = False) -> pd.DataFrame:
 		"""
 		Preprocess data for clustering analysis.
 
 		Args:
-			data: Input DataFrame to preprocess
+			data: Input DataFrame to preprocess (can be pandas DataFrame or Dask DataFrame)
 			method: Preprocessing method ('standard', 'minmax', 'normalize')
 			handle_missing: How to handle missing values ('drop', 'mean', 'median', 'mode')
+			use_dask: If True, data is treated as a Dask DataFrame and computed when needed
 
 		Returns:
-			Preprocessed DataFrame
+			Preprocessed DataFrame (always returns a pandas DataFrame)
 		"""
-		# Work with a copy of the data
-		df = data.copy()
+		logging.info(f"Preprocessing data with method={method}, handle_missing={handle_missing}, use_dask={use_dask}")
+		
+		# Convert Dask DataFrame to pandas if necessary
+		if use_dask and hasattr(data, 'compute'):
+			with st.spinner('Computing data for preprocessing from Dask DataFrame...'):
+				# For clustering, we need the full DataFrame
+				logging.info("Converting Dask DataFrame to pandas for clustering analysis")
+				df = data.compute()
+				logging.info(f"Dask DataFrame converted to pandas DataFrame of shape {df.shape}")
+		else:
+			# Work with a copy of the data
+			df = data.copy()
 
 		# Handle missing values
+		logging.info(f"Handling missing values with method: {handle_missing}")
 		if handle_missing == 'drop':
 			df = df.dropna()
 		elif handle_missing == 'mean':
@@ -63,6 +81,7 @@ class MIMICClusteringAnalysis:
 			raise ValueError(f"Invalid missing value handling method: {handle_missing}")
 
 		# Apply preprocessing based on method
+		logging.info(f"Applying scaling method: {method}")
 		if method == 'standard':
 			scaler = StandardScaler()
 			df_scaled = pd.DataFrame( scaler.fit_transform(df), columns=df.columns, index=df.index )
@@ -76,12 +95,14 @@ class MIMICClusteringAnalysis:
 
 		# Store preprocessed data
 		self.preprocessed_data = {
-			'original'      : data,
+			'original'      : data if not use_dask else "Dask DataFrame (original)", # Don't store the entire computed Dask DataFrame
 			'preprocessed'  : df_scaled,
 			'method'        : method,
-			'handle_missing': handle_missing
+			'handle_missing': handle_missing,
+			'use_dask'      : use_dask
 		}
-
+		
+		logging.info(f"Preprocessing complete. Output shape: {df_scaled.shape}")
 		return df_scaled
 
 	def apply_dimensionality_reduction(self, data: pd.DataFrame, method: str = 'pca', n_components: int = 2, **kwargs) -> pd.DataFrame:

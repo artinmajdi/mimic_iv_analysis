@@ -1,9 +1,11 @@
 import datetime
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
+import dask.dataframe as dd
+import streamlit as st
 
 class MIMICFeatureEngineer:
 	"""Handles feature engineering for MIMIC-IV data."""
@@ -80,7 +82,7 @@ class MIMICFeatureEngineer:
 
 		return None
 
-	def create_order_frequency_matrix(self, df: pd.DataFrame, patient_id_col: str, order_col: str, normalize: bool = False, top_n: int = 20) -> pd.DataFrame:
+	def create_order_frequency_matrix(self, df: Union[pd.DataFrame, dd.DataFrame], patient_id_col: str, order_col: str, normalize: bool = False, top_n: int = 20, use_dask: bool = False) -> pd.DataFrame:
 		"""
 		Creates a matrix of order frequencies by patient.
 
@@ -98,12 +100,26 @@ class MIMICFeatureEngineer:
 		if patient_id_col not in df.columns or order_col not in df.columns:
 			raise ValueError(f"Columns {patient_id_col} or {order_col} not found in DataFrame")
 
-		# Get the most common order types for dimensionality reduction
-		if top_n > 0:
-			top_orders = df[order_col].value_counts().head(top_n).index.tolist()
-			filtered_df = df[df[order_col].isin(top_orders)].copy()
+		# Convert Dask DataFrame to pandas if necessary
+		if use_dask and hasattr(df, 'compute'):
+			with st.spinner('Computing data for order frequency matrix...'):
+				if top_n > 0:
+					# For Dask, compute value counts to find top orders
+					value_counts = df[order_col].value_counts().compute()
+					top_orders = value_counts.head(top_n).index.tolist()
+					# Filter and compute
+					filtered_df = df[df[order_col].isin(top_orders)].compute()
+				else:
+					# Compute the entire DataFrame
+					filtered_df = df.compute()
 		else:
-			filtered_df = df.copy()
+			# Regular pandas processing
+			# Get the most common order types for dimensionality reduction
+			if top_n > 0:
+				top_orders = df[order_col].value_counts().head(top_n).index.tolist()
+				filtered_df = df[df[order_col].isin(top_orders)].copy()
+			else:
+				filtered_df = df.copy()
 
 		# Create a crosstab of patient IDs and order types
 		freq_matrix = pd.crosstab(
@@ -117,7 +133,7 @@ class MIMICFeatureEngineer:
 
 		return freq_matrix
 
-	def extract_temporal_order_sequences(self, df: pd.DataFrame, patient_id_col: str, order_col: str, time_col: str, max_sequence_length: int = 20) -> Dict[Any, List[str]]:
+	def extract_temporal_order_sequences(self, df: Union[pd.DataFrame, dd.DataFrame], patient_id_col: str, order_col: str, time_col: str, max_sequence_length: int = 20, use_dask: bool = False) -> Dict[Any, List[str]]:
 		"""
 		Extracts temporal sequences of orders for each patient.
 
@@ -136,10 +152,18 @@ class MIMICFeatureEngineer:
 			missing = [col for col in [patient_id_col, order_col, time_col] if col not in df.columns]
 			raise ValueError(f"Columns {missing} not found in DataFrame")
 
+		# Convert Dask DataFrame to pandas if necessary
+		if use_dask and hasattr(df, 'compute'):
+			with st.spinner('Computing data for temporal order sequences...'):
+				# For sequences, we need the complete DataFrame
+				df = df.compute()
+		else:
+			# Make a copy of the DataFrame
+			df = df.copy()
+
 		# Ensure time column is datetime
 		if df[time_col].dtype != 'datetime64[ns]':
 			try:
-				df = df.copy()
 				df[time_col] = pd.to_datetime(df[time_col])
 			except:
 				raise ValueError(f"Could not convert {time_col} to datetime format")
@@ -161,7 +185,7 @@ class MIMICFeatureEngineer:
 
 		return sequences
 
-	def create_order_timing_features(self, df: pd.DataFrame, patient_id_col: str, order_col: str, order_time_col: str, admission_time_col: str = None, discharge_time_col: str = None) -> pd.DataFrame:
+	def create_order_timing_features(self, df: Union[pd.DataFrame, dd.DataFrame], patient_id_col: str, order_col: str, order_time_col: str, admission_time_col: str = None, discharge_time_col: str = None, use_dask: bool = False) -> pd.DataFrame:
 		"""
 		Creates features related to order timing.
 
@@ -182,8 +206,16 @@ class MIMICFeatureEngineer:
 			missing = [col for col in required_cols if col not in df.columns]
 			raise ValueError(f"Columns {missing} not found in DataFrame")
 
+		# Convert Dask DataFrame to pandas if necessary
+		if use_dask and hasattr(df, 'compute'):
+			with st.spinner('Computing data for order timing features...'):
+				# For timing features, we need the complete DataFrame
+				df = df.compute()
+		else:
+			# Make a copy of the DataFrame
+			df = df.copy()
+
 		# Ensure time columns are datetime
-		df = df.copy()
 		time_cols = [order_time_col]
 		if admission_time_col:
 			time_cols.append(admission_time_col)
