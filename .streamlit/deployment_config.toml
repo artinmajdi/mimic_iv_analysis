@@ -2,7 +2,7 @@
 
 [deploy]
 # Specify the main app file to run
-main_script = "project_src/visualization/app.py"
+main_script = "mimic_iv_analysis/visualization/app.py"
 
 # Specify Python version for deployment
 python_version = "3.12"
@@ -25,7 +25,7 @@ ENVIRONMENT = "production"
 [resources]
 # Resource allocation for the app
 cpu = "2x"
-memory = "2GB"
+memory = "4GB"
 
 [health_check]
 # Health check settings
