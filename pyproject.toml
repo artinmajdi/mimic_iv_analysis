@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name        = "mimic_iv_analysis"
+version     = "0.3.0"
+description = "A data science and machine learning framework for nursing research"
+readme      = "README.md"
+authors     = [ {name = "Artin Majdi", email = "msm2024@gmail.com"} ]
+license     = {text = "MIT"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Healthcare Industry",
+    "License :: Other/Proprietary License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+keywords = ["nursing research", "healthcare", "AI", "medical analysis"]
+requires-python = ">=3.10"
+dynamic = ["dependencies"]
+
+[project.urls]
+Homepage      = "https://github.com/artinmajdi/mimic_iv_analysis"
+Documentation = "https://github.com/artinmajdi/mimic_iv_analysis/docs"
+Repository    = "https://github.com/artinmajdi/mimic_iv_analysis.git"
+Issues        = "https://github.com/artinmajdi/mimic_iv_analysis/issues"
+
+[project.scripts]
+mimic-iv = "visualization.app:main"
+
+[tool.setuptools]
+packages = ["mimic_iv_analysis"]
+include-package-data = true
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.package-data]
+mimic_iv_analysis = ["**/*.py"]
+
+

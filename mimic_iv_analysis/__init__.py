@@ -11,22 +11,26 @@ This module provides:
 - Visualization components
 """
 
-# Import submodules to make them available when importing the package
-from .core import MIMICClusteringAnalysis, MIMICClusterAnalyzer, MIMICFeatureEngineer, MIMICDataLoader, MIMICVisualizer
-from .configurations import load_config
-from .visualization import MIMICDashboardApp
+# # Import submodules to make them available when importing the package
+# from .core import MIMICClusteringAnalysis, MIMICClusterAnalyzer, MIMICFeatureEngineer, MIMICDataLoader, MIMICVisualizer
+# from .configurations import load_config
+# from .visualization import MIMICDashboardApp
 
-__all__ = [
-    # Configuration
-    'load_config',
+# __all__ = [
+#     # Configuration
+#     'load_config',
 
-    # Core analytical modules
-    'MIMICClusteringAnalysis',
-    'MIMICClusterAnalyzer',
-    'MIMICFeatureEngineer',
-    'MIMICDataLoader',
-    'MIMICVisualizer',
+#     # Core analytical modules
+#     'MIMICClusteringAnalysis',
+#     'MIMICClusterAnalyzer',
+#     'MIMICFeatureEngineer',
+#     'MIMICDataLoader',
+#     'MIMICVisualizer',
 
-    # Visualization
-    'MIMICDashboardApp'
-]
+#     # Visualization
+#     'MIMICDashboardApp'
+# ]
+
+
+__version__ = "0.3.0"
+__author__ = "Artin Majdi"
