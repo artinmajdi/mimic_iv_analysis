@@ -2,7 +2,7 @@
 import os
 import glob
 import logging
-from typing import Dict, Optional, Tuple, List, Any
+from typing import Dict, Optional, Tuple, List, Any, Union
 
 # Data processing imports
 import pandas as pd
@@ -294,6 +294,7 @@ class MIMICDataLoader:
 
 		return filtered_df
 
+
 	def get_table_info(self, module: str, table_name: str) -> str:
 		"""Get descriptive information about a specific MIMIC-IV table."""
 		table_info = {
@@ -346,3 +347,465 @@ class MIMICDataLoader:
 			logging.error(f"Error converting {table_name} to Parquet: {str(e)}")
 			return None
 
+
+	def load_reference_table(self, mimic_path: str, module: str, table_name: str,
+					encoding: str = 'latin-1') -> pd.DataFrame:
+		"""Loads a reference/dictionary table in full.
+
+		Args:
+			mimic_path: Path to the MIMIC-IV dataset
+			module: Module name ('hosp' or 'icu')
+			table_name: Name of the table to load
+			encoding: File encoding
+
+		Returns:
+			DataFrame containing the full reference table
+		"""
+		# Check for uncompressed CSV first (prioritize over compressed)
+		table_path_csv = os.path.join(mimic_path, module, f"{table_name}.csv")
+		table_path_gz = os.path.join(mimic_path, module, f"{table_name}.csv.gz")
+		
+		logging.info(f"Looking for reference table at: {table_path_csv} or {table_path_gz}")
+		
+		# Prioritize uncompressed CSV over gzipped format
+		if os.path.exists(table_path_csv):
+			table_path = table_path_csv
+			logging.info(f"Found uncompressed CSV file: {table_path}")
+		elif os.path.exists(table_path_gz):
+			table_path = table_path_gz
+			logging.info(f"Found gzipped file: {table_path}")
+		else:
+			logging.error(f"Reference table {table_name} not found at {table_path_csv} or {table_path_gz}!")
+			return pd.DataFrame()
+
+		# Try to load the file with more detailed error handling
+		try:
+			logging.info(f"Loading reference table {table_name} from {table_path}...")
+			compression = 'gzip' if table_path.endswith('.gz') else None
+			
+			# For reference tables, we load the complete file (no sampling)
+			df = pd.read_csv(table_path, encoding=encoding, compression=compression)
+			
+			if df is not None:
+				df = convert_string_dtypes(df)
+				logging.info(f"Successfully loaded {table_name} with {len(df)} rows and {len(df.columns)} columns")
+				return df
+			else:
+				logging.error(f"Failed to load reference table {table_name} - empty DataFrame returned")
+				return pd.DataFrame()
+		except Exception as e:
+			logging.error(f"Error loading reference table {table_name}: {str(e)}")
+			import traceback
+			logging.error(traceback.format_exc())
+			return pd.DataFrame()
+
+
+	def load_patient_cohort(self, mimic_path: str, sample_size: int, encoding: str = 'latin-1',
+						use_dask: bool = False) -> Tuple[pd.DataFrame, set]:
+		"""Loads and samples the patients table to create a base cohort.
+
+		Args:
+			mimic_path: Path to the MIMIC-IV dataset
+			sample_size: Number of patients to sample
+			encoding: File encoding
+			use_dask: Whether to use Dask for loading
+
+		Returns:
+			Tuple containing:
+				- DataFrame with the sampled patients
+				- Set of sampled subject_ids for filtering other tables
+		"""
+		# Prioritize uncompressed CSV over gzipped format
+		patients_path_csv = os.path.join(mimic_path, 'hosp', 'patients.csv')
+		patients_path_gz = os.path.join(mimic_path, 'hosp', 'patients.csv.gz')
+
+		if os.path.exists(patients_path_csv):
+			patients_path = patients_path_csv
+			logging.info(f"Using uncompressed patients file: {patients_path}")
+		elif os.path.exists(patients_path_gz):
+			patients_path = patients_path_gz
+			logging.info(f"Using compressed patients file: {patients_path}")
+		else:
+			logging.error("Patients table not found!")
+			return pd.DataFrame(), set()
+
+		logging.info(f"Loading patients table with sample_size={sample_size}...")
+		
+		try:
+			if use_dask:
+				# Load with Dask, avoiding the blocksize warning
+				compression = 'gzip' if patients_path.endswith('.gz') else None
+				df_patients = dd.read_csv(patients_path, encoding=encoding, 
+								compression=compression, blocksize=None)
+				
+				# Get total patient count
+				total_patients = len(df_patients)
+				
+				# Apply sampling if needed
+				if sample_size and sample_size < total_patients:
+					# For Dask, take the first n rows as a simple sample
+					df_patients = df_patients.head(sample_size)
+				else:
+					# Compute the full DataFrame if sample size is larger than total
+					df_patients = df_patients.compute()
+			else:
+				# Load with pandas
+				compression = 'gzip' if patients_path.endswith('.gz') else None
+				if sample_size:
+					# Load only the needed sample size if specified
+					df_patients = pd.read_csv(patients_path, nrows=sample_size,
+									encoding=encoding, compression=compression)
+					total_patients = len(df_patients)
+				else:
+					# Otherwise load the full table
+					df_patients = pd.read_csv(patients_path, encoding=encoding, 
+									compression=compression)
+					total_patients = len(df_patients)
+			
+			df_patients = convert_string_dtypes(df_patients)
+			sampled_subject_ids = set(df_patients['subject_id'])
+			logging.info(f"Loaded patients: {len(df_patients)} of {total_patients} total rows")
+			logging.info(f"Using {len(sampled_subject_ids)} unique subject_ids for filtering")
+			return df_patients, sampled_subject_ids
+		
+		except Exception as e:
+			logging.error(f"Error loading patients table: {str(e)}")
+			import traceback
+			logging.error(traceback.format_exc())
+			return pd.DataFrame(), set()
+
+# This code is now handled in the try-except block above
+
+
+	def load_filtered_table(self, mimic_path: str, module: str, table_name: str,
+					filter_column: str, filter_values: set, encoding: str = 'latin-1',
+					use_dask: bool = False) -> pd.DataFrame:
+		"""Loads a table and filters it based on specified column values.
+
+		Args:
+			mimic_path: Path to the MIMIC-IV dataset
+			module: Module name ('hosp' or 'icu')
+			table_name: Name of the table to load
+			filter_column: Column name to filter on
+			filter_values: Set of values to include
+			encoding: File encoding
+			use_dask: Whether to use Dask for loading
+
+		Returns:
+			DataFrame containing the filtered table
+		"""
+		# Prioritize uncompressed CSV over gzipped format
+		table_path_csv = os.path.join(mimic_path, module, f"{table_name}.csv")
+		table_path_gz = os.path.join(mimic_path, module, f"{table_name}.csv.gz")
+		
+		logging.info(f"Looking for table {table_name} at: {table_path_csv} or {table_path_gz}")
+		
+		if os.path.exists(table_path_csv):
+			table_path = table_path_csv
+			logging.info(f"Found uncompressed CSV file: {table_path}")
+		elif os.path.exists(table_path_gz):
+			table_path = table_path_gz
+			logging.info(f"Found gzipped file: {table_path}")
+		else:
+			logging.error(f"Table {table_name} not found!")
+			return pd.DataFrame()
+
+		logging.info(f"Loading and filtering {table_name} table...")
+		logging.info(f"Filtering on column {filter_column} with {len(filter_values)} unique values")
+
+		try:
+			if use_dask:
+				# For Dask: Load the table with blocksize=None to avoid warnings
+				compression = 'gzip' if table_path.endswith('.gz') else None
+				logging.info(f"Loading {table_name} with Dask (blocksize=None)...")
+				
+				df = dd.read_csv(table_path, encoding=encoding, 
+								compression=compression, blocksize=None)
+
+				# Check if filter column exists
+				if filter_column not in df.columns:
+					logging.warning(f"Filter column {filter_column} not found in {table_name}")
+					return pd.DataFrame()
+
+				# Filter the DataFrame (this is efficient in Dask as it's a lazy operation)
+				filtered_df = df[df[filter_column].isin(list(filter_values))]
+				
+				# Compute the filtered result
+				result_df = filtered_df.compute()
+				logging.info(f"Filtered {table_name} to {len(result_df)} rows using Dask")
+				return convert_string_dtypes(result_df)
+				
+			else:
+				# For pandas: Use chunking to filter while loading to minimize memory usage
+				filtered_chunks = []
+				compression = 'gzip' if table_path.endswith('.gz') else None
+				
+				logging.info(f"Loading {table_name} with pandas chunk processing...")
+				
+				with pd.read_csv(table_path, chunksize=100000, encoding=encoding,
+								compression=compression) as reader:
+					
+					# Process file in chunks to minimize memory usage
+					chunk_count = 0
+					for chunk in reader:
+						chunk_count += 1
+						
+						# Check filter column on first chunk
+						if chunk_count == 1 and filter_column not in chunk.columns:
+							logging.warning(f"Filter column {filter_column} not found in {table_name}")
+							return pd.DataFrame()
+						
+						# Filter each chunk
+						filtered_chunk = chunk[chunk[filter_column].isin(filter_values)]
+						
+						# Only keep chunks with matching rows
+						if len(filtered_chunk) > 0:
+							filtered_chunks.append(filtered_chunk)
+							
+						# Log progress periodically
+						if chunk_count % 10 == 0:
+							logging.info(f"Processed {chunk_count} chunks of {table_name}...")
+
+				# Combine all filtered chunks
+				if filtered_chunks:
+					result_df = pd.concat(filtered_chunks, ignore_index=True)
+					logging.info(f"Loaded {len(result_df)} rows from {table_name} after filtering")
+					return convert_string_dtypes(result_df)
+				else:
+					logging.warning(f"No rows found in {table_name} after filtering")
+					return pd.DataFrame()
+					
+		except Exception as e:
+			logging.error(f"Error loading filtered table {table_name}: {str(e)}")
+			import traceback
+			logging.error(traceback.format_exc())
+			return pd.DataFrame()
+
+# The return statements are now inside the try-except block
+
+
+	def merge_tables(self, left_df: pd.DataFrame, right_df: pd.DataFrame,
+					on: List[str], how: str = 'left') -> pd.DataFrame:
+		"""Merges two DataFrames on specified columns.
+
+		Args:
+			left_df: Left DataFrame
+			right_df: Right DataFrame
+			on: Column(s) to join on
+			how: Type of merge to perform
+
+		Returns:
+			Merged DataFrame
+		"""
+		if left_df.empty or right_df.empty:
+			return left_df
+
+		# Check if join columns exist in both tables
+		missing_cols = []
+		for col in on:
+			if col not in left_df.columns:
+				missing_cols.append(f"{col} missing in left table")
+			if col not in right_df.columns:
+				missing_cols.append(f"{col} missing in right table")
+
+		if missing_cols:
+			logging.warning(f"Cannot merge tables: {', '.join(missing_cols)}")
+			return left_df
+
+		# Perform the merge
+		try:
+			result = left_df.merge(right_df, on=on, how=how)
+			logging.info(f"Merged tables: {len(left_df)} rows + {len(right_df)} rows → {len(result)} rows")
+			return result
+		except Exception as e:
+			logging.error(f"Error merging tables: {str(e)}")
+			return left_df
+
+
+	def load_connected_tables(self, mimic_path: str, sample_size: int = DEFAULT_SAMPLE_SIZE, encoding: str = 'latin-1', 
+					use_dask: bool = False, merged_view: bool = False) -> Union[Dict[str, pd.DataFrame], Tuple[Dict[str, pd.DataFrame], pd.DataFrame]]:
+		"""Loads and connects the six main MIMIC-IV tables: patients, admissions, diagnoses_icd,
+		d_icd_diagnoses, poe, and poe_detail.
+
+		This method coordinates the loading of all tables in the proper order to maintain
+		data integrity throughout the connected tables.
+
+		Args:
+			mimic_path: Path to the MIMIC-IV dataset
+			sample_size: Number of rows to sample for patients table
+			encoding: File encoding
+			use_dask: Whether to use Dask for loading larger tables
+			merged_view: If True, merges tables into a single comprehensive DataFrame
+
+		Returns:
+			If merged_view=False: Dictionary containing the loaded tables 
+			If merged_view=True: Tuple containing (Dictionary of tables, Merged DataFrame)
+		"""
+		logging.info("Loading connected MIMIC-IV tables...")
+		tables = {}
+
+		# Step 1: Load reference table d_icd_diagnoses (always load in full)
+		tables['d_icd_diagnoses'] = self.load_reference_table( mimic_path, 'hosp', 'd_icd_diagnoses', encoding )
+
+		if tables['d_icd_diagnoses'].empty:
+			return {}  # Cannot proceed without reference table
+
+		# Step 2: Load and sample patients table
+		tables['patients'], sampled_subject_ids = self.load_patient_cohort( mimic_path, sample_size, encoding, use_dask )
+
+		if tables['patients'].empty:
+			return {}  # Cannot proceed without patients
+
+		# Step 3: Load admissions for sampled patients
+		tables['admissions'] = self.load_filtered_table( mimic_path, 'hosp', 'admissions', 'subject_id', sampled_subject_ids, encoding, use_dask )
+
+		if tables['admissions'].empty:
+			logging.warning("No admissions found for sampled patients")
+
+		# Get hadm_ids for filtering subsequent tables
+		sampled_hadm_ids = set(tables['admissions']['hadm_id']) if 'hadm_id' in tables['admissions'].columns else set()
+
+		# Step 4: Load diagnoses for sampled admissions
+		if sampled_hadm_ids:
+			tables['diagnoses_icd'] = self.load_filtered_table( mimic_path, 'hosp', 'diagnoses_icd', 'hadm_id', sampled_hadm_ids, encoding, use_dask )
+
+			# Step 5: Link diagnoses with their descriptions
+			if not tables['diagnoses_icd'].empty:
+				tables['diagnoses_icd'] = self.merge_tables( tables['diagnoses_icd'], tables['d_icd_diagnoses'], on=['icd_code', 'icd_version'] )
+		else:
+			tables['diagnoses_icd'] = pd.DataFrame()
+			logging.warning("No diagnoses loaded: missing admission IDs")
+
+		# Step 6: Load POE (Provider Order Entry) for sampled admissions
+		if sampled_hadm_ids:
+			tables['poe'] = self.load_filtered_table( mimic_path, 'hosp', 'poe', 'hadm_id', sampled_hadm_ids, encoding, use_dask )
+
+			# Get poe_ids for filtering poe_detail
+			sampled_poe_ids = set(tables['poe']['poe_id']) if 'poe_id' in tables['poe'].columns else set()
+
+			# Step 7: Load POE_detail for orders in our cohort
+			if sampled_poe_ids:
+				tables['poe_detail'] = self.load_filtered_table( mimic_path, 'hosp', 'poe_detail', 'poe_id', sampled_poe_ids, encoding, use_dask )
+			else:
+				tables['poe_detail'] = pd.DataFrame()
+				logging.warning("No POE details loaded: missing POE IDs")
+		else:
+			tables['poe'] = pd.DataFrame()
+			tables['poe_detail'] = pd.DataFrame()
+			logging.warning("No POE data loaded: missing admission IDs")
+
+		logging.info("Completed loading connected MIMIC-IV tables")
+		
+		# If merged view is requested, create a comprehensive merged dataframe
+		if merged_view:
+			logging.info("Creating merged view of connected tables...")
+			try:
+				# Extract the tables for readability
+				patients_df = tables.get('patients', pd.DataFrame())
+				admissions_df = tables.get('admissions', pd.DataFrame())
+				diagnoses_df = tables.get('diagnoses_icd', pd.DataFrame())
+				d_icd_diagnoses_df = tables.get('d_icd_diagnoses', pd.DataFrame())
+				poe_df = tables.get('poe', pd.DataFrame())
+				poe_detail_df = tables.get('poe_detail', pd.DataFrame())
+				
+				# Check if we have our core tables
+				if not patients_df.empty and not admissions_df.empty:
+					# 1. Start with patients + admissions
+					logging.info("Merging patients and admissions tables...")
+					merged_df = self.merge_tables(
+						patients_df,
+						admissions_df,
+						on=['subject_id'],
+						how='inner'
+					)
+					
+					# 2. Add diagnoses if available
+					if not diagnoses_df.empty:
+						logging.info("Adding diagnoses information...")
+						# Prepare diagnoses with descriptions
+						if not d_icd_diagnoses_df.empty and 'icd_code' in diagnoses_df.columns:
+							diagnoses_with_desc = self.merge_tables(
+								diagnoses_df,
+								d_icd_diagnoses_df,
+								on=['icd_code', 'icd_version'],
+								how='left'
+							)
+						else:
+							diagnoses_with_desc = diagnoses_df
+							
+						# Take the first diagnosis for each admission to avoid duplicating rows
+						logging.info("Selecting primary diagnoses for each admission...")
+						if 'seq_num' in diagnoses_with_desc.columns:
+							first_diag = diagnoses_with_desc.sort_values('seq_num').groupby(['subject_id', 'hadm_id']).first().reset_index()
+							merged_df = self.merge_tables(
+								merged_df,
+								first_diag,
+								on=['subject_id', 'hadm_id'],
+								how='left'
+							)
+							
+					# 3. Add first POE record for each admission if available
+					if not poe_df.empty:
+						logging.info("Adding provider order information...")
+						if 'ordertime' in poe_df.columns:
+							# Take the first order for each admission
+							first_order = poe_df.sort_values('ordertime').groupby(['subject_id', 'hadm_id']).first().reset_index()
+							merged_df = self.merge_tables(
+								merged_df,
+								first_order,
+								on=['subject_id', 'hadm_id'],
+								how='left'
+							)
+							
+							# 4. Add POE details if available
+							if not poe_detail_df.empty:
+								logging.info("Adding provider order details...")
+								# Reshape order details from tall to wide format for key fields
+								if 'field_name' in poe_detail_df.columns and 'field_value' in poe_detail_df.columns:
+									# Get most important fields
+									important_fields = poe_detail_df.field_name.value_counts().head(10).index.tolist()
+									# Filter to just the important fields 
+									poe_detail_filtered = poe_detail_df[poe_detail_df.field_name.isin(important_fields)]
+									
+									# Pivot to get one row per order with columns for each field
+									try:
+										poe_detail_wide = poe_detail_filtered.pivot_table(
+											index=['poe_id'], 
+											columns='field_name', 
+											values='field_value', 
+											aggfunc='first'
+										).reset_index()
+										
+										# Merge into main dataframe if pivot was successful
+										if not poe_detail_wide.empty:
+											merged_df = self.merge_tables(
+												merged_df,
+												poe_detail_wide,
+												on=['poe_id'],
+												how='left'
+											)
+									except Exception as e:
+										logging.warning(f"Could not pivot POE details: {e}")
+										# Just merge in the first detail record for each POE
+										first_detail = poe_detail_df.groupby('poe_id').first().reset_index()
+										merged_df = self.merge_tables(
+											merged_df,
+											first_detail,
+											on=['poe_id'],
+											how='left'
+										)
+					
+					# Finalize merged dataframe
+					logging.info(f"Created merged view with {len(merged_df)} rows and {len(merged_df.columns)} columns")
+					return tables, merged_df
+				else:
+					logging.warning("Cannot create merged view: missing core tables")
+					return tables, pd.DataFrame()
+					
+			except Exception as e:
+				logging.error(f"Error creating merged view: {str(e)}")
+				import traceback
+				logging.error(traceback.format_exc())
+				return tables, pd.DataFrame()
+				
+		return tables
