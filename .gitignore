@@ -88,3 +88,6 @@ Thumbs.db
 
 # windsurf rules
 .windsurfrules
+
+# Obsolete
+mimic_iv_analysis/visualization/Obsolete
