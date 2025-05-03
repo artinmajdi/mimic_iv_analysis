@@ -7,13 +7,11 @@ import pandas as pd
 import dask.dataframe as dd
 import streamlit as st
 
-class MIMICFeatureEngineer:
+class FeatureEngineer:
 	"""Handles feature engineering for MIMIC-IV data."""
 
-	def __init__(self):
-		pass
-
-	def detect_order_columns(self, df: pd.DataFrame) -> List[str]:
+	@staticmethod
+	def detect_order_columns(df: pd.DataFrame) -> List[str]:
 		"""Detect columns likely to contain order information."""
 		order_columns = []
 
@@ -33,7 +31,8 @@ class MIMICFeatureEngineer:
 
 		return order_columns
 
-	def detect_temporal_columns(self, df: pd.DataFrame) -> List[str]:
+	@staticmethod
+	def detect_temporal_columns(df: pd.DataFrame) -> List[str]:
 		"""Detect columns containing temporal information."""
 		time_columns = []
 
@@ -61,7 +60,8 @@ class MIMICFeatureEngineer:
 
 		return time_columns
 
-	def detect_patient_id_column(self, df: pd.DataFrame) -> Optional[str]:
+	@staticmethod
+	def detect_patient_id_column(df: pd.DataFrame) -> Optional[str]:
 		"""Detect column likely to contain patient identifiers."""
 		# Common patient ID column names in MIMIC-IV
 		patient_id_candidates = [
@@ -82,7 +82,8 @@ class MIMICFeatureEngineer:
 
 		return None
 
-	def create_order_frequency_matrix(self, df: Union[pd.DataFrame, dd.DataFrame], patient_id_col: str, order_col: str, normalize: bool = False, top_n: int = 20, use_dask: bool = False) -> pd.DataFrame:
+	@staticmethod
+	def create_order_frequency_matrix(df: Union[pd.DataFrame, dd.DataFrame], patient_id_col: str, order_col: str, normalize: bool = False, top_n: int = 20, use_dask: bool = False) -> pd.DataFrame:
 		"""
 		Creates a matrix of order frequencies by patient.
 
@@ -133,7 +134,8 @@ class MIMICFeatureEngineer:
 
 		return freq_matrix
 
-	def extract_temporal_order_sequences(self, df: Union[pd.DataFrame, dd.DataFrame], patient_id_col: str, order_col: str, time_col: str, max_sequence_length: int = 20, use_dask: bool = False) -> Dict[Any, List[str]]:
+	@staticmethod
+	def extract_temporal_order_sequences(df: Union[pd.DataFrame, dd.DataFrame], patient_id_col: str, order_col: str, time_col: str, max_sequence_length: int = 20, use_dask: bool = False) -> Dict[Any, List[str]]:
 		"""
 		Extracts temporal sequences of orders for each patient.
 
@@ -185,7 +187,8 @@ class MIMICFeatureEngineer:
 
 		return sequences
 
-	def create_order_timing_features(self, df: Union[pd.DataFrame, dd.DataFrame], patient_id_col: str, order_col: str, order_time_col: str, admission_time_col: str = None, discharge_time_col: str = None, use_dask: bool = False) -> pd.DataFrame:
+	@staticmethod
+	def create_order_timing_features(df: Union[pd.DataFrame, dd.DataFrame], patient_id_col: str, order_col: str, order_time_col: str, admission_time_col: str = None, discharge_time_col: str = None, use_dask: bool = False) -> pd.DataFrame:
 		"""
 		Creates features related to order timing.
 
@@ -332,7 +335,8 @@ class MIMICFeatureEngineer:
 
 		return timing_features
 
-	def get_order_type_distributions(self, df: pd.DataFrame, patient_id_col: str, order_col: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+	@staticmethod
+	def get_order_type_distributions(df: pd.DataFrame, patient_id_col: str, order_col: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
 		"""
 		Calculate order type distributions overall and by patient.
 
@@ -375,7 +379,8 @@ class MIMICFeatureEngineer:
 
 		return overall_dist, patient_level_dist
 
-	def calculate_order_transition_matrix(self, sequences: Dict[Any, List[str]], top_n: int = 20) -> pd.DataFrame:
+	@staticmethod
+	def calculate_order_transition_matrix(sequences: Dict[Any, List[str]], top_n: int = 20) -> pd.DataFrame:
 		"""
 		Calculate transition probabilities between different order types.
 
@@ -418,7 +423,8 @@ class MIMICFeatureEngineer:
 
 		return transition_probs
 
-	def save_features(self, features: Any, feature_type: str, base_path: str, format: str = 'csv') -> str:
+	@staticmethod
+	def save_features(features: Any, feature_type: str, base_path: str, format: str = 'csv') -> str:
 		"""
 		Save engineered features to file.
 

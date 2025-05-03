@@ -13,23 +13,20 @@ import plotly.express as px
 import streamlit as st
 
 
-class MIMICVisualizer:
+class MIMICVisualizerUtils:
 	"""Handles the display of dataset statistics and data preview."""
 
-	def __init__(self):
-		pass
-
-
-	def display_dataset_statistics(self, df, use_dask: bool = False):
+	@staticmethod
+	def display_dataset_statistics(df, use_dask: bool = False):
 		"""Displays key statistics about the loaded DataFrame.
-		
+
 		Args:
 			df: DataFrame to display statistics for (can be pandas DataFrame or Dask DataFrame)
 			use_dask: If True, df is treated as a Dask DataFrame and computed when needed
 		"""
 		if df is not None:
 			st.markdown("<h2 class='sub-header'>Dataset Statistics</h2>", unsafe_allow_html=True)
-			
+
 			# Convert to pandas DataFrame if it's a Dask DataFrame
 			if use_dask and hasattr(df, 'compute'):
 				# For statistics, we need to compute the full DataFrame
@@ -38,7 +35,7 @@ class MIMICVisualizer:
 					df_stats = df.compute()
 			else:
 				df_stats = df
-				
+
 			col1, col2 = st.columns(2)
 			with col1:
 				st.markdown("<div class='info-box'>", unsafe_allow_html=True)
@@ -69,16 +66,17 @@ class MIMICVisualizer:
 			st.info("No data loaded to display statistics.")
 
 
-	def display_data_preview(self, df, use_dask: bool = False):
+	@staticmethod
+	def display_data_preview(df, use_dask: bool = False):
 		"""Displays a preview of the loaded DataFrame.
-		
+
 		Args:
 			df: DataFrame to display (can be pandas DataFrame or Dask DataFrame)
 			use_dask: If True, df is treated as a Dask DataFrame and computed when needed
 		"""
 		if df is not None:
 			st.markdown("<h2 class='sub-header'>Data Preview</h2>", unsafe_allow_html=True)
-			
+
 			# If using Dask, compute the DataFrame for display
 			if use_dask and hasattr(df, 'compute'):
 				with st.spinner('Computing preview from Dask DataFrame...'):
@@ -101,16 +99,17 @@ class MIMICVisualizer:
 				st.dataframe(df, use_container_width=True)
 
 
-	def display_visualizations(self, df, use_dask: bool = False):
+	@staticmethod
+	def display_visualizations(df, use_dask: bool = False):
 		"""Displays visualizations of the loaded DataFrame.
-		
+
 		Args:
 			df: DataFrame to visualize (can be pandas DataFrame or Dask DataFrame)
 			use_dask: If True, df is treated as a Dask DataFrame and computed when needed
 		"""
 		if df is not None:
 			st.markdown("<h2 class='sub-header'>Data Visualization</h2>", unsafe_allow_html=True)
-			
+
 			# Convert to pandas DataFrame if it's a Dask DataFrame
 			if use_dask and hasattr(df, 'compute'):
 				with st.spinner('Computing data for visualization from Dask DataFrame...'):

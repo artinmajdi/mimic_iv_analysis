@@ -15,6 +15,8 @@ import streamlit as st
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+
+
 class FilteringTab:
     """
     Class for rendering the filtering tab in the MIMIC-IV Dashboard application.
@@ -23,10 +25,11 @@ class FilteringTab:
     for filtering MIMIC-IV data.
     """
 
-    def __init__(self):
+    def __init__(self, current_file_path: str):
         """Initialize the FilteringTab class."""
         logging.info("Initializing FilteringTab...")
         self._init_session_state()
+        self.current_file_path = current_file_path
 
     def _init_session_state(self):
         """Initialize session state variables for filtering."""
@@ -272,15 +275,15 @@ class FilteringTab:
 
         # Apply filters button
         if st.button("Load Data with Filters", key="load_with_filters"):
-            if 'current_file_path' in st.session_state and st.session_state.current_file_path:
+            if self.current_file_path is not None:
                 if data_handler is not None:
                     with st.spinner("Loading and filtering data..."):
                         df, total_rows = data_handler.load_mimic_table(
-                            file_path=st.session_state.current_file_path,
-                            sample_size=st.session_state.sample_size,
-                            encoding="latin-1",
-                            use_dask=st.session_state.get('use_dask', False),
-                            filter_params=filter_params
+                            file_path     = self.current_file_path,
+                            sample_size   = st.session_state.sample_size,
+                            encoding      = "latin-1",
+                            use_dask      = st.session_state.get('use_dask', False),
+                            filter_params = filter_params
                         )
 
                     if df is not None:
@@ -290,8 +293,8 @@ class FilteringTab:
 
                         # Auto-detect columns for feature engineering
                         if feature_engineer is not None:
-                            st.session_state.detected_order_cols = feature_engineer.detect_order_columns(df)
-                            st.session_state.detected_time_cols = feature_engineer.detect_temporal_columns(df)
+                            st.session_state.detected_order_cols     = feature_engineer.detect_order_columns(df)
+                            st.session_state.detected_time_cols      = feature_engineer.detect_temporal_columns(df)
                             st.session_state.detected_patient_id_col = feature_engineer.detect_patient_id_column(df)
 
                         # Switch to data explorer view

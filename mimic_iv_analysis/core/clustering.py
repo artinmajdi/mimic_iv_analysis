@@ -30,7 +30,8 @@ RANDOM_STATE = 42
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-class MIMICClusteringAnalysis:
+
+class ClusteringAnalyzer:
 	"""Handles clustering analysis for MIMIC-IV data."""
 
 	def __init__(self):
@@ -40,6 +41,7 @@ class MIMICClusteringAnalysis:
 		self.preprocessed_data = {}
 		self.cluster_results = {}
 		self.cluster_metrics = {}
+
 
 	def preprocess_data(self, data: Union[pd.DataFrame, dd.DataFrame], method: str = 'standard', handle_missing: str = 'drop', use_dask: bool = False) -> pd.DataFrame:
 		"""
@@ -55,7 +57,7 @@ class MIMICClusteringAnalysis:
 			Preprocessed DataFrame (always returns a pandas DataFrame)
 		"""
 		logging.info(f"Preprocessing data with method={method}, handle_missing={handle_missing}, use_dask={use_dask}")
-		
+
 		# Convert Dask DataFrame to pandas if necessary
 		if use_dask and hasattr(data, 'compute'):
 			with st.spinner('Computing data for preprocessing from Dask DataFrame...'):
@@ -101,9 +103,10 @@ class MIMICClusteringAnalysis:
 			'handle_missing': handle_missing,
 			'use_dask'      : use_dask
 		}
-		
+
 		logging.info(f"Preprocessing complete. Output shape: {df_scaled.shape}")
 		return df_scaled
+
 
 	def apply_dimensionality_reduction(self, data: pd.DataFrame, method: str = 'pca', n_components: int = 2, **kwargs) -> pd.DataFrame:
 		"""
@@ -171,6 +174,7 @@ class MIMICClusteringAnalysis:
 
 		return reduced_df
 
+
 	def run_kmeans_clustering(self, data: pd.DataFrame, n_clusters: int = 5, **kwargs) -> Tuple[pd.Series, KMeans]:
 		"""
 		Run K-means clustering on data.
@@ -204,6 +208,7 @@ class MIMICClusteringAnalysis:
 		self.cluster_results['kmeans'] = labels_series
 
 		return labels_series, kmeans
+
 
 	def run_hierarchical_clustering(self, data: pd.DataFrame, n_clusters: int = 5, linkage_method: str = 'ward', distance_metric: str = 'euclidean', **kwargs) -> Tuple[pd.Series, Dict]:
 		"""
@@ -251,6 +256,7 @@ class MIMICClusteringAnalysis:
 
 		return labels_series, linkage_data
 
+
 	def run_dbscan_clustering(self, data: pd.DataFrame, eps: float = 0.5, min_samples: int = 5, **kwargs) -> Tuple[pd.Series, DBSCAN]:
 		"""
 		Run DBSCAN clustering on data.
@@ -276,6 +282,7 @@ class MIMICClusteringAnalysis:
 		self.cluster_results['dbscan'] = labels_series
 
 		return labels_series, dbscan
+
 
 	def run_lda_topic_modeling(self, documents: List[str], n_topics: int = 5, vectorizer_type: str = 'count', max_features: int = 1000, **kwargs) -> Tuple[LatentDirichletAllocation, pd.DataFrame, pd.DataFrame]:
 		"""
@@ -338,6 +345,7 @@ class MIMICClusteringAnalysis:
 
 		return lda_model, doc_topic_matrix, topic_term_matrix
 
+
 	def get_top_terms_per_topic(self, topic_term_matrix: pd.DataFrame, n_terms: int = 10) -> pd.DataFrame:
 		"""
 		Extract top terms for each topic from LDA results.
@@ -372,6 +380,7 @@ class MIMICClusteringAnalysis:
 			result.loc[topic] = data['terms']
 
 		return result
+
 
 	def evaluate_clustering(self, data: pd.DataFrame, labels: pd.Series, method: str) -> Dict[str, float]:
 		"""
@@ -418,6 +427,7 @@ class MIMICClusteringAnalysis:
 		self.cluster_metrics[method] = metrics
 
 		return metrics
+
 
 	def find_optimal_k_for_kmeans(self, data: pd.DataFrame, k_range: range = range(2, 11), metric: str = 'silhouette', **kwargs) -> Tuple[int, Dict[str, List[float]]]:
 		"""
@@ -491,6 +501,7 @@ class MIMICClusteringAnalysis:
 
 		return optimal_k, results
 
+
 	def find_optimal_eps_for_dbscan(self, data: pd.DataFrame, k_dist: int = 5, n_samples: int = 1000) -> float:
 		"""
 		Find the optimal epsilon value for DBSCAN using k-distance graph.
@@ -528,6 +539,7 @@ class MIMICClusteringAnalysis:
 
 		return suggested_eps, k_distances
 
+
 	def save_model(self, model_name: str, path: str) -> str:
 		"""
 		Save a trained model to disk.
@@ -556,6 +568,7 @@ class MIMICClusteringAnalysis:
 
 		return model_path
 
+
 	def load_model(self, model_path: str, model_name: str) -> Any:
 		"""
 		Load a trained model from disk.
@@ -575,6 +588,7 @@ class MIMICClusteringAnalysis:
 		self.models[model_name] = model
 
 		return model
+
 
 	def get_cluster_summary(self, data: pd.DataFrame, labels: pd.Series) -> pd.DataFrame:
 		"""
@@ -618,18 +632,16 @@ class MIMICClusteringAnalysis:
 		return summary.T
 
 
-class MIMICClusterAnalyzer:
+class ClusterInterpreter:
 	"""Handles advanced analytics and visualization for cluster analysis."""
 
 	def __init__(self):
 		self.random_state = 42
 		self.analysis_results = {}
 
-	def calculate_length_of_stay(self, df: pd.DataFrame,
-								admission_col: str,
-								discharge_col: str,
-								patient_id_col: str = None) -> pd.Series:
+	def calculate_length_of_stay(self, df: pd.DataFrame, admission_col: str, discharge_col: str, patient_id_col: str = None) -> pd.Series:
 		"""Calculate length of stay in days for each patient."""
+
 		if admission_col not in df.columns or discharge_col not in df.columns:
 			raise ValueError(f"Columns {admission_col} or {discharge_col} not found in DataFrame")
 
@@ -650,9 +662,7 @@ class MIMICClusterAnalyzer:
 
 		return los
 
-	def compare_los_across_clusters(self,
-								  los_data: pd.Series,
-								  cluster_labels: pd.Series) -> pd.DataFrame:
+	def compare_los_across_clusters(self, los_data: pd.Series, cluster_labels: pd.Series) -> pd.DataFrame:
 		"""Compare length of stay statistics across clusters."""
 		# Combine LOS and cluster labels
 		combined = pd.DataFrame({
@@ -865,7 +875,6 @@ class MIMICClusterAnalyzer:
 		self.analysis_results['cluster_characterization'] = characterization
 
 		return characterization
-
 
 	def generate_html_report(self,
 						   title: str = "Cluster Analysis Report",
@@ -1099,7 +1108,6 @@ class MIMICClusterAnalyzer:
 		"""
 
 		return html
-
 
 	def visualize_order_patterns(self, order_sequences: Dict[Any, List[str]], cluster_labels: pd.Series, max_orders: int = 20, max_patients: int = 50) -> go.Figure:
 		"""

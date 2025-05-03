@@ -42,7 +42,7 @@ LARGE_FILE_THRESHOLD_MB = 100
 DEFAULT_SAMPLE_SIZE     = 1000
 RANDOM_STATE            = 42
 
-class MIMICDataLoader:
+class DataLoader:
 	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
 
 	def __init__(self):
@@ -472,6 +472,7 @@ class MIMICDataLoader:
 			logging.error(f"Error loading patients table: {str(e)}")
 			logging.error(traceback.format_exc())
 			return pd.DataFrame(), set()
+
 
 	def load_filtered_table(self, mimic_path: str, module: str, table_name: str, filter_column: str, filter_values: set, encoding: str = 'latin-1', use_dask: bool = False) -> pd.DataFrame:
 		"""
