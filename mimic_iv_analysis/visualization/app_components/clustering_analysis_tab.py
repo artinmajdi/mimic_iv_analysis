@@ -40,12 +40,7 @@ class ClusteringAnalysisTab:
 
 			with st.spinner(f"Calculating Elbow and Silhouette scores for k={k_min} to {k_max}..."):
 
-				k_metrics, optimal_k_silhouette = self.clustering_analyzer.find_optimal_k_kmeans_elbow_silhouette(
-																					data     = data_for_clustering,
-																					k_range  = range(k_min, k_max + 1),
-																					n_init   = n_init,
-																					max_iter = max_iter
-																				)
+				k_metrics, optimal_k_silhouette = self.clustering_analyzer.find_optimal_k_kmeans_elbow_silhouette( data=data_for_clustering, k_range=range(k_min, k_max + 1), n_init=n_init, max_iter=max_iter )
 
 				# Suggest optimal k based on silhouette (usually more reliable than elbow visually)
 				st.session_state.optimal_k = int(optimal_k_silhouette) # Store best k
@@ -93,7 +88,7 @@ class ClusteringAnalysisTab:
 					st.plotly_chart(fig, use_container_width=True)
 
 				# Update n_clusters input to the found optimal k
-				st.rerun() # Rerun to update the number input widget value
+				# st.rerun() # Rerun to update the number input widget value
 
 	def _data_selection(self):
 
@@ -437,207 +432,218 @@ class ClusteringAnalysisTab:
 		else:
 			st.warning("No input data available for clustering. Please prepare data in the 'Data Selection' tab first.")
 
+	def _run_k_means_clustering(self, n_clusters, data_for_clustering, n_init, max_iter):
+
+		if st.button("Run K-means Clustering"):
+
+			# try:
+			with st.spinner(f"Running K-means clustering with k={n_clusters}..."):
+
+				# Run K-means
+				labels, kmeans_model = self.clustering_analyzer.run_kmeans_clustering( data=data_for_clustering, n_clusters=n_clusters, n_init=n_init, max_iter=max_iter )
+
+				# Store labels in session state
+				st.session_state.kmeans_labels = pd.Series(labels, index=data_for_clustering.index, name="kmeans_cluster")
+
+				# Calculate metrics
+				metrics = self.clustering_analyzer.evaluate_clustering( data=data_for_clustering, labels=st.session_state.kmeans_labels, method="kmeans" )
+
+				# Store metrics centrally
+				st.session_state.cluster_metrics['kmeans'] = metrics
+
+				# Show success message with metrics
+				metrics_text = "\n".join([f"- {k.replace('_', ' ').title()}: {v:.4f}" for k, v in metrics.items()])
+				st.success(f"K-means clustering complete!\n{metrics_text}")
+
+				# --- Visualization ---
+				# Show cluster distribution
+				cluster_counts = st.session_state.kmeans_labels.value_counts().sort_index()
+				fig_dist = px.bar(
+					x=cluster_counts.index, y=cluster_counts.values,
+					labels={'x': 'Cluster', 'y': 'Number of Points'},
+					title="Distribution of Points per Cluster (K-means)"
+				)
+				st.plotly_chart(fig_dist, use_container_width=True)
+
+				# Visualize clusters if data is 2D or 3D
+				if data_for_clustering.shape[1] in [2, 3]:
+					vis_data = data_for_clustering.copy()
+					vis_data['Cluster'] = st.session_state.kmeans_labels.astype(str) # Color needs categorical
+
+					if data_for_clustering.shape[1] == 2:
+						fig_scatter = px.scatter(
+							vis_data, x=vis_data.columns[0], y=vis_data.columns[1], color='Cluster',
+							title="K-means Clustering Results (2D)", color_discrete_sequence=px.colors.qualitative.G10
+						)
+						st.plotly_chart(fig_scatter, use_container_width=True)
+					else: # 3D
+						fig_scatter = px.scatter_3d(
+							vis_data, x=vis_data.columns[0], y=vis_data.columns[1], z=vis_data.columns[2], color='Cluster',
+							title="K-means Clustering Results (3D)", color_discrete_sequence=px.colors.qualitative.G10
+						)
+						st.plotly_chart(fig_scatter, use_container_width=True)
+
+				# Show cluster centers
+				if hasattr(kmeans_model, 'cluster_centers_'):
+					st.markdown("<h4>Cluster Centers</h4>", unsafe_allow_html=True)
+					centers = pd.DataFrame(
+						kmeans_model.cluster_centers_,
+						columns=data_for_clustering.columns,
+						index=[f"Cluster {i}" for i in range(n_clusters)]
+					)
+					st.dataframe(centers.style.format("{:.3f}"), use_container_width=True)
+
+			# except AttributeError:
+			# 	st.error("Clustering Analyzer is not properly initialized or does not have the required methods.")
+			# except Exception as e:
+			# 	st.error(f"Error running K-means clustering: {str(e)}")
+			# 	logging.exception("Error in Run K-means")
+
+	def _save_results(self, data_for_clustering):
+		if 'kmeans_labels' in st.session_state and st.session_state.kmeans_labels is not None:
+
+			with st.expander("Save K-means Results"):
+				save_col1, save_col2 = st.columns(2)
+
+				with save_col1:
+					if st.button("Save K-means Model"):
+
+						try:
+							base_path_save = "."
+							if 'current_file_path' in st.session_state and st.session_state.current_file_path:
+
+								potential_path_save = os.path.dirname(st.session_state.current_file_path)
+								if os.path.isdir(potential_path_save):
+									base_path_save = potential_path_save
+
+							model_path = self.clustering_analyzer.save_model("kmeans", base_path_save)
+							st.success(f"Saved K-means model to {model_path}")
+
+						except AttributeError:
+							st.error("Clustering Analyzer does not have a 'save_model' method or model is not available.")
+						except Exception as e:
+							st.error(f"Error saving K-means model: {str(e)}")
+
+				with save_col2:
+					if st.button("Save K-means Cluster Assignments"):
+
+						try:
+							# Create DataFrame with original index and cluster assignments
+							assignments_df = pd.DataFrame(
+								data  = {'cluster': st.session_state.kmeans_labels},
+								index = data_for_clustering.index
+							)
+
+							base_path_save = "."
+							if 'current_file_path' in st.session_state and st.session_state.current_file_path:
+								potential_path_save = os.path.dirname(st.session_state.current_file_path)
+
+								if os.path.isdir(potential_path_save):
+									base_path_save = potential_path_save
+
+							filepath = FeatureEngineerUtils.save_features(
+								features     = assignments_df,
+								feature_type = "kmeans_cluster_assignments",
+								base_path    = base_path_save,
+								format       = "csv"
+							)
+
+							st.success(f"Saved cluster assignments to {filepath}")
+
+						except AttributeError:
+							st.error("Feature Engineer does not have a 'save_features' method.")
+						except Exception as e:
+							st.error(f"Error saving K-means assignments: {str(e)}")
+
 	def _kmeans_clustering(self):
 
 		st.markdown("<h3>K-Means Clustering</h3>", unsafe_allow_html=True)
 
 		# Check if input data is available
-		if 'clustering_input_data' in st.session_state and st.session_state.clustering_input_data is not None:
-			st.markdown("""
-			<div class='info-box'>
-			K-means clustering partitions data into k clusters, where each observation belongs to the cluster with the nearest mean.
-			</div>
-			""", unsafe_allow_html=True)
+		if not ('clustering_input_data' in st.session_state and st.session_state.clustering_input_data is not None):
+			st.warning("No input data available for clustering. Please prepare data in the 'Data Selection' tab first.")
+			return
 
-			# Determine which data to use
-			data_for_clustering = st.session_state.clustering_input_data
-			use_reduced_data = False
-			if 'reduced_data' in st.session_state and st.session_state.reduced_data is not None:
-				use_reduced_data = st.checkbox(
-					label     = "Use dimensionality-reduced data for clustering",
-					value     = True, # Default to using reduced if available
-					help      = "Use the reduced data instead of the original preprocessed data"
-				)
-				if use_reduced_data:
-					data_for_clustering = st.session_state.reduced_data
-					st.info(f"Using reduced data with shape: {data_for_clustering.shape}")
-				else:
-					st.info(f"Using preprocessed data with shape: {data_for_clustering.shape}")
+		st.markdown(""" <div class='info-box'> K-means clustering partitions data into k clusters, where each observation belongs to the cluster with the nearest mean. </div> """, unsafe_allow_html=True)
+
+		# Determine which data to use
+		data_for_clustering = st.session_state.clustering_input_data
+		use_reduced_data    = False
+
+		if 'reduced_data' in st.session_state and st.session_state.reduced_data is not None:
+			use_reduced_data = st.checkbox(
+				label     = "Use dimensionality-reduced data for clustering",
+				value     = True, # Default to using reduced if available
+				help      = "Use the reduced data instead of the original preprocessed data"
+			)
+			if use_reduced_data:
+				data_for_clustering = st.session_state.reduced_data
+				st.info(f"Using reduced data with shape: {data_for_clustering.shape}")
 			else:
 				st.info(f"Using preprocessed data with shape: {data_for_clustering.shape}")
+		else:
+			st.info(f"Using preprocessed data with shape: {data_for_clustering.shape}")
 
+		# K-means parameters
+		# Make sure n_clusters_default is an integer, not None
+		optimal_k          = st.session_state.get('optimal_k')
+		n_clusters_default = 5 if optimal_k is None else optimal_k
 
-			# K-means parameters
-			# Make sure n_clusters_default is an integer, not None
-			optimal_k          = st.session_state.get('optimal_k')
-			n_clusters_default = 5 if optimal_k is None else optimal_k
+		n_clusters = st.number_input(
+			label     = "Number of Clusters (k)",
+			min_value = 2,
+			max_value = max(20, n_clusters_default + 5), # Dynamic max based on optimal k
+			value     = n_clusters_default,
+			help      = "Number of clusters to form"
+		)
 
-			n_clusters = st.number_input(
-				label     = "Number of Clusters (k)",
-				min_value = 2,
-				max_value = max(20, n_clusters_default + 5), # Dynamic max based on optimal k
-				value     = n_clusters_default,
-				help      = "Number of clusters to form"
+		kmeans_params_col1, kmeans_params_col2 = st.columns(2)
+		with kmeans_params_col1:
+			max_iter = st.slider(
+				label     = "Maximum Iterations",
+				min_value = 100,
+				max_value = 1000,
+				value     = 300,
+				step      = 100,
+				help      = "Max iterations per run"
 			)
 
-			kmeans_params_col1, kmeans_params_col2 = st.columns(2)
-			with kmeans_params_col1:
-				max_iter = st.slider(
-					label     = "Maximum Iterations",
-					min_value = 100,
-					max_value = 1000,
-					value     = 300,
-					step      = 100,
-					help      = "Max iterations per run"
-				)
+		with kmeans_params_col2:
+			n_init = st.slider(
+				label     = "Number of Initializations",
+				min_value = 1,
+				max_value = 20,
+				value     = 10,
+				help      = "Number of runs with different seeds"
+			)
 
-			with kmeans_params_col2:
-				n_init = st.slider(
-					label     = "Number of Initializations",
-					min_value = 1,
-					max_value = 20,
-					value     = 10,
-					help      = "Number of runs with different seeds"
-				)
+		# --- Optimal k Section ---
+		st.markdown("<h4>Find Optimal Number of Clusters (Elbow/Silhouette)</h4>", unsafe_allow_html=True)
+		optimal_k_col1, optimal_k_col2 = st.columns(2)
+		with optimal_k_col1:
+			k_min = st.number_input(
+				label     = "Minimum k",
+				min_value = 2,
+				max_value = 10,
+				value     = 2
+			)
+		with optimal_k_col2:
+			k_max = st.number_input(
+				label     = "Maximum k",
+				min_value = k_min + 1,
+				max_value = 20,
+				value     = 10
+			)
 
+		# Use optimal_k button
+		self._find_optimal_k(k_min=k_min, k_max=k_max, n_init=n_init, max_iter=max_iter, data_for_clustering=data_for_clustering)
 
-			# --- Optimal k Section ---
-			st.markdown("<h4>Find Optimal Number of Clusters (Elbow/Silhouette)</h4>", unsafe_allow_html=True)
-			optimal_k_col1, optimal_k_col2 = st.columns(2)
-			with optimal_k_col1:
-				k_min = st.number_input(
-					label     = "Minimum k",
-					min_value = 2,
-					max_value = 10,
-					value     = 2
-				)
-			with optimal_k_col2:
-				k_max = st.number_input(
-					label     = "Maximum k",
-					min_value = k_min + 1,
-					max_value = 20,
-					value     = 10
-				)
+		# --- Run K-means Section ---
+		st.markdown("<h4>Run K-means Clustering</h4>", unsafe_allow_html=True)
+		self._run_k_means_clustering(n_clusters, data_for_clustering, n_init, max_iter)
 
-			# Use optimal_k button
-			self._find_optimal_k(k_min=k_min, k_max=k_max, n_init=n_init, max_iter=max_iter, data_for_clustering=data_for_clustering)
-
-			# --- Run K-means Section ---
-			st.markdown("<h4>Run K-means Clustering</h4>", unsafe_allow_html=True)
-			if st.button("Run K-means Clustering"):
-				try:
-
-					with st.spinner(f"Running K-means clustering with k={n_clusters}..."):
-
-						# Run K-means
-						labels, kmeans_model = self.clustering_analyzer.run_kmeans_clustering( data=data_for_clustering, n_clusters=n_clusters, n_init=n_init, max_iter=max_iter )
-
-						# Store labels in session state
-						st.session_state.kmeans_labels = pd.Series(labels, index=data_for_clustering.index, name="kmeans_cluster")
-
-						# Calculate metrics
-						metrics = self.clustering_analyzer.evaluate_clustering( data=data_for_clustering, labels=st.session_state.kmeans_labels, method="kmeans" )
-
-						# Store metrics centrally
-						st.session_state.cluster_metrics['kmeans'] = metrics
-
-						# Show success message with metrics
-						metrics_text = "\n".join([f"- {k.replace('_', ' ').title()}: {v:.4f}" for k, v in metrics.items()])
-						st.success(f"K-means clustering complete!\n{metrics_text}")
-
-						# --- Visualization ---
-						# Show cluster distribution
-						cluster_counts = st.session_state.kmeans_labels.value_counts().sort_index()
-						fig_dist = px.bar(
-							x=cluster_counts.index, y=cluster_counts.values,
-							labels={'x': 'Cluster', 'y': 'Number of Points'},
-							title="Distribution of Points per Cluster (K-means)"
-						)
-						st.plotly_chart(fig_dist, use_container_width=True)
-
-						# Visualize clusters if data is 2D or 3D
-						if data_for_clustering.shape[1] in [2, 3]:
-							vis_data = data_for_clustering.copy()
-							vis_data['Cluster'] = st.session_state.kmeans_labels.astype(str) # Color needs categorical
-
-							if data_for_clustering.shape[1] == 2:
-								fig_scatter = px.scatter(
-									vis_data, x=vis_data.columns[0], y=vis_data.columns[1], color='Cluster',
-									title="K-means Clustering Results (2D)", color_discrete_sequence=px.colors.qualitative.G10
-								)
-								st.plotly_chart(fig_scatter, use_container_width=True)
-							else: # 3D
-								fig_scatter = px.scatter_3d(
-									vis_data, x=vis_data.columns[0], y=vis_data.columns[1], z=vis_data.columns[2], color='Cluster',
-									title="K-means Clustering Results (3D)", color_discrete_sequence=px.colors.qualitative.G10
-								)
-								st.plotly_chart(fig_scatter, use_container_width=True)
-
-						# Show cluster centers
-						if hasattr(kmeans_model, 'cluster_centers_'):
-							st.markdown("<h4>Cluster Centers</h4>", unsafe_allow_html=True)
-							centers = pd.DataFrame(
-								kmeans_model.cluster_centers_,
-								columns=data_for_clustering.columns,
-								index=[f"Cluster {i}" for i in range(n_clusters)]
-							)
-							st.dataframe(centers.style.format("{:.3f}"), use_container_width=True)
-
-				except AttributeError:
-					st.error("Clustering Analyzer is not properly initialized or does not have the required methods.")
-				except Exception as e:
-					st.error(f"Error running K-means clustering: {str(e)}")
-					logging.exception("Error in Run K-means")
-
-
-			# --- Save Results Section ---
-			if 'kmeans_labels' in st.session_state and st.session_state.kmeans_labels is not None:
-
-				with st.expander("Save K-means Results"):
-					save_col1, save_col2 = st.columns(2)
-
-					with save_col1:
-						if st.button("Save K-means Model"):
-
-							try:
-
-								base_path_save = "."
-								if 'current_file_path' in st.session_state and st.session_state.current_file_path:
-									potential_path_save = os.path.dirname(st.session_state.current_file_path)
-									if os.path.isdir(potential_path_save):
-										base_path_save = potential_path_save
-
-								model_path = self.clustering_analyzer.save_model("kmeans", base_path_save)
-								st.success(f"Saved K-means model to {model_path}")
-
-							except AttributeError:
-								st.error("Clustering Analyzer does not have a 'save_model' method or model is not available.")
-							except Exception as e:
-								st.error(f"Error saving K-means model: {str(e)}")
-
-					with save_col2:
-						if st.button("Save K-means Cluster Assignments"):
-
-							try:
-								# Create DataFrame with original index and cluster assignments
-								assignments_df = pd.DataFrame({'cluster': st.session_state.kmeans_labels}, index=data_for_clustering.index)
-
-								base_path_save = "."
-								if 'current_file_path' in st.session_state and st.session_state.current_file_path:
-									potential_path_save = os.path.dirname(st.session_state.current_file_path)
-									if os.path.isdir(potential_path_save):
-										base_path_save = potential_path_save
-
-								filepath = FeatureEngineerUtils.save_features( features=assignments_df, feature_type="kmeans_cluster_assignments", base_path=base_path_save, format="csv" )
-
-								st.success(f"Saved cluster assignments to {filepath}")
-
-							except AttributeError:
-								st.error("Feature Engineer does not have a 'save_features' method.")
-							except Exception as e:
-								st.error(f"Error saving K-means assignments: {str(e)}")
-		else:
-			st.warning("No input data available for clustering. Please prepare data in the 'Data Selection' tab first.")
+		# --- Save Results Section ---
+		self._save_results(data_for_clustering)
 
 	def _hierarchical_clustering(self):
 		st.markdown("<h3>Hierarchical Clustering</h3>", unsafe_allow_html=True)

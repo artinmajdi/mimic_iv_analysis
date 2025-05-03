@@ -61,7 +61,6 @@ class MIMICDashboardApp:
 		self.init_session_state()
 		logging.info("MIMICDashboardApp initialized.")
 
-
 	@staticmethod
 	def init_session_state():
 		""" Function to initialize session state """
@@ -522,6 +521,73 @@ class MIMICDashboardApp:
 		# Analysis
 		st.session_state.length_of_stay = None
 
+	def _export_options(self):
+		st.markdown("<h2 class='sub-header'>Export Loaded Data</h2>", unsafe_allow_html=True)
+		st.info("Export the currently loaded (and potentially sampled) data shown in the 'Exploration' tab.")
+		export_col1, export_col2 = st.columns(2)
+
+		with export_col1:
+			export_format        = st.radio("Export Format", ["CSV", "Parquet"], index=0, key="export_main_format")
+			export_filename_base = f"mimic_data_{st.session_state.selected_module}_{st.session_state.selected_table}"
+			export_filename      = f"{export_filename_base}.{export_format.lower()}"
+
+			if export_format == "CSV":
+				try:
+					# Check if Dask was used to load the data
+					use_dask = st.session_state.get('use_dask', False)
+
+					# Only compute if it's actually a Dask DataFrame
+					if use_dask and hasattr(st.session_state.df, 'compute'):
+						with st.spinner('Computing data for CSV export...'):
+							# Convert Dask DataFrame to pandas for export
+							df_export = st.session_state.df.compute()
+							csv_data = df_export.to_csv(index=False).encode('utf-8')
+							row_count = len(df_export)
+					else:
+						csv_data = st.session_state.df.to_csv(index=False).encode('utf-8')
+						row_count = len(st.session_state.df)
+
+					st.download_button(
+						label=f"Download as CSV ({row_count} rows)",
+						data=csv_data,
+						file_name=export_filename,
+						mime="text/csv",
+						key="download_csv"
+					)
+				except Exception as e:
+					st.error(f"Error preparing CSV for download: {e}")
+
+
+			elif export_format == "Parquet":
+				try:
+					# Use BytesIO to create an in-memory parquet file
+					buffer = BytesIO()
+
+					# Check if Dask was used to load the data
+					use_dask = st.session_state.get('use_dask', False)
+
+					# Only compute if it's actually a Dask DataFrame
+					if use_dask and hasattr(st.session_state.df, 'compute'):
+						with st.spinner('Computing data for Parquet export...'):
+							# Convert Dask DataFrame to pandas for export
+							df_export = st.session_state.df.compute()
+							df_export.to_parquet(buffer, index=False)
+							row_count = len(df_export)
+					else:
+						st.session_state.df.to_parquet(buffer, index=False)
+						row_count = len(st.session_state.df)
+
+					buffer.seek(0)
+					st.download_button(
+						label=f"Download as Parquet ({row_count} rows)",
+						data=buffer,
+						file_name=export_filename,
+						mime="application/octet-stream", # Generic binary stream
+						key="download_parquet"
+					)
+				except Exception as e:
+					st.error(f"Error preparing Parquet for download: {e}")
+
 	def _show_data_explorer_view(self):
 		"""Handles the display of the main content area with tabs for data exploration and analysis."""
 
@@ -607,85 +673,18 @@ class MIMICDashboardApp:
 				MIMICVisualizerUtils.display_visualizations(st.session_state.df, use_dask=use_dask)
 
 
-			# Tab 2: Feature Engineering
 			with tab2:
 				FeatureEngineeringTab().render()
 
-			# Tab 3: Clustering Analysis
 			with tab3:
 				ClusteringAnalysisTab().render()
 
-			# Tab 4: Analysis & Visualization (Cluster Interpretation)
 			with tab4:
 				AnalysisVisualizationTab().render()
 
 			# Tab 5: Export Options
 			with tab5:
-				st.markdown("<h2 class='sub-header'>Export Loaded Data</h2>", unsafe_allow_html=True)
-				st.info("Export the currently loaded (and potentially sampled) data shown in the 'Exploration' tab.")
-				export_col1, export_col2 = st.columns(2)
-
-				with export_col1:
-					export_format        = st.radio("Export Format", ["CSV", "Parquet"], index=0, key="export_main_format")
-					export_filename_base = f"mimic_data_{st.session_state.selected_module}_{st.session_state.selected_table}"
-					export_filename      = f"{export_filename_base}.{export_format.lower()}"
-
-					if export_format == "CSV":
-						try:
-							# Check if Dask was used to load the data
-							use_dask = st.session_state.get('use_dask', False)
-
-							# Only compute if it's actually a Dask DataFrame
-							if use_dask and hasattr(st.session_state.df, 'compute'):
-								with st.spinner('Computing data for CSV export...'):
-									# Convert Dask DataFrame to pandas for export
-									df_export = st.session_state.df.compute()
-									csv_data = df_export.to_csv(index=False).encode('utf-8')
-									row_count = len(df_export)
-							else:
-								csv_data = st.session_state.df.to_csv(index=False).encode('utf-8')
-								row_count = len(st.session_state.df)
-
-							st.download_button(
-								label=f"Download as CSV ({row_count} rows)",
-								data=csv_data,
-								file_name=export_filename,
-								mime="text/csv",
-								key="download_csv"
-							)
-						except Exception as e:
-							st.error(f"Error preparing CSV for download: {e}")
-
-
-					elif export_format == "Parquet":
-						try:
-							# Use BytesIO to create an in-memory parquet file
-							buffer = BytesIO()
-
-							# Check if Dask was used to load the data
-							use_dask = st.session_state.get('use_dask', False)
-
-							# Only compute if it's actually a Dask DataFrame
-							if use_dask and hasattr(st.session_state.df, 'compute'):
-								with st.spinner('Computing data for Parquet export...'):
-									# Convert Dask DataFrame to pandas for export
-									df_export = st.session_state.df.compute()
-									df_export.to_parquet(buffer, index=False)
-									row_count = len(df_export)
-							else:
-								st.session_state.df.to_parquet(buffer, index=False)
-								row_count = len(st.session_state.df)
-
-							buffer.seek(0)
-							st.download_button(
-								label=f"Download as Parquet ({row_count} rows)",
-								data=buffer,
-								file_name=export_filename,
-								mime="application/octet-stream", # Generic binary stream
-								key="download_parquet"
-							)
-						except Exception as e:
-							st.error(f"Error preparing Parquet for download: {e}")
+				self._export_options()
 
 
 def main():
