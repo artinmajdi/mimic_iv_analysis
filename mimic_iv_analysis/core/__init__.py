@@ -10,8 +10,8 @@ Components:
 """
 
 from .clustering import ClusteringAnalyzer, ClusterInterpreter
-from .feature_engineering import FeatureEngineer
+from .feature_engineering import FeatureEngineerUtils
 from .data_loader import DataLoader
 from .visualizer import MIMICVisualizer
 
-__all__ = ['ClusteringAnalyzer', 'ClusterInterpreter', 'FeatureEngineer', 'DataLoader', 'MIMICVisualizer']
+__all__ = ['ClusteringAnalyzer', 'ClusterInterpreter', 'FeatureEngineerUtils', 'DataLoader', 'MIMICVisualizer']

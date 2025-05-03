@@ -30,7 +30,7 @@ import streamlit as st
 from mimic_iv_analysis.core import (
 	ClusteringAnalyzer,
 	ClusterInterpreter,
-	FeatureEngineer,
+	FeatureEngineerUtils,
 	DataLoader,
 	MIMICVisualizer
 )
@@ -2497,7 +2497,7 @@ class MIMICDashboardApp:
 		# Initialize core components
 		self.data_handler        = DataLoader()
 		self.visualizer          = MIMICVisualizer()
-		self.feature_engineer    = FeatureEngineer()
+		self.feature_engineer    = FeatureEngineerUtils()
 		self.clustering_analyzer = ClusteringAnalyzer() # Handles running algorithms, evaluation
 		self.cluster_analyzer    = ClusterInterpreter()    # Handles post-cluster analysis, interpretation
 		# Initialize UI components for tabs

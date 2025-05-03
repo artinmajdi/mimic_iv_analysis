@@ -16,13 +16,17 @@ from plotly.subplots import make_subplots
 # Streamlit import
 import streamlit as st
 
+# Local application imports
+from mimic_iv_analysis.core.feature_engineering import FeatureEngineerUtils
+
 
 class FeatureEngineeringTab:
 	""" Handles the UI and logic for the Feature Engineering tab. """
 
 	@staticmethod
-	def _display_export_options(data, feature_engineer, feature_type='engineered_feature'):
+	def _display_export_options(data, feature_type='engineered_feature'):
 		"""Helper function to display export options for engineered features."""
+
 		with st.expander("#### Export Options"):
 			save_format = st.radio(f"Save Format for {feature_type}", ["CSV", "Parquet"], horizontal=True, key=f"save_format_{feature_type}")
 
@@ -37,11 +41,11 @@ class FeatureEngineeringTab:
 						else:
 							st.warning(f"Directory not found: {potential_path}. Saving to current directory.")
 
-					filepath = feature_engineer.save_features(
-						features=data,
-						feature_type=feature_type,
-						base_path=base_path,
-						format=save_format.lower()
+					filepath = FeatureEngineerUtils.save_features(
+						features     = data,
+						feature_type = feature_type,
+						base_path    = base_path,
+						format       = save_format.lower()
 					)
 					st.success(f"Saved {feature_type.replace('_', ' ').title()} to {filepath}")
 				except AttributeError:
@@ -49,7 +53,7 @@ class FeatureEngineeringTab:
 				except Exception as e:
 					st.error(f"Error saving {feature_type.replace('_', ' ').title()}: {str(e)}")
 
-	def render(self, feature_engineer):
+	def render(self):
 		""" Renders the content of the Feature Engineering tab. """
 		st.markdown("<h2 class='sub-header'>Order Data Feature Engineering</h2>", unsafe_allow_html=True)
 
@@ -85,22 +89,22 @@ class FeatureEngineeringTab:
 				if st.session_state.get('detected_patient_id_col') in all_columns:
 					patient_id_col_index = all_columns.index(st.session_state['detected_patient_id_col'])
 				patient_id_col = st.selectbox(
-					"Select Patient ID Column",
-					all_columns,
-					index=patient_id_col_index,
-					key="freq_patient_id_col",
-					help="Column containing unique patient identifiers"
+					label   = "Select Patient ID Column",
+					options = all_columns,
+					index   = patient_id_col_index,
+					key     = "freq_patient_id_col",
+					help    = "Column containing unique patient identifiers"
 				)
 
 			with col2:
 				# Suggest order column but allow selection from all columns
 
 				order_col = st.selectbox(
-					"Select Order Type Column",
-					all_columns,
-					index=all_columns.index('order_type') if 'order_type' in all_columns else 0,
-					key="freq_order_col",
-					help="Column containing order types/names"
+					label   = "Select Order Type Column",
+					options = all_columns,
+					index   = all_columns.index('order_type') if 'order_type' in all_columns else 0,
+					key     = "freq_order_col",
+					help    = "Column containing order types/names"
 				)
 
 			# Options
@@ -117,13 +121,13 @@ class FeatureEngineeringTab:
 						# Check if Dask was used to load the data
 						use_dask = st.session_state.get('use_dask', False)
 
-						freq_matrix = feature_engineer.create_order_frequency_matrix(
-							st.session_state.df,
-							patient_id_col=patient_id_col,
-							order_col=order_col,
-							normalize=normalize,
-							top_n=top_n,
-							use_dask=use_dask
+						freq_matrix = FeatureEngineerUtils.create_order_frequency_matrix(
+							df             = st.session_state.df,
+							patient_id_col = patient_id_col,
+							order_col      = order_col,
+							normalize      = normalize,
+							top_n          = top_n,
+							use_dask       = use_dask
 						)
 						# Store the frequency matrix
 						st.session_state.freq_matrix = freq_matrix
@@ -157,20 +161,23 @@ class FeatureEngineeringTab:
 					# Sample data for heatmap if too large
 					heatmap_data = st.session_state.freq_matrix
 					if heatmap_data.shape[0] > 50 or heatmap_data.shape[1] > 50:
+
 						st.info("Displaying a sample of the heatmap due to large size.")
-						sample_rows = min(50, heatmap_data.shape[0])
-						sample_cols = min(50, heatmap_data.shape[1])
+
+						sample_rows  = min(50, heatmap_data.shape[0])
+						sample_cols  = min(50, heatmap_data.shape[1])
 						heatmap_data = heatmap_data.iloc[:sample_rows, :sample_cols]
 
-					fig = px.imshow(heatmap_data.T,
-									labels=dict(x="Patient ID (Index)", y="Order Type", color="Frequency/Count"),
-									aspect="auto")
+					fig = px.imshow(img    = heatmap_data.T,
+									labels = dict(x="Patient ID (Index)", y="Order Type", color="Frequency/Count"),
+									aspect = "auto")
+
 					st.plotly_chart(fig, use_container_width=True)
 				except Exception as e:
 					st.error(f"Could not generate heatmap: {e}")
 
 				# Save options
-				self._display_export_options(data=st.session_state.freq_matrix, feature_engineer=feature_engineer, feature_type='order_frequency_matrix')
+				self._display_export_options(data=st.session_state.freq_matrix, feature_type='order_frequency_matrix')
 
 		# 2. Temporal Order Sequences tab
 		with feature_tabs[1]:
@@ -184,12 +191,13 @@ class FeatureEngineeringTab:
 				patient_id_col_index = 0
 				if st.session_state.get('detected_patient_id_col') in all_columns:
 					patient_id_col_index = all_columns.index(st.session_state['detected_patient_id_col'])
+
 				seq_patient_id_col = st.selectbox(
-					"Select Patient ID Column ", # Added space to differentiate key
-					all_columns,
-					index=patient_id_col_index,
-					key="seq_patient_id_col",
-					help="Column containing unique patient identifiers"
+					label   = "Select Patient ID Column",
+					options = all_columns,
+					index   = patient_id_col_index,
+					key     = "seq_patient_id_col",
+					help    = "Column containing unique patient identifiers"
 				)
 
 			with col2:
@@ -197,14 +205,28 @@ class FeatureEngineeringTab:
 				order_col_index = 0
 				if st.session_state.get('detected_order_cols') and st.session_state['detected_order_cols'][0] in all_columns:
 					order_col_index = all_columns.index(st.session_state['detected_order_cols'][0])
-				seq_order_col = st.selectbox( "Select Order Type Column ", all_columns, index=order_col_index, key="seq_order_col", help="Column containing order types/names" )
+
+				seq_order_col = st.selectbox(
+					label   = "Select Order Type Column",
+					options = all_columns,
+					index   = order_col_index,
+					key     = "seq_order_col",
+					help    = "Column containing order types/names"
+				)
 
 			with col3:
 				# Suggest time column
 				time_col_index = 0
 				if st.session_state.get('detected_time_cols') and st.session_state['detected_time_cols'][0] in all_columns:
 					time_col_index = all_columns.index(st.session_state['detected_time_cols'][0])
-				seq_time_col = st.selectbox( "Select Timestamp Column ", all_columns, index=time_col_index, key="seq_time_col", help="Column containing order timestamps" )
+
+				seq_time_col = st.selectbox(
+					label   = "Select Timestamp Column",
+					options = all_columns,
+					index   = time_col_index,
+					key     = "seq_time_col",
+					help    = "Column containing order timestamps"
+				)
 
 			# Options
 			max_seq_length = st.slider("Maximum Sequence Length", min_value=5, max_value=100, value=20, help="Maximum number of orders to include in each sequence")
@@ -216,7 +238,7 @@ class FeatureEngineeringTab:
 						# Check if Dask was used to load the data
 						use_dask = st.session_state.get('use_dask', False)
 
-						sequences = feature_engineer.extract_temporal_order_sequences(
+						sequences = FeatureEngineerUtils.extract_temporal_order_sequences(
 							df                  = st.session_state.df,
 							patient_id_col      = seq_patient_id_col,
 							order_col           = seq_order_col,
@@ -229,7 +251,9 @@ class FeatureEngineeringTab:
 
 						# Also generate transition matrix automatically
 						st.info("Calculating order transition matrix...")
-						transition_matrix = feature_engineer.calculate_order_transition_matrix( sequences=sequences, top_n=15 )
+
+						transition_matrix = FeatureEngineerUtils.calculate_order_transition_matrix( sequences=sequences, top_n=15 )
+
 						st.session_state.transition_matrix = transition_matrix
 						st.success("Order transition matrix calculated.")
 
@@ -264,6 +288,7 @@ class FeatureEngineeringTab:
 
 				# Get a few sample patients
 				sample_patients = list(st.session_state.order_sequences.keys())[:5]
+
 				if sample_patients:
 					for patient in sample_patients:
 						sequence = st.session_state.order_sequences[patient]
@@ -281,20 +306,21 @@ class FeatureEngineeringTab:
 					st.info("This matrix shows the probability of transitioning from one order type (rows) to another (columns). Based on top 15 orders.")
 					try:
 						fig = px.imshow(
-							st.session_state.transition_matrix,
-							labels=dict(x="Next Order", y="Current Order", color="Transition Probability"),
-							x=st.session_state.transition_matrix.columns,
-							y=st.session_state.transition_matrix.index,
-							color_continuous_scale='Blues'
+							img    = st.session_state.transition_matrix,
+							labels = dict(x="Next Order", y="Current Order", color="Transition Probability"),
+							x      = st.session_state.transition_matrix.columns,
+							y      = st.session_state.transition_matrix.index,
+							color_continuous_scale = 'Blues'
 						)
 						fig.update_layout(height=700)
 						st.plotly_chart(fig, use_container_width=True)
+
 					except Exception as e:
 						st.error(f"Could not generate transition matrix heatmap: {e}")
 
 
 				# Save options for sequences (transition matrix is derived, not saved directly here)
-				self._display_export_options(data=st.session_state.order_sequences, feature_engineer=feature_engineer, feature_type='temporal_order_sequences')
+				self._display_export_options(data=st.session_state.order_sequences, feature_type='temporal_order_sequences')
 
 
 		# 3. Order Type Distributions tab
@@ -305,36 +331,40 @@ class FeatureEngineeringTab:
 			# Column selection
 			col1, col2 = st.columns(2)
 			with col1:
+
 				# Suggest patient ID column
 				patient_id_col_index = 0
 				if st.session_state.get('detected_patient_id_col') in all_columns:
 					patient_id_col_index = all_columns.index(st.session_state['detected_patient_id_col'])
+
 				dist_patient_id_col = st.selectbox(
-					"Select Patient ID Column  ", # Added spaces to differentiate key
-					all_columns,
-					index=patient_id_col_index,
-					key="dist_patient_id_col",
-					help="Column containing unique patient identifiers"
+					label   = "Select Patient ID Column",
+					options = all_columns,
+					index   = patient_id_col_index,
+					key     = "dist_patient_id_col",
+					help    = "Column containing unique patient identifiers"
 				)
 
 			with col2:
+
 				# Suggest order column
 				order_col_index = 0
 				if st.session_state.get('detected_order_cols') and st.session_state['detected_order_cols'][0] in all_columns:
 					order_col_index = all_columns.index(st.session_state['detected_order_cols'][0])
+
 				dist_order_col = st.selectbox(
-					"Select Order Type Column  ",
-					all_columns,
-					index=order_col_index,
-					key="dist_order_col",
-					help="Column containing order types/names"
+					label   = "Select Order Type Column",
+					options = all_columns,
+					index   = order_col_index,
+					key     = "dist_order_col",
+					help    = "Column containing order types/names"
 				)
 
 			# Generate button
 			if st.button("Analyze Order Distributions"):
 				try:
 					with st.spinner("Analyzing order type distributions..."):
-						overall_dist, patient_dist = feature_engineer.get_order_type_distributions(
+						overall_dist, patient_dist = FeatureEngineerUtils.get_order_type_distributions(
 							st.session_state.df,
 							dist_patient_id_col,
 							dist_order_col
@@ -441,9 +471,10 @@ class FeatureEngineeringTab:
 
 
 				# Save options for both distributions
-				self._display_export_options(data=st.session_state.order_dist, feature_engineer=feature_engineer, feature_type='overall_order_distribution')
+				self._display_export_options(data=st.session_state.order_dist, feature_type='overall_order_distribution')
+
 				if 'patient_order_dist' in st.session_state and st.session_state.patient_order_dist is not None:
-					self._display_export_options(data=st.session_state.patient_order_dist, feature_engineer=feature_engineer, feature_type='patient_order_distribution')
+					self._display_export_options(data=st.session_state.patient_order_dist, feature_type='patient_order_distribution')
 
 
 		# 4. Order Timing Analysis tab
@@ -536,7 +567,7 @@ class FeatureEngineeringTab:
 			if st.button("Generate Timing Features"):
 				try:
 					with st.spinner("Generating order timing features..."):
-						timing_features = feature_engineer.create_order_timing_features(
+						timing_features = FeatureEngineerUtils.create_order_timing_features(
 							df                    = st.session_state.df,
 							patient_id_col        = timing_patient_id_col,
 							order_col             = timing_order_col,
@@ -617,4 +648,4 @@ class FeatureEngineeringTab:
 					st.error(f"Error generating timing visualizations: {e}")
 
 				# Save options
-				self._display_export_options(data=st.session_state.timing_features, feature_engineer=feature_engineer, feature_type='order_timing_features')
+				self._display_export_options(data=st.session_state.timing_features, feature_type='order_timing_features')

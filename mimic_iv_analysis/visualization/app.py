@@ -26,10 +26,7 @@ from sklearn.preprocessing import MinMaxScaler
 import streamlit as st
 
 # Local application imports
-from mimic_iv_analysis.core import (
-	FeatureEngineer,
-	DataLoader,
-)
+from mimic_iv_analysis.core import FeatureEngineerUtils, DataLoader
 from mimic_iv_analysis.visualization.app_components import FilteringTab, FeatureEngineeringTab, AnalysisVisualizationTab, ClusteringAnalysisTab
 
 from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtils
@@ -50,8 +47,8 @@ class MIMICDashboardApp:
 	def __init__(self):
 		logging.info("Initializing MIMICDashboardApp...")
 		# Initialize core components
-		self.data_handler        = DataLoader()
-		self.feature_engineer    = FeatureEngineer()
+		self.data_handler     = DataLoader()
+		self.feature_engineer = FeatureEngineerUtils()
 
 		# Initialize UI components for tabs
 		self.feature_engineering_ui    = None
@@ -127,7 +124,6 @@ class MIMICDashboardApp:
 		st.session_state.app_initialized = True # Mark as initialized
 		logging.info("Session state initialized.")
 
-
 	def run(self):
 		"""Run the main application loop."""
 		logging.info("Starting MIMICDashboardApp run...")
@@ -193,7 +189,6 @@ class MIMICDashboardApp:
 
 		logging.info("MIMICDashboardApp run finished.")
 
-
 	def _scan_dataset(self):
 
 		st.sidebar.markdown("---") # Separator
@@ -247,7 +242,6 @@ class MIMICDashboardApp:
 					except Exception as e:
 						st.sidebar.error(f"Error scanning directory: {e}")
 						logging.exception("Error during directory scan")
-
 
 	def _display_sidebar(self):
 		"""Handles the display and logic of the sidebar components."""
@@ -327,7 +321,6 @@ class MIMICDashboardApp:
 		else:
 			st.sidebar.info("Scan a MIMIC-IV directory to select and load tables.")
 
-
 	def _select_table(self, module: str) -> str:
 		"""Display table selection dropdown and handle selection logic.
 
@@ -388,7 +381,6 @@ class MIMICDashboardApp:
 
 		return selected_table_w_size_info
 
-
 	def _display_table_info(self, module: str, table: str) -> None:
 		"""Display table description information in sidebar.
 
@@ -407,7 +399,6 @@ class MIMICDashboardApp:
 			st.sidebar.warning("Could not retrieve table info (get_table_info method missing).")
 		except Exception as e:
 			st.sidebar.warning(f"Could not retrieve table info: {e}")
-
 
 	def _load_table(self, encoding: str = 'latin-1', load_full: bool = False, selected_display: str = None) -> Tuple[Optional[pd.DataFrame], int]:
 		"""Load a specific MIMIC-IV table, handling large files and sampling."""
@@ -492,9 +483,9 @@ class MIMICDashboardApp:
 						self._clear_analysis_states()
 
 						# Auto-detect columns for feature engineering
-						st.session_state.detected_order_cols     = self.feature_engineer.detect_order_columns(df)
-						st.session_state.detected_time_cols      = self.feature_engineer.detect_temporal_columns(df)
-						st.session_state.detected_patient_id_col = self.feature_engineer.detect_patient_id_column(df)
+						st.session_state.detected_order_cols     = FeatureEngineerUtils.detect_order_columns(df)
+						st.session_state.detected_time_cols      = FeatureEngineerUtils.detect_temporal_columns(df)
+						st.session_state.detected_patient_id_col = FeatureEngineerUtils.detect_patient_id_column(df)
 
 						st.sidebar.write("Detected Columns (for Feature Eng):")
 						st.sidebar.caption(f"Patient ID: {st.session_state.detected_patient_id_col}, Order: {st.session_state.detected_order_cols}, Time: {st.session_state.detected_time_cols}")
@@ -507,7 +498,6 @@ class MIMICDashboardApp:
 					else: # df is None
 						st.sidebar.error("Failed to load table. Check logs or file format.")
 						st.session_state.df = None
-
 
 	def _clear_analysis_states(self):
 		"""Clears session state related to previous analysis when new data is loaded."""
@@ -531,7 +521,6 @@ class MIMICDashboardApp:
 		st.session_state.optimal_eps = None
 		# Analysis
 		st.session_state.length_of_stay = None
-
 
 	def _show_data_explorer_view(self):
 		"""Handles the display of the main content area with tabs for data exploration and analysis."""
@@ -620,11 +609,11 @@ class MIMICDashboardApp:
 
 			# Tab 2: Feature Engineering
 			with tab2:
-				FeatureEngineeringTab().render(self.feature_engineer)
+				FeatureEngineeringTab().render()
 
 			# Tab 3: Clustering Analysis
 			with tab3:
-				ClusteringAnalysisTab().render(feature_engineer=self.feature_engineer)
+				ClusteringAnalysisTab().render()
 
 			# Tab 4: Analysis & Visualization (Cluster Interpretation)
 			with tab4:

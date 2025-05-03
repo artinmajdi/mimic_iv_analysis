@@ -3,11 +3,12 @@ import json
 import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import pandas as pd
 import dask.dataframe as dd
 import streamlit as st
 
-class FeatureEngineer:
+class FeatureEngineerUtils:
 	"""Handles feature engineering for MIMIC-IV data."""
 
 	@staticmethod

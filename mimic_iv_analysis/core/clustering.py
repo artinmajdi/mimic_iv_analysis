@@ -631,6 +631,40 @@ class ClusteringAnalyzer:
 
 		return summary.T
 
+	def find_optimal_k_kmeans_elbow_silhouette(self, data: pd.DataFrame, k_range=range(2, 11), n_init=10, max_iter=300) -> pd.DataFrame:
+		"""
+		Find optimal k for KMeans using both elbow method and silhouette score.
+
+		Args:
+			data: Input data for clustering
+			k_range: Range of k values to try
+			n_init: Number of initializations for KMeans
+			max_iter: Maximum iterations for KMeans
+
+		Returns:
+			DataFrame of metrics with inertia and silhouette scores
+		"""
+		metrics = {'k': list(k_range), 'inertia': [], 'silhouette': []}
+
+		for k in k_range:
+			kmeans = KMeans(n_clusters=k, n_init=n_init, max_iter=max_iter, random_state=self.random_state)
+			labels = kmeans.fit_predict(data)
+
+			# Record inertia (within-cluster sum of squares)
+			metrics['inertia'].append(kmeans.inertia_)
+
+			# Calculate silhouette score for k > 1
+			if k > 1:
+				metrics['silhouette'].append(silhouette_score(data, labels))
+			else:
+				metrics['silhouette'].append(0)
+
+		# Find optimal k using silhouette score (higher is better)
+		optimal_k_silhouette = k_range[np.argmax(metrics['silhouette'])]
+
+		# Return optimal k based on silhouette score and all metrics
+		return pd.DataFrame(metrics), optimal_k_silhouette
+
 
 class ClusterInterpreter:
 	"""Handles advanced analytics and visualization for cluster analysis."""
