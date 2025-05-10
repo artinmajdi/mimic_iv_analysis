@@ -5,31 +5,24 @@ dask
 pyarrow
 scipy
 scikit-learn
-statsmodels
 
 # Data visualization
 matplotlib
 seaborn
 plotly
-altair
 
 # Web & Dashboard
 streamlit
 
 # Machine Learning
-tensorflow
-xgboost
 shap
 lifelines  # Survival analysis
 networkx  # Network analysis
-mlxtend  # ML extensions
 umap-learn
 # pyhealth  # Healthcare machine learning library
 
 # Data processing
-psycopg2-binary  # PostgreSQL connection for MIMIC-IV
 datasets  # Hugging Face datasets library
-transformers  # Required for some HuggingFace functionality
 
 # Utilities
 tqdm
@@ -40,10 +33,6 @@ watchdog  # File system monitoring
 
 # Development tools
 pytest
-black
-isort
-flake8
-mypy
 
 # Documentation
 sphinx

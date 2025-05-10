@@ -42,4 +42,7 @@ dependencies = {file = ["requirements.txt"]}
 [tool.setuptools.package-data]
 mimic_iv_analysis = ["**/*.py"]
 
-
+[tool.pytest.ini_options]
+testpaths = [
+    "tests"
+]

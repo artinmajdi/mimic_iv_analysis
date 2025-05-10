@@ -71,13 +71,52 @@ class Filtering:
         self.filtered_subject_ids = None
         self.filtered_hadm_ids    = None
 
+    def _validate_dataframe(self, df: pd.DataFrame, table_name_key: str):
+        """
+        Validate the input DataFrame for essential properties.
+
+        Args:
+            df: The DataFrame to validate.
+            table_name_key: The key for MIMIC_TABLES (e.g., 'patients', 'admissions')
+                            to check for required ID columns.
+
+        Raises:
+            TypeError: If df is not a pandas DataFrame.
+            ValueError: If df is empty or missing required ID columns.
+        """
+        if not isinstance(df, pd.DataFrame):
+            logging.error(f"Validation failed: Expected a pandas DataFrame for {table_name_key}, but got {type(df)}.")
+            raise TypeError(f"Expected a pandas DataFrame for {table_name_key}, but got {type(df)}.")
+
+        if df.empty:
+            logging.warning(f"Validation warning: The DataFrame for {table_name_key} is empty.")
+            # Allow empty DataFrames for now, as apply_filters checks for emptiness after filtering steps.
+            return
+
+        if table_name_key not in MIMIC_TABLES:
+            logging.error(f"Validation failed: Unknown table_name_key '{table_name_key}' for DataFrame validation.")
+            raise ValueError(f"Unknown table_name_key '{table_name_key}' for DataFrame validation.")
+
+        required_cols = MIMIC_TABLES[table_name_key].get('id_cols', [])
+        if not required_cols:
+            logging.warning(f"No id_cols defined for {table_name_key} in MIMIC_TABLES. Skipping column check for {table_name_key}.")
+            return
+
+        missing_cols = [col for col in required_cols if col not in df.columns]
+
+        if missing_cols:
+            logging.error(f"Validation failed: The DataFrame for {table_name_key} is missing required ID columns: {missing_cols}.")
+            raise ValueError(f"The DataFrame for {table_name_key} is missing required ID columns: {missing_cols}.")
+
+        logging.info(f"DataFrame for {table_name_key} passed validation for required columns: {required_cols}.")
+
     def apply_filters(self,
-                      df           : pd.DataFrame,
-                      filter_params: Dict[str, Any],
-                      patients_df  : Optional[pd.DataFrame] = None,
-                      admissions_df: Optional[pd.DataFrame] = None,
-                      diagnoses_df : Optional[pd.DataFrame] = None,
-                      transfers_df : Optional[pd.DataFrame] = None) -> Tuple[pd.DataFrame, List[str]]:
+                    df           : pd.DataFrame,
+                    filter_params: Dict[str, Any],
+                    patients_df  : Optional[pd.DataFrame] = None,
+                    admissions_df: Optional[pd.DataFrame] = None,
+                    diagnoses_df : Optional[pd.DataFrame] = None,
+                    transfers_df : Optional[pd.DataFrame] = None) -> Tuple[pd.DataFrame, List[str]]:
         """
         Apply all filters based on the provided parameters.
 
@@ -210,6 +249,54 @@ class Filtering:
         logging.info(f"Applied filters: {self.applied_filters}")
 
         return filtered_df, self.applied_filters
+
+    def filter_by_age_range(self, df: pd.DataFrame, min_age: int, max_age: int, patients_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Filter DataFrame by age range using the patients_df.
+
+        Args:
+            df: DataFrame to filter.
+            min_age: Minimum age (inclusive).
+            max_age: Maximum age (inclusive).
+            patients_df: DataFrame containing patient information with 'subject_id' and 'age'.
+
+        Returns:
+            Filtered DataFrame.
+        """
+        logging.info(f"Filtering by age range: {min_age}-{max_age} years")
+        self.applied_filters.append(f"Age range: {min_age}-{max_age} years")
+
+        if patients_df is None or 'subject_id' not in patients_df.columns or 'age' not in patients_df.columns:
+            logging.warning("Patients DataFrame is missing or does not contain 'subject_id' or 'age'. Skipping age filter.")
+            return df
+
+        original_count = len(df)
+
+        # Ensure 'subject_id' in df for merging if it's not the patients_df itself
+        if 'subject_id' not in df.columns and df is not patients_df:
+            logging.warning("The primary DataFrame does not have 'subject_id' for age filtering. Skipping.")
+            return df
+        
+        # If df is the patients_df, filter directly
+        if df is patients_df:
+            filtered_df = df[(df['age'] >= min_age) & (df['age'] <= max_age)].copy()
+        else: # Merge if df is another table (e.g., admissions) that needs patient age
+            # Check if patients_df needs to be filtered by subject_ids present in df first
+            # This is to avoid merging with irrelevant patient data if df is already a subset
+            if 'subject_id' in df.columns:
+                relevant_patient_ids = df['subject_id'].unique()
+                patients_subset_for_merge = patients_df[patients_df['subject_id'].isin(relevant_patient_ids)][['subject_id', 'age']]
+                merged_df = pd.merge(df, patients_subset_for_merge, on='subject_id', how='inner')
+            else: # Should not happen based on prior check, but as a fallback
+                merged_df = pd.merge(df, patients_df[['subject_id', 'age']], on='subject_id', how='inner')
+            
+            filtered_df = merged_df[(merged_df['age'] >= min_age) & (merged_df['age'] <= max_age)].copy()
+            # Drop the added 'age' column if it wasn't originally in df, to keep df schema consistent
+            if 'age' not in df.columns and 'age' in filtered_df.columns:
+                filtered_df.drop(columns=['age'], inplace=True)
+
+        logging.info(f"Age filter: {original_count} rows before, {len(filtered_df)} rows after.")
+        return filtered_df
 
     def filter_by_valid_admission_discharge(self, df: pd.DataFrame, admissions_df: pd.DataFrame) -> pd.DataFrame:
         """
