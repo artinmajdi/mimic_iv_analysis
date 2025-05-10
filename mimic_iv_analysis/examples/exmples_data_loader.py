@@ -15,6 +15,7 @@ This script shows how to:
 9. Load a table and filter it by a set of values
 10. Merge two DataFrames
 11. Load and connect the six main MIMIC-IV tables
+12. Load data for specific subject IDs
 
 Usage:
     python data_loader_examples.py
@@ -23,6 +24,7 @@ Usage:
 import os
 import pandas as pd
 import logging
+import random # For selecting random subjects
 
 
 # Import our modules
@@ -64,8 +66,8 @@ class ExampleDataLoader:
             return False
         return True
 
-    # --- Example Functions ---
 
+    # --- Example Functions ---
     @staticmethod
     def example_scan_directory(loader: DataLoader):
         """Demonstrates scanning the MIMIC-IV directory."""
@@ -105,6 +107,7 @@ class ExampleDataLoader:
         df_sampled_pd, total_rows_pd = loader.load_mimic_table(patients_file_path, sample_size=100, use_dask=False, max_chunks=MAX_CHUNKS)
         if df_sampled_pd is not None:
             logging.info(f"Loaded {len(df_sampled_pd)} rows (sampled) out of {total_rows_pd} total (Pandas). Columns: {df_sampled_pd.columns.tolist()}")
+            logging.info(f"Sample data (Pandas):\n{df_sampled_pd.head(3)}")
         else:
             logging.warning("Failed to load sampled (Pandas).")
 
@@ -114,6 +117,7 @@ class ExampleDataLoader:
         if df_sampled_dd is not None:
             # For Dask, len() triggers computation. df_sampled_dd is already computed by head() in load_mimic_table.
             logging.info(f"Loaded {len(df_sampled_dd)} rows (sampled) out of {total_rows_dd} total (Dask). Columns: {df_sampled_dd.columns.tolist()}")
+            logging.info(f"Sample data (Dask):\n{df_sampled_dd.head(3)}") # .head() is fine as it's already computed
         else:
             logging.warning("Failed to load sampled (Dask).")
 
@@ -375,6 +379,103 @@ class ExampleDataLoader:
             logging.warning("Failed to load connected tables as a single merged DataFrame or it was empty.")
 
 
+    @staticmethod
+    def example_load_with_subject_ids(loader: DataLoader):
+        """Demonstrates loading data for a specific number of subjects."""
+        logging.info("\n--- Example: Load Data by Subject IDs ---")
+        if not ExampleDataLoader.check_mimic_path():
+            return
+
+        # Ensure directory is scanned so subject IDs are available
+        if not loader._data_scan_complete:
+            logging.info("Scanning MIMIC directory first to get subject ID list...")
+            loader.scan_mimic_directory(MIMIC_DATA_PATH)
+            if not loader._data_scan_complete:
+                logging.warning("Scan failed, cannot proceed with subject ID example.")
+                return
+
+        total_subjects = loader.get_total_unique_subjects()
+        if total_subjects == 0:
+            logging.warning("No subject IDs found (patients.csv might be missing or empty). Skipping subject ID loading example.")
+            return
+        logging.info(f"Total unique subjects available: {total_subjects}")
+
+        num_subjects_to_load = min(5, total_subjects) # Load for 5 subjects, or fewer if not enough
+        logging.info(f"Attempting to load data for {num_subjects_to_load} subjects.")
+
+        target_subject_ids = loader.get_subject_ids_for_sampling(num_subjects_to_load)
+
+        if not target_subject_ids:
+            logging.warning(f"Could not retrieve target subject IDs for sampling. Found {len(loader._all_subject_ids if loader._all_subject_ids else [])} subjects in loader state.")
+            return
+        
+        logging.info(f"Target subject IDs for loading: {target_subject_ids[:10]}... (first 10 if many)")
+
+        # Example: Load 'admissions' table for these subjects
+        # admissions_file_path = loader.file_paths.get(('hosp', 'admissions'), None)
+        # A more robust way to get path, assuming scan_mimic_directory populates file_paths correctly
+        admissions_key = ('hosp', 'admissions') # Using the tuple key
+        if admissions_key not in loader.file_paths:
+            logging.warning(f"Admissions table path not found in loader.file_paths after scan. Available keys: {list(loader.file_paths.keys())}")
+            # Fallback to constructing path directly for robustness in example if needed
+            admissions_file_path = os.path.join(MIMIC_DATA_PATH, "hosp", "admissions.csv.gz")
+            if not os.path.exists(admissions_file_path):
+                admissions_file_path = os.path.join(MIMIC_DATA_PATH, "hosp", "admissions.csv")
+        else:
+            admissions_file_path = loader.file_paths[admissions_key]
+
+        if not admissions_file_path or not os.path.exists(admissions_file_path):
+            logging.warning(f"Admissions file path not found or file does not exist: {admissions_file_path}. Skipping 'admissions' load by subject ID.")
+        else:
+            logging.info(f"Loading 'admissions' table for {len(target_subject_ids)} specific subjects (Pandas)... Path: {admissions_file_path}")
+            df_admissions_subject_pd, count_pd = loader.load_mimic_table(
+                admissions_file_path, 
+                target_subject_ids=target_subject_ids, 
+                use_dask=False
+            )
+            if df_admissions_subject_pd is not None and not df_admissions_subject_pd.empty:
+                logging.info(f"Loaded {len(df_admissions_subject_pd)} admission records for {df_admissions_subject_pd['subject_id'].nunique()} unique subjects (Pandas). Total rows from call: {count_pd}")
+                logging.info(f"Data for specific subjects (Pandas - admissions):\n{df_admissions_subject_pd.head()}")
+                assert set(df_admissions_subject_pd['subject_id'].unique()).issubset(set(target_subject_ids))
+            else:
+                logging.warning(f"Failed to load admissions data for specific subjects (Pandas) or data was empty. Found {count_pd} rows.")
+
+        # Example: Load a potentially larger table like 'chartevents' if it's likely to exist, using Dask
+        # For this example, we'll try 'outputevents' as it's also common and can be large
+        outputevents_key = ('icu', 'outputevents')
+        if outputevents_key not in loader.file_paths:
+            logging.info(f"'outputevents' not found in scanned files. Trying direct path construction.")
+            outputevents_file_path = os.path.join(MIMIC_DATA_PATH, "icu", "outputevents.csv.gz")
+            if not os.path.exists(outputevents_file_path):
+                outputevents_file_path = os.path.join(MIMIC_DATA_PATH, "icu", "outputevents.csv")
+        else:
+            outputevents_file_path = loader.file_paths[outputevents_key]
+        
+        if outputevents_file_path and os.path.exists(outputevents_file_path):
+            logging.info(f"Loading 'outputevents' table for {len(target_subject_ids)} specific subjects (Dask)... Path: {outputevents_file_path}")
+            # Using a small sample_size as a fallback if subject_id filtering isn't efficient or applicable internally
+            # The primary filter should be target_subject_ids
+            df_output_subject_dd, count_dd = loader.load_mimic_table(
+                outputevents_file_path, 
+                target_subject_ids=target_subject_ids, 
+                use_dask=True, 
+                sample_size=10000 # Fallback sample for Dask if needed, though subject_id filtering is preferred
+            )
+            if df_output_subject_dd is not None and not df_output_subject_dd.empty:
+                # df_output_subject_dd is a Pandas DF here due to current Dask implementation returning computed for subject_ids
+                logging.info(f"Loaded {len(df_output_subject_dd)} outputevent records for {df_output_subject_dd['subject_id'].nunique()} unique subjects (Dask path). Total rows from call: {count_dd}")
+                logging.info(f"Data for specific subjects (Dask - outputevents):\n{df_output_subject_dd.head()}")
+                # Check if the loaded subject IDs are a subset of the target ones
+                if 'subject_id' in df_output_subject_dd.columns:
+                     assert set(df_output_subject_dd['subject_id'].unique()).issubset(set(target_subject_ids))
+                else:
+                    logging.warning("'subject_id' column not found in Dask-loaded outputevents table, cannot verify subject filtering.")
+            else:
+                logging.warning(f"Failed to load outputevents data for specific subjects (Dask path) or data was empty. Found {count_dd} rows.")
+        else:
+            logging.info(f"'outputevents.csv.gz' or '.csv' not found at {outputevents_file_path}. Skipping its load by subject ID example.")
+
+
 def main():
     ExampleDataLoader.configure_logging()
     data_loader = ExampleDataLoader.setup_loader()
@@ -394,6 +495,7 @@ def main():
         ExampleDataLoader.example_convert_to_parquet(data_loader) # Run this after some tables are loaded and files may exist
         ExampleDataLoader.example_load_connected_tables(data_loader) # This is a more comprehensive one
         ExampleDataLoader.example_apply_filters(data_loader) # Shows how filters are used with load_mimic_table
+        ExampleDataLoader.example_load_with_subject_ids(data_loader)
 
     logging.info("\n--- DataLoader Examples Finished ---")
 

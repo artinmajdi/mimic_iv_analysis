@@ -11,8 +11,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import dask.dataframe as dd
 
-# Streamlit import
-import streamlit as st
+
+# TODO: I shoudl create a jupyter notebook, and load the tables there, and do the merging manually, make sure it wokrs. then update this code accordingly (update it manually)
 
 # Import filtering functionality
 from mimic_iv_analysis.core.filtering import Filtering
@@ -42,6 +42,10 @@ LARGE_FILE_THRESHOLD_MB = 100
 DEFAULT_SAMPLE_SIZE     = 1000
 RANDOM_STATE            = 42
 
+PATIENTS_TABLE_MODULE = 'hosp'
+PATIENTS_TABLE_NAME   = 'patients'
+SUBJECT_ID_COL        = 'subject_id'
+
 class DataLoader:
 	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
 
@@ -49,6 +53,9 @@ class DataLoader:
 		"""Initialize the MIMICDataLoader class."""
 		self.filtering = Filtering()
 		self.mimic_path = DEFAULT_MIMIC_PATH
+		self._all_subject_ids: Optional[List[Any]] = None
+		self._patients_file_path: Optional[str] = None
+		self._data_scan_complete: bool = False # To ensure scan runs before accessing patients_file_path
 
 	def _format_size(self, size_mb: float) -> str:
 		"""Format file size into KB, MB, or GB string."""
@@ -99,7 +106,9 @@ class DataLoader:
 					file_paths[(module, table_name)] = file_path
 					try:
 						file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-
+						# Store patients file path if found
+						if module == PATIENTS_TABLE_MODULE and table_name == PATIENTS_TABLE_NAME:
+							self._patients_file_path = file_path
 					except OSError:
 						file_size_mb = 0
 
@@ -108,24 +117,89 @@ class DataLoader:
 					table_display_names[(module, table_name)] = f"{table_name} {size_str}"
 
 				available_tables[module].sort()
-
+		self._data_scan_complete = True
 		return available_tables, file_paths, file_sizes, table_display_names
 
 
-	def load_mimic_table(self, file_path: str, sample_size: int = DEFAULT_SAMPLE_SIZE, encoding: str = 'latin-1', use_dask: bool = False, max_chunks: Optional[int] = None) -> Tuple[Optional[Union[pd.DataFrame, dd.DataFrame]], int]:
+	def _get_all_subject_ids(self) -> List[Any]:
+		"""Loads patients.csv and returns a list of unique subject_ids."""
+		if self._all_subject_ids is not None:
+			return self._all_subject_ids
+
+		if not self._data_scan_complete:
+			logging.warning("MIMIC directory scan has not been performed. Cannot load subject IDs.")
+			logging.warning("Call scan_mimic_directory() first, likely automatically done by app initialization.")
+			self._all_subject_ids = [] # Ensure it's an empty list, not None
+			return self._all_subject_ids
+
+		if not self._patients_file_path or not os.path.exists(self._patients_file_path):
+			logging.warning(f"'{PATIENTS_TABLE_NAME}.csv' or '.csv.gz' not found during scan or path is invalid.")
+			self._all_subject_ids = []
+			return self._all_subject_ids
+
+		try:
+			logging.info(f"Loading '{PATIENTS_TABLE_NAME}' from {self._patients_file_path} to extract subject IDs...")
+			# Directly load patients.csv as it's small, only subject_id column needed.
+			compression = 'gzip' if self._patients_file_path.endswith('.gz') else None
+			patients_df = pd.read_csv(
+				self._patients_file_path,
+				usecols=[SUBJECT_ID_COL],
+				compression=compression,
+				encoding='latin-1' # Assuming consistent encoding
+			)
+			if SUBJECT_ID_COL not in patients_df.columns:
+				logging.error(f"'{SUBJECT_ID_COL}' column not found in {self._patients_file_path}.")
+				self._all_subject_ids = []
+			else:
+				self._all_subject_ids = patients_df[SUBJECT_ID_COL].unique().tolist()
+				logging.info(f"Found {len(self._all_subject_ids)} unique subject IDs.")
+		except Exception as e:
+			logging.error(f"Error loading subject IDs from {self._patients_file_path}: {e}")
+			traceback.print_exc()
+			self._all_subject_ids = []
+
+		return self._all_subject_ids
+
+	def get_total_unique_subjects(self) -> int:
+		"""Returns the total number of unique subject_ids found in patients.csv."""
+		self._get_all_subject_ids() # Ensures subject IDs are loaded if not already
+		return len(self._all_subject_ids) if self._all_subject_ids is not None else 0
+
+	def get_subject_ids_for_sampling(self, num_subjects: Optional[int]) -> Optional[List[Any]]:
+		"""Returns a list of subject_ids for sampling.
+
+		Args:
+			num_subjects: The number of subject_ids to return from the top of the list.
+						  If None or 0, returns None (indicating no specific subject sampling).
+
+		Returns:
+			A list of subject_ids, or None.
+		"""
+		self._get_all_subject_ids() # Ensures subject IDs are loaded
+		if self._all_subject_ids is None or not self._all_subject_ids:
+			return None
+		if num_subjects is None or num_subjects <= 0:
+			# Consider if returning all subjects (self._all_subject_ids[:]) is better here
+			# For now, None means no specific subject-based sampling requested through this path.
+			return None
+		return self._all_subject_ids[:num_subjects]
+
+
+	def load_mimic_table(self, file_path: str, sample_size: int = DEFAULT_SAMPLE_SIZE, encoding: str = 'latin-1', use_dask: bool = False, max_chunks: Optional[int] = None, target_subject_ids: Optional[List[Any]] = None) -> Tuple[Optional[Union[pd.DataFrame, dd.DataFrame]], int]:
 		"""Loads a specific MIMIC-IV table, handling large files and sampling.
 
 		Args:
 			file_path: Path to the CSV/CSV.GZ file
-			sample_size: Number of rows to sample for large files
+			sample_size: Number of rows to sample for large files (used if target_subject_ids is not effective)
 			encoding: File encoding
-			use_dask: Whether to use Dask for loading (better for very large files)
-			max_chunks: Maximum number of chunks to process (for debugging or limiting memory usage)
+			use_dask: Whether to use Dask for loading
+			max_chunks: Maximum number of chunks to process (for pandas chunking or Dask debugging)
+			target_subject_ids: Optional list of subject_ids to filter the table by.
 
 		Returns:
 			Tuple containing:
-				- DataFrame with the loaded data (may be sampled)
-				- Total row count in the original file
+				- DataFrame with the loaded data (may be sampled or filtered by subject_id)
+				- Total row count (can be estimate or count after filtering, context dependent)
 		"""
 
 		try:
@@ -133,9 +207,63 @@ class DataLoader:
 			is_compressed = file_path.endswith('.gz')
 			compression   = 'gzip' if is_compressed else None
 			read_params   = { 'encoding': encoding, 'compression': compression, 'low_memory': False }
+			# Attempt to get header to check for SUBJECT_ID_COL before full load for filtering decisions
+			try:
+				header_df = pd.read_csv(file_path, nrows=0, **read_params)
+				has_subject_id_col = SUBJECT_ID_COL in header_df.columns
+			except Exception as e:
+				logging.warning(f"Could not read header for {os.path.basename(file_path)}: {e}. Assuming no '{SUBJECT_ID_COL}'.")
+				has_subject_id_col = False
+
+			# Primary filtering logic: If target_subject_ids are provided and the file is large and has subject_id
+			if target_subject_ids and has_subject_id_col and file_size_mb > LARGE_FILE_THRESHOLD_MB:
+				logging.info(f"Attempting to load by {len(target_subject_ids)} subject_ids for large file: {os.path.basename(file_path)}")
+				if use_dask:
+					logging.info(f"Using Dask to filter by subject_id for {os.path.basename(file_path)}.")
+					try:
+						# Define dtypes for known columns to help Dask if possible
+						# This part might need to be more dynamic or passed in if we want to optimize for all tables
+						dtypes_for_dask = {SUBJECT_ID_COL: 'Int64'} # Example, might need more
+						# For very large files, only load subject_id and other essential columns if specified elsewhere
+						# For now, loads all columns then filters.
+						ddf = dd.read_csv(file_path, dtype=dtypes_for_dask, **read_params)
+						filtered_ddf = ddf[ddf[SUBJECT_ID_COL].isin(target_subject_ids)]
+						df_result = filtered_ddf.compute()
+						total_rows_loaded = len(df_result)
+						logging.info(f"Loaded {total_rows_loaded} rows for {len(target_subject_ids)} subjects from {os.path.basename(file_path)} using Dask.")
+						return convert_string_dtypes(df_result), total_rows_loaded
+					except Exception as e:
+						logging.error(f"Dask filtering by subject_id failed for {os.path.basename(file_path)}: {e}. Falling back.")
+						traceback.print_exc()
+					# Fallback if Dask direct filter fails; will go to standard Dask load or pandas load below
+
+				else: # Pandas chunked reading for large files with target_subject_ids
+					logging.info(f"Using Pandas chunking to filter by subject_id for {os.path.basename(file_path)}.")
+					chunks_for_target_ids = []
+					total_rows_in_file_estimate = 0 # We can't easily get total rows without reading all
+					processed_chunks = 0
+					with pd.read_csv(file_path, chunksize=100000, **read_params) as reader:
+						for chunk in reader:
+							processed_chunks += 1
+							filtered_chunk = chunk[chunk[SUBJECT_ID_COL].isin(target_subject_ids)]
+							if not filtered_chunk.empty:
+								chunks_for_target_ids.append(filtered_chunk)
+							if max_chunks is not None and max_chunks != -1 and processed_chunks >= max_chunks:
+								logging.info(f"Reached max_chunks ({max_chunks}) during subject_id filtering for {os.path.basename(file_path)}.")
+								break
+					if chunks_for_target_ids:
+						df_result = pd.concat(chunks_for_target_ids, ignore_index=True)
+					else:
+						df_result = pd.DataFrame(columns=header_df.columns) # Empty df with correct columns
+					total_rows_loaded = len(df_result)
+					logging.info(f"Loaded {total_rows_loaded} rows for {len(target_subject_ids)} subjects from {os.path.basename(file_path)} using Pandas chunking.")
+					return convert_string_dtypes(df_result), total_rows_loaded
+
+			# --- Standard loading logic (if not filtered by subject_ids for large files or if it's a small file) ---
+			logging.info(f"Proceeding with standard load for {os.path.basename(file_path)} (use_dask={use_dask}, sample_size={sample_size}).")
 
 			if use_dask:
-				# Using Dask for large file processing
+				# Using Dask for large file processing (or if explicitly requested)
 				try:
 					# First attempt to detect datetime columns by reading a small sample with pandas
 					sample_df = pd.read_csv(file_path, nrows=5, **read_params)
@@ -180,10 +308,14 @@ class DataLoader:
 					else:
 						# For smaller files, we can compute the whole thing and then sample
 						df = dask_df.compute()
+						if target_subject_ids and has_subject_id_col and SUBJECT_ID_COL in df.columns: # Apply subject filter if small file
+							df = df[df[SUBJECT_ID_COL].isin(target_subject_ids)]
 						df = df.sample(sample_size, random_state=RANDOM_STATE)
 				else:
 					# If file is smaller than sample size, load it all
 					df = dask_df.compute()
+					if target_subject_ids and has_subject_id_col and SUBJECT_ID_COL in df.columns: # Apply subject filter if small file
+						df = df[df[SUBJECT_ID_COL].isin(target_subject_ids)]
 			else:
 				# Traditional pandas approach
 				# Get total row count without loading entire file
@@ -206,6 +338,9 @@ class DataLoader:
 					df = pd.read_csv(file_path, nrows=sample_size, **read_params)
 				else:
 					df = pd.concat(chunks, ignore_index=True)
+					# Apply subject_id filtering if it's a small file or fallback
+					if target_subject_ids and has_subject_id_col and SUBJECT_ID_COL in df.columns:
+						df = df[df[SUBJECT_ID_COL].isin(target_subject_ids)]
 					# Apply sampling only if sample_size is specified and df is larger
 					if sample_size is not None and len(df) > sample_size:
 						df = df.sample(sample_size, random_state=RANDOM_STATE)
@@ -534,11 +669,11 @@ class DataLoader:
 						if max_chunks is not None and max_chunks != -1 and chunk_count >= max_chunks:
 							logging.info(f"Reached max_chunks ({max_chunks}) for patients.csv. Processed {chunk_count} chunks.")
 							break
-				
+
 				if not chunks:
 					logging.error("No data loaded from patients.csv with pandas chunking.")
 					return pd.DataFrame(), set()
-				
+
 				df_loaded_patients = pd.concat(chunks, ignore_index=True)
 				total_patients_processed = len(df_loaded_patients)
 

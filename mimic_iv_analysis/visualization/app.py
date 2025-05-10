@@ -75,6 +75,7 @@ class MIMICDashboardApp:
 		st.session_state.selected_module = None
 		st.session_state.selected_table = None
 		st.session_state.df = None
+		st.session_state.num_subjects_to_load = 0
 		st.session_state.sample_size = DEFAULT_SAMPLE_SIZE
 		st.session_state.available_tables = {}
 		st.session_state.file_paths = {}
@@ -296,24 +297,51 @@ class MIMICDashboardApp:
 				st.sidebar.markdown("---")
 
 				# Sampling options
-				load_full = st.sidebar.checkbox("Load Full Table (Ignore Sampling)", value=False, key="load_full")
+				load_full = st.sidebar.checkbox("Load Full Table (Ignore Subject Count/Sampling)", value=st.session_state.get('load_full', False), key="load_full")
 
+				# Get total unique subjects to display
+				total_unique_subjects = self.data_handler.get_total_unique_subjects()
+				help_text_num_subjects = f"Number of subjects to load from '{self.data_handler.PATIENTS_TABLE_NAME}.csv'. Max: {total_unique_subjects}. \
+0 or blank to load all subjects (if 'Load Full Table' is checked) or use default row sampling (if not)."
+				if total_unique_subjects == 0 and self.data_handler._data_scan_complete and self.data_handler._patients_file_path:
+					help_text_num_subjects = f"Could not load subject IDs from '{self.data_handler.PATIENTS_TABLE_NAME}'. Ensure it's present and readable. Falling back to row sampling."
+				elif not self.data_handler._data_scan_complete:
+					help_text_num_subjects = "Scan the directory first to see available subjects. Falling back to row sampling."
+
+				# Initialize num_subjects in session state if not present, default to a placeholder like 0 or a small number
+				if 'num_subjects_to_load' not in st.session_state:
+					st.session_state.num_subjects_to_load = 0 # Default to 0, meaning all or fallback to sample_size
+
+				st.session_state.num_subjects_to_load = st.sidebar.number_input(
+					"Number of Subjects to Load",
+					min_value=0,
+					max_value=total_unique_subjects if total_unique_subjects > 0 else 1000000, # Fallback max if no subjects found
+					disabled=load_full,
+					key="num_subjects_input",
+					step=10,
+					value=st.session_state.num_subjects_to_load,
+					help=help_text_num_subjects
+				)
+				st.sidebar.caption(f"Total unique subjects found: {total_unique_subjects if total_unique_subjects > 0 else 'N/A (Scan or check patients.csv)'}")
+
+				# Keep sample_size for fallback if num_subjects is 0 or subject_id filtering isn't applicable
+				# This original sample_size input is now effectively a fallback or for tables without subject_id
 				st.session_state.sample_size = st.sidebar.number_input(
-					"Sample Size (Rows)",
+					"Fallback Row Sample Size (if needed)",
 					min_value = 100,
 					max_value = 6000000,
 					disabled  = load_full,
-					key       = "sample_size_input",
+					key       = "fallback_sample_size_input",
 					step      = 100,
-					value     = st.session_state.sample_size,
-					help      = "Number of rows to load if 'Load Full Table' is unchecked. Applied randomly."
+					value     = st.session_state.get('sample_size', DEFAULT_SAMPLE_SIZE), # Use .get for robustness
+					help      = "Number of rows to load if subject-based loading is not active or not applicable (e.g., table without subject_id). Applied randomly."
 				)
 
 				# Encoding (less critical for parquet, but keep for CSV)
 				encoding = st.sidebar.selectbox("Encoding (for CSV)", ["utf-8", "latin-1", "iso-8859-1"], index=0, key="encoding_select")
 
 				# Dask option (only relevant if dask is installed and intended)
-				st.session_state.use_dask = st.sidebar.checkbox("Use Dask for large files", value=st.session_state.use_dask, help="Enable Dask for potentially faster processing of very large files (requires Dask installation)")
+				st.session_state.use_dask = st.sidebar.checkbox("Use Dask for large files", value=st.session_state.get('use_dask', False), help="Enable Dask for potentially faster processing of very large files (requires Dask installation)")
 
 			self._load_table(encoding=encoding, load_full=load_full, selected_display=selected_display)
 
@@ -409,10 +437,22 @@ class MIMICDashboardApp:
 
 			# Determine sample size to use
 			load_sample_size = None if load_full else st.session_state.sample_size
+			num_subjects_to_load = None if load_full else st.session_state.get('num_subjects_to_load', 0)
+
+			# Get target subject IDs if num_subjects_to_load is specified
+			target_subject_ids = None
+			if num_subjects_to_load and num_subjects_to_load > 0:
+				target_subject_ids = self.data_handler.get_subject_ids_for_sampling(num_subjects_to_load)
+				if target_subject_ids:
+					loading_message_subject_suffix = f" for {len(target_subject_ids)} subjects"
+				else:
+					loading_message_subject_suffix = " (subject ID list empty or not found, using fallback sampling)"
+			else:
+				loading_message_subject_suffix = " (loading all subjects or using fallback sampling)"
 
 			# Framework info (currently just Pandas, add Dask logic if implemented)
 			framework       = "Dask" if st.session_state.use_dask else "Pandas"
-			loading_message = f"Loading { 'full table' if load_full else f'{load_sample_size} rows (sampled)' } using {framework}..."
+			loading_message = f"Loading { 'full table' if load_full else f'{load_sample_size} rows (sampled)' }{loading_message_subject_suffix} using {framework}..."
 
 			# TODO: see if I can merge this two into one. so that I can be sure that the merged table is shown everywhere.
 
@@ -468,7 +508,13 @@ class MIMICDashboardApp:
 
 				with st.spinner(loading_message):
 
-					df, total_rows = self.data_handler.load_mimic_table( file_path=file_path, sample_size=load_sample_size, encoding=encoding, use_dask=st.session_state.use_dask )
+					df, total_rows = self.data_handler.load_mimic_table(
+						file_path=file_path,
+						sample_size=load_sample_size,
+						encoding=encoding,
+						use_dask=st.session_state.use_dask,
+						target_subject_ids=target_subject_ids # Pass the subject IDs here
+					)
 
 					st.session_state.total_row_count = total_rows
 
