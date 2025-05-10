@@ -32,7 +32,7 @@ from mimic_iv_analysis.core import (
 	ClusterInterpreter,
 	FeatureEngineerUtils,
 	DataLoader,
-	MIMICVisualizer
+	# MIMICVisualizer
 )
 from mimic_iv_analysis.visualization.app_components import FilteringTab, FeatureEngineeringTab, ClusteringAnalysisTab
 
@@ -2496,13 +2496,13 @@ class MIMICDashboardApp:
 		logging.info("Initializing MIMICDashboardApp...")
 		# Initialize core components
 		self.data_handler        = DataLoader()
-		self.visualizer          = MIMICVisualizer()
+		# self.visualizer          = MIMICVisualizer()
 		self.feature_engineer    = FeatureEngineerUtils()
 		self.clustering_analyzer = ClusteringAnalyzer() # Handles running algorithms, evaluation
 		self.cluster_analyzer    = ClusterInterpreter()    # Handles post-cluster analysis, interpretation
 		# Initialize UI components for tabs
-		self.feature_engineering_ui    = FeatureEngineeringTab(current_file_path=self.current_file_path)
-		self.clustering_analysis_ui    = ClusteringAnalysisTab(current_file_path=self.current_file_path)
+		self.feature_engineering_ui    = FeatureEngineeringTab()
+		self.clustering_analysis_ui    = ClusteringAnalysisTab()
 		self.analysis_visualization_ui = AnalysisVisualizationTab()
 
 		self.current_file_path = None

@@ -343,12 +343,11 @@ class MIMICDashboardApp:
 		# Format each table with size information
 		for table in table_options:
 			display_name = st.session_state.table_display_names.get((module, table), table)
-			size_mb      = st.session_state.file_sizes.get((module, table), 0)
-			# Format size as MB or KB based on value
-			size_str     = f"{size_mb:.1f} MB" if size_mb > 0.1 else f"{int(size_mb*1024)} KB"
+			# The display_name already contains the size string from scan_mimic_directory
+			# No need to recalculate size_mb or size_str here, or append it again.
 
 			# Create the display string and add to options
-			display_string = f"{display_name} ({size_str})"
+			display_string = display_name # Corrected: use display_name directly
 			tables_list_w_size_info.append(display_string)
 
 			# Map display string back to table name
@@ -403,9 +402,8 @@ class MIMICDashboardApp:
 		"""Load a specific MIMIC-IV table, handling large files and sampling."""
 
 		if st.sidebar.button("Load Selected Table", key="load_button"):
-
 			# Normal case for regular table loading
-			if not st.session_state.selected_module or not st.session_state.selected_table:
+			if selected_display != "merged_table" and (not st.session_state.selected_module or not st.session_state.selected_table):
 				st.sidebar.warning("Please select a module and table first.")
 				return
 

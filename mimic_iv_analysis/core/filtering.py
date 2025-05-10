@@ -61,24 +61,33 @@ class Filtering:
 
     def __init__(self):
         """Initialize the Filtering class."""
+
         logging.info("Initializing Filtering class...")
+
         # Track applied filters for reporting
         self.applied_filters = []
+
         # Cache for patient and admission IDs to avoid redundant filtering
         self.filtered_subject_ids = None
-        self.filtered_hadm_ids = None
+        self.filtered_hadm_ids    = None
 
-    def apply_filters(self, df: pd.DataFrame, filter_params: Dict[str, Any], patients_df: Optional[pd.DataFrame] = None, admissions_df: Optional[pd.DataFrame] = None, diagnoses_df: Optional[pd.DataFrame] = None, transfers_df: Optional[pd.DataFrame] = None) -> Tuple[pd.DataFrame, List[str]]:
+    def apply_filters(self,
+                      df           : pd.DataFrame,
+                      filter_params: Dict[str, Any],
+                      patients_df  : Optional[pd.DataFrame] = None,
+                      admissions_df: Optional[pd.DataFrame] = None,
+                      diagnoses_df : Optional[pd.DataFrame] = None,
+                      transfers_df : Optional[pd.DataFrame] = None) -> Tuple[pd.DataFrame, List[str]]:
         """
         Apply all filters based on the provided parameters.
 
-        Args:
-            df: DataFrame to filter
+        Args         :
+            df           : DataFrame to filter
             filter_params: Dictionary of filter parameters
-            patients_df: Optional DataFrame containing patient information
+            patients_df  : Optional DataFrame containing patient information
             admissions_df: Optional DataFrame containing admission information
-            diagnoses_df: Optional DataFrame containing diagnosis information
-            transfers_df: Optional DataFrame containing transfer information
+            diagnoses_df : Optional DataFrame containing diagnosis information
+            transfers_df : Optional DataFrame containing transfer information
 
         Returns:
             Filtered DataFrame and a list of applied filters
@@ -155,9 +164,11 @@ class Filtering:
 
         # 3. Admission filters (admissions table)
         if admissions_df is not None:
+
             # Filter by valid admission and discharge times
             if filter_params.get('valid_admission_discharge', False):
                 filtered_df = self.filter_by_valid_admission_discharge(filtered_df, admissions_df)
+
                 if filtered_df.empty:
                     logging.warning("DataFrame is empty after valid admission/discharge filter. Returning empty DataFrame.")
                     return filtered_df, self.applied_filters
@@ -177,13 +188,16 @@ class Filtering:
             # Filter by inpatient stay
             if filter_params.get('inpatient_only', False):
                 filtered_df = self.filter_by_inpatient_stay(filtered_df, admissions_df, transfers_df)
+
                 if filtered_df.empty:
                     logging.warning("DataFrame is empty after inpatient stay filter. Returning empty DataFrame.")
                     return filtered_df, self.applied_filters
 
             # Filter to exclude in-hospital deaths
             if filter_params.get('exclude_death', False):
+
                 filtered_df = self.filter_by_exclude_death(filtered_df, admissions_df)
+
                 if filtered_df.empty:
                     logging.warning("DataFrame is empty after exclude death filter. Returning empty DataFrame.")
                     return filtered_df, self.applied_filters

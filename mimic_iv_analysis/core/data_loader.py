@@ -48,7 +48,7 @@ class DataLoader:
 	def __init__(self):
 		"""Initialize the MIMICDataLoader class."""
 		self.filtering = Filtering()
-
+		self.mimic_path = DEFAULT_MIMIC_PATH
 
 	def _format_size(self, size_mb: float) -> str:
 		"""Format file size into KB, MB, or GB string."""
@@ -126,6 +126,7 @@ class DataLoader:
 				- DataFrame with the loaded data (may be sampled)
 				- Total row count in the original file
 		"""
+
 		try:
 			file_size_mb  = os.path.getsize(file_path) / (1024 * 1024)
 			is_compressed = file_path.endswith('.gz')
@@ -198,11 +199,14 @@ class DataLoader:
 					if len(df) > sample_size:
 						df = df.sample(sample_size, random_state=RANDOM_STATE)
 
-			# Apply filtering if filter_params are provided
-			if filter_params is not None and df is not None:
-				df = self.apply_filters(df, filter_params)
-				# Update total_rows to reflect filtered count
-				total_rows = len(df) if not use_dask else int(df.shape[0].compute() if hasattr(df, 'compute') else df.shape[0])
+			# TODO: This is incorrect. its using apply_filters and load_mimic_table recursively.
+			# # Apply filtering if filter_params are provided
+			# if filter_params is not None and df is not None:
+
+			# 	df = self.apply_filters(mimic_path=mimic_path, df=df, filter_params=filter_params)
+
+			# 	# Update total_rows to reflect filtered count
+			# 	total_rows = len(df) if not use_dask else int(df.shape[0].compute() if hasattr(df, 'compute') else df.shape[0])
 
 			# Convert StringDtype columns to avoid PyArrow conversion issues in Streamlit
 			if df is not None:
@@ -214,7 +218,7 @@ class DataLoader:
 			return None, 0
 
 
-	def apply_filters(self, df: pd.DataFrame, filter_params: Dict[str, Any]) -> pd.DataFrame:
+	def apply_filters(self, df: pd.DataFrame, filter_params: Dict[str, Any], mimic_path: str=None) -> pd.DataFrame:
 		"""
 		Apply filters to the DataFrame based on the provided filter parameters.
 
@@ -228,6 +232,10 @@ class DataLoader:
 		Returns:
 			Filtered DataFrame
 		"""
+
+		if mimic_path is not None:
+			self.mimic_path = mimic_path
+
 		logging.info("Applying filters to DataFrame...")
 
 		# Check if filtering is enabled
@@ -239,15 +247,15 @@ class DataLoader:
 			return df
 
 		# Load necessary related tables if they're not already in the DataFrame
-		patients_df = None
+		patients_df   = None
 		admissions_df = None
-		diagnoses_df = None
-		transfers_df = None
+		diagnoses_df  = None
+		transfers_df  = None
 
 		# Check if we need to load the patients table
 		if filter_params.get('apply_encounter_timeframe', False) or filter_params.get('apply_age_range', False):
 			if 'anchor_year_group' not in df.columns or 'anchor_age' not in df.columns:
-				patients_path = os.path.join(st.session_state.mimic_path, 'hosp', 'patients.csv.gz')
+				patients_path = os.path.join(mimic_path, 'hosp', 'patients.csv.gz')
 				if os.path.exists(patients_path):
 					patients_df, _ = self.load_mimic_table(patients_path, filter_params=None)
 				else:
@@ -259,7 +267,7 @@ class DataLoader:
 		   filter_params.get('exclude_in_hospital_death', False):
 			if 'admittime' not in df.columns or 'dischtime' not in df.columns or \
 			   'admission_type' not in df.columns or 'deathtime' not in df.columns:
-				admissions_path = os.path.join(st.session_state.mimic_path, 'hosp', 'admissions.csv.gz')
+				admissions_path = os.path.join(mimic_path, 'hosp', 'admissions.csv.gz')
 				if os.path.exists(admissions_path):
 					admissions_df, _ = self.load_mimic_table(admissions_path, filter_params=None)
 				else:
@@ -268,7 +276,7 @@ class DataLoader:
 		# Check if we need to load the diagnoses_icd table
 		if filter_params.get('apply_t2dm_diagnosis', False):
 			if 'icd_code' not in df.columns or 'seq_num' not in df.columns:
-				diagnoses_path = os.path.join(st.session_state.mimic_path, 'hosp', 'diagnoses_icd.csv.gz')
+				diagnoses_path = os.path.join(mimic_path, 'hosp', 'diagnoses_icd.csv.gz')
 				if os.path.exists(diagnoses_path):
 					diagnoses_df, _ = self.load_mimic_table(diagnoses_path, filter_params=None)
 				else:
@@ -277,7 +285,7 @@ class DataLoader:
 		# Check if we need to load the transfers table
 		if filter_params.get('apply_inpatient_stay', False) and filter_params.get('require_inpatient_transfer', False):
 			if 'careunit' not in df.columns:
-				transfers_path = os.path.join(st.session_state.mimic_path, 'hosp', 'transfers.csv.gz')
+				transfers_path = os.path.join(mimic_path, 'hosp', 'transfers.csv.gz')
 				if os.path.exists(transfers_path):
 					transfers_df, _ = self.load_mimic_table(transfers_path, filter_params=None)
 				else:
@@ -285,12 +293,12 @@ class DataLoader:
 
 		# Apply filters using the Filtering class
 		filtered_df = self.filtering.apply_filters(
-			df=df,
-			filter_params=filter_params,
-			patients_df=patients_df,
-			admissions_df=admissions_df,
-			diagnoses_df=diagnoses_df,
-			transfers_df=transfers_df
+			df            = df,
+			filter_params = filter_params,
+			patients_df   = patients_df,
+			admissions_df = admissions_df,
+			diagnoses_df  = diagnoses_df,
+			transfers_df  = transfers_df
 		)
 
 		return filtered_df
@@ -525,11 +533,28 @@ class DataLoader:
 		args = { 'encoding': encoding, 'compression': 'gzip' if table_path.endswith('.gz') else None }
 
 		if use_dask:
+			# More robust Dask dtype handling, similar to load_mimic_table
+			dask_read_params = args.copy()
+			dask_read_params['low_memory'] = False
 
-			# For Dask: Load the table with blocksize=None to avoid warnings
-			logging.info(f"Loading {table_name} with Dask (blocksize=None)...")
+			try:
+				# Attempt 1: Infer datetime columns and set to object
+				sample_df = pd.read_csv(table_path, nrows=5, **dask_read_params)
+				datetime_cols = [col for col in sample_df.columns if 'time' in col.lower() or 'date' in col.lower()]
+				dtype_dict = {col: 'object' for col in datetime_cols}
 
-			df = dd.read_csv(table_path, blocksize=None, **args)
+				current_dask_read_params = dask_read_params.copy()
+				current_dask_read_params['dtype'] = dtype_dict
+
+				logging.info(f"Loading {table_name} with Dask, attempting dtypes: {dtype_dict} based on column names.")
+				df = dd.read_csv(table_path, blocksize=None, **current_dask_read_params)
+
+			except Exception as e:
+				logging.warning(f"Dask dtype specification based on column names failed for {table_name}: {str(e)}. Falling back to all object dtypes for Dask reading.")
+				# Attempt 2: Fallback to all object dtypes
+				fallback_dask_read_params = dask_read_params.copy()
+				fallback_dask_read_params['dtype'] = 'object'
+				df = dd.read_csv(table_path, blocksize=None, **fallback_dask_read_params)
 
 			# Check if filter column exists
 			if filter_column not in df.columns:
@@ -646,7 +671,12 @@ class DataLoader:
 		tables = self._get_individual_tables(mimic_path=mimic_path, sample_size=sample_size, encoding=encoding, use_dask=use_dask)
 
 		# If merged view is requested, create a comprehensive merged dataframe
-		merged_df = self.create_merged_view(tables)
+		merged_df = pd.DataFrame()
+		if merged_view:
+			logging.info("Merged view requested by caller, creating comprehensive merged dataframe...")
+			merged_df = self.create_merged_view(tables)
+		else:
+			logging.info("Merged view not requested by caller.")
 
 		return tables, merged_df
 
@@ -659,7 +689,12 @@ class DataLoader:
 		args = { 'mimic_path': mimic_path, 'encoding': encoding, 'use_dask': use_dask }
 
 		# Step 1: Load reference table d_icd_diagnoses (always load in full)
-		tables['d_icd_diagnoses'] = self.load_reference_table( **args )
+		tables['d_icd_diagnoses'] = self.load_reference_table(
+			mimic_path=mimic_path,
+			module='hosp',
+			table_name='d_icd_diagnoses',
+			encoding=encoding
+		)
 
 		if tables['d_icd_diagnoses'].empty:
 			return {}  # Cannot proceed without reference table
@@ -719,7 +754,7 @@ class DataLoader:
 		return tables
 
 
-	def create_merged_view(self, tables, merged_view: bool = False) -> pd.DataFrame:
+	def create_merged_view(self, tables: Dict[str, pd.DataFrame]) -> pd.DataFrame:
 		"""
 		Creates a comprehensive merged view of connected MIMIC-IV tables.
 
@@ -727,11 +762,8 @@ class DataLoader:
 			tables: Dictionary containing loaded MIMIC-IV tables
 
 		Returns:
-			Tuple of (original tables dict, merged dataframe)
+			Merged DataFrame
 		"""
-
-		if not merged_view:
-			return pd.DataFrame()
 
 		logging.info("Creating merged view of connected tables...")
 

@@ -71,6 +71,7 @@ Several identifiers are used to link tables across the database:
 ## File Format
 
 Each table is available in both:
+
 - `.csv` format (raw CSV)
 - `.csv.gz` format (compressed CSV)
 
@@ -83,7 +84,8 @@ Each table is available in both:
 
 ## Example Queries
 
-### Getting admission information for a patient:
+### Getting admission information for a patient
+
 ```sql
 SELECT *
 FROM hosp.admissions
@@ -91,7 +93,8 @@ WHERE subject_id = 10000032
 ORDER BY admittime;
 ```
 
-### Getting ICU stays for a specific hospital admission:
+### Getting ICU stays for a specific hospital admission
+
 ```sql
 SELECT *
 FROM icu.icustays
