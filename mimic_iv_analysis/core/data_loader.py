@@ -10,34 +10,46 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import dask.dataframe as dd
+from tqdm import tqdm
+from pathlib import Path
+from functools import cached_property
 
 
-# TODO: I shoudl create a jupyter notebook, and load the tables there, and do the merging manually, make sure it wokrs. then update this code accordingly (update it manually)
+# TODO: I should create a jupyter notebook, and load the tables there, and do the merging manually, make sure it wokrs. then update this code accordingly (update it manually)
 
 # Import filtering functionality
 from mimic_iv_analysis.core.filtering import Filtering
 
 # Utility functions
 def convert_string_dtypes(df):
-    """Convert pandas StringDtype to object type to avoid Arrow conversion issues in Streamlit.
+	"""Convert pandas StringDtype to object type to avoid Arrow conversion issues in Streamlit.
 
-    Args:
-        df: Input DataFrame (pandas or Dask)
+	Args:
+		df: Input DataFrame (pandas or Dask)
 
-    Returns:
-        DataFrame with StringDtype columns converted to object type
-    """
-    if hasattr(df, 'compute'):
-        # For Dask DataFrame, we need to compute it first
-        return df
-    else:
-        # For pandas DataFrame
-        for col in df.columns:
-            if hasattr(df[col], 'dtype') and str(df[col].dtype) == 'string':
-                df[col] = df[col].astype('object')
-        return df
+	Returns:
+		DataFrame with StringDtype columns converted to object type
+	"""
+	if df is None:
+		return df
+
+	if hasattr(df, 'compute'):
+		# For Dask DataFrame, apply the conversion without computing
+		string_cols = [col for col in df.columns if str(df[col].dtype) == 'string']
+		if string_cols:
+			return df.map_partitions(lambda partition:
+				partition.assign(**{col: partition[col].astype('object') for col in string_cols})
+			)
+		return df
+
+	# For pandas DataFrame
+	for col in df.columns:
+		if hasattr(df[col], 'dtype') and str(df[col].dtype) == 'string':
+			df[col] = df[col].astype('object')
+	return df
+
 # Constants
-DEFAULT_MIMIC_PATH    = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1"
+DEFAULT_MIMIC_PATH    = Path("/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1")
 LARGE_FILE_THRESHOLD_MB = 100
 DEFAULT_SAMPLE_SIZE     = 1000
 RANDOM_STATE            = 42
@@ -51,141 +63,393 @@ class DataLoader:
 
 	def __init__(self):
 		"""Initialize the MIMICDataLoader class."""
-		self.filtering = Filtering()
-		self.mimic_path = DEFAULT_MIMIC_PATH
-		self._all_subject_ids: Optional[List[Any]] = None
-		self._patients_file_path: Optional[str] = None
-		self._data_scan_complete: bool = False # To ensure scan runs before accessing patients_file_path
-
-	def _format_size(self, size_mb: float) -> str:
-		"""Format file size into KB, MB, or GB string."""
-		if size_mb < 0.001:
-			return "(< 1 KB)"
-		elif size_mb < 1:
-			return f"({size_mb * 1024:.1f} KB)"
-		elif size_mb < 1000:
-			return f"({size_mb:.1f} MB)"
-		else:
-			return f"({size_mb / 1000:.1f} GB)"
+		self.filtering           = Filtering()
+		self.mimic_path          : Path                   = DEFAULT_MIMIC_PATH
+		self._subject_ids_list    : List[str]              = []
+		self._patients_file_path : Optional[str]          = None
+		self.dataset_info_df     : Optional[pd.DataFrame] = None
 
 
-	def scan_mimic_directory(self, mimic_path: str) -> Tuple[Dict, Dict, Dict, Dict]:
-		"""Scans the MIMIC-IV directory structure and returns table info."""
-		available_tables    = {}
-		file_paths          = {}
-		file_sizes          = {}
-		table_display_names = {}
+	def scan_mimic_directory(self) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+		"""Scans the MIMIC-IV directory structure and returns a DataFrame with table info.
 
-		if not os.path.exists(mimic_path):
-			return available_tables, file_paths, file_sizes, table_display_names
+		Returns:
+			pd.DataFrame: DataFrame containing columns:
+				- module      : The module name (hosp/icu)
+				- table_name  : Name of the table
+				- file_path   : Full path to the file
+				- file_size_mb: Size of file in MB
+				- display_name: Formatted display name with size
+		"""
 
+		def _get_list_of_available_tables(module_path: Path) -> Dict[str, Path]:
+			"""Lists unique table files from a module path."""
+
+			POSSIBLE_FILE_TYPES = ['.parquet', '.csv', '.csv.gz']
+
+			def _get_all_files() -> List[str]:
+
+				filenames = []
+				for suffix in POSSIBLE_FILE_TYPES:
+
+					tables_path_list = glob.glob(os.path.join(module_path, f'*{suffix}'))
+					if not tables_path_list:
+						continue
+
+					filenames.extend([os.path.basename(table_path).replace(suffix, '') for table_path in tables_path_list])
+
+				return list(set(filenames))
+
+			def _get_priority_file(table_name: str) -> Optional[Path]:
+
+				# First priority is parquet
+				if (module_path / f'{table_name}.parquet').exists():
+					return module_path / f'{table_name}.parquet'
+
+				# Second priority is csv
+				if (module_path / f'{table_name}.csv').exists():
+					return module_path / f'{table_name}.csv'
+
+				# Third priority is csv.gz
+				if (module_path / f'{table_name}.csv.gz').exists():
+					return module_path / f'{table_name}.csv.gz'
+
+				# If none exist, return None
+				return None
+
+			filenames = _get_all_files()
+
+			return {table_name: _get_priority_file(table_name) for table_name in filenames}
+
+
+		def _get_available_tables_info(available_tables_dict: Dict[str, Path], module: str):
+			"""Extracts table information from a dictionary of table files."""
+
+			def _format_size(size_mb: float) -> str:
+				if size_mb < 1e-3:
+					return "(< 1 KB)"
+				if size_mb < 1:
+					return f"({size_mb * 1024:.1f} KB)"
+				if size_mb < 1000:
+					return f"({size_mb:.1f} MB)"
+				return f"({size_mb / 1000:.1f} GB)"
+
+			nonlocal dataset_info
+
+			dataset_info['available_tables'][module] = []
+
+			# Iterate through all tables in the module
+			for table_name, file_path in available_tables_dict.items():
+
+				if file_path is None or not file_path.exists():
+					continue
+
+				# Add to available tables
+				dataset_info['available_tables'][module].append(table_name)
+
+				# Store file path
+				dataset_info['file_paths'][(module, table_name)] = file_path
+
+				try:
+					file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+
+				except OSError as e:
+					logging.warning(f"Error getting file size for {file_path}: {e}")
+					file_size_mb = 0
+
+				# Store file size
+				dataset_info['file_sizes'][(module, table_name)] = file_size_mb
+
+				# Format size string
+				size_str = _format_size(file_size_mb)
+
+				# Store display name
+				dataset_info['table_display_names'][(module, table_name)] = f"{table_name} {size_str}"
+
+				# Store file suffix
+				suffix = file_path.suffix
+				dataset_info['file_suffix'][(module, table_name)] = 'csv.gz' if suffix == '.gz' else suffix
+
+		def _get_info_as_dataframe() -> pd.DataFrame:
+
+			table_info = []
+			for module in dataset_info['available_tables']:
+				for table_name in dataset_info['available_tables'][module]:
+
+					file_path = dataset_info['file_paths'][(module, table_name)]
+
+					table_info.append({
+						'module'      : module,
+						'table_name'  : table_name,
+						'file_path'   : file_path,
+						'file_size_mb': dataset_info['file_sizes'][(module, table_name)],
+						'display_name': dataset_info['table_display_names'][(module, table_name)],
+						'suffix'      : dataset_info['file_suffix'][(module, table_name)]
+					})
+
+			# Convert to DataFrame
+			dataset_info_df = pd.DataFrame(table_info)
+
+			# Add mimic path as an attribute
+			dataset_info_df.attrs['mimic_path'] = self.mimic_path
+
+			return dataset_info_df
+
+		# Initialize dataset info
+		dataset_info = {
+			'available_tables'   : {},
+			'file_paths'         : {},
+			'file_sizes'         : {},
+			'table_display_names': {},
+			'file_suffix'        : {},
+		}
+
+		# If the mimic path does not exist, return an empty DataFrame
+		if not self.mimic_path.exists():
+			return pd.DataFrame(columns=['module', 'table_name', 'file_path', 'file_size_mb', 'display_name'])
+
+		# Iterate through modules
 		modules = ['hosp', 'icu']
 		for module in modules:
-			module_path = os.path.join(mimic_path, module)
-			if os.path.exists(module_path):
-				available_tables[module] = []
-				current_module_tables = {}
 
-				csv_files = glob.glob(os.path.join(module_path, '*.csv'))
-				csv_gz_files = glob.glob(os.path.join(module_path, '*.csv.gz'))
+			# Get module path
+			module_path: Path = self.mimic_path / module
 
-				all_files = csv_files + csv_gz_files
+			# if the module does not exist, skip it
+			if not module_path.exists():
+				continue
 
-				for file_path in all_files:
-					is_gz = file_path.endswith('.csv.gz')
-					table_name = os.path.basename(file_path).replace('.csv.gz' if is_gz else '.csv', '')
+			# Get available tables:
+			available_tables_dict = _get_list_of_available_tables(module_path)
+			# df = pd.DataFrame(available_tables_dict, index=['path']).T.reset_index().rename(columns={'index':'name'})
 
-					if table_name in current_module_tables and not is_gz:
-						current_module_tables[table_name] = file_path
+			# If no tables found, skip this module
+			if not available_tables_dict:
+				continue
 
-					elif table_name not in current_module_tables:
-						current_module_tables[table_name] = file_path
+			# Get available tables info
+			_get_available_tables_info(available_tables_dict, module)
 
-				for table_name, file_path in current_module_tables.items():
-					available_tables[module].append(table_name)
-					file_paths[(module, table_name)] = file_path
-					try:
-						file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-						# Store patients file path if found
-						if module == PATIENTS_TABLE_MODULE and table_name == PATIENTS_TABLE_NAME:
-							self._patients_file_path = file_path
-					except OSError:
-						file_size_mb = 0
+		# Convert to DataFrame
+		self.dataset_info_df = _get_info_as_dataframe()
 
-					file_sizes[(module, table_name)] = file_size_mb
-					size_str = self._format_size(file_size_mb)
-					table_display_names[(module, table_name)] = f"{table_name} {size_str}"
-
-				available_tables[module].sort()
-		self._data_scan_complete = True
-		return available_tables, file_paths, file_sizes, table_display_names
+		return self.dataset_info_df, dataset_info
 
 
-	def _get_all_subject_ids(self) -> List[Any]:
-		"""Loads patients.csv and returns a list of unique subject_ids."""
-		if self._all_subject_ids is not None:
-			return self._all_subject_ids
+	def load_table_full(self, file_path: Path) -> pd.DataFrame:
 
-		if not self._data_scan_complete:
-			logging.warning("MIMIC directory scan has not been performed. Cannot load subject IDs.")
-			logging.warning("Call scan_mimic_directory() first, likely automatically done by app initialization.")
-			self._all_subject_ids = [] # Ensure it's an empty list, not None
-			return self._all_subject_ids
+		# The parquet files are already saved with the correct datatypes
+		if file_path.suffix == '.parquet':
+			return dd.read_parquet(file_path)
 
-		if not self._patients_file_path or not os.path.exists(self._patients_file_path):
-			logging.warning(f"'{PATIENTS_TABLE_NAME}.csv' or '.csv.gz' not found during scan or path is invalid.")
-			self._all_subject_ids = []
-			return self._all_subject_ids
+		return self._load_table_with_correct_column_datatypes(file_path)
+
+
+	def _load_table_with_correct_column_datatypes(self, file_path: Path):
+
+		dtypes_all = {
+			'discontinued_by_poe_id': 'object',
+			'long_description'      : 'string',
+			'icd_code'              : 'string',
+			'drg_type'              : 'category',
+			'enter_provider_id'     : 'string',
+			'hadm_id'               : 'int',
+			'icustay_id'            : 'int',
+			'leave_provider_id'     : 'string',
+			'poe_id'                : 'string',
+			'emar_id'               : 'string',
+			'subject_id'            : 'int64',
+			'pharmacy_id'           : 'string',
+			'interpretation'        : 'object',
+			'org_name'              : 'object',
+			'quantity'              : 'object',
+			'infusion_type'         : 'object',
+			'sliding_scale'         : 'object',
+			'fill_quantity'         : 'object',
+			'expiration_unit'       : 'category',
+			'duration_interval'     : 'category',
+			'dispensation'          : 'category',
+			'expirationdate'        : 'object',
+			'one_hr_max'            : 'object',
+			'infusion_type'         : 'object',
+			'sliding_scale'         : 'object',
+			'lockout_interval'      : 'object',
+			'basal_rate'            : 'object',
+			'form_unit_disp'        : 'category',
+			'route'                 : 'category',
+			'dose_unit_rx'          : 'category',
+			'drug_type'             : 'category',
+			'form_rx'               : 'object',
+			'form_val_disp'         : 'object',
+			'gsn'                   : 'object',
+			'dose_val_rx'           : 'object',
+			'prev_service'          : 'object',
+			'curr_service'          : 'category'}
+
+		parse_dates_all = [
+					'admittime',
+					'dischtime',
+					'deathtime',
+					'edregtime',
+					'edouttime',
+					'charttime',
+					'scheduletime',
+					'storetime',
+					'storedate']
+
+
+		# Check if file exists
+		if not os.path.exists(file_path):
+			raise FileNotFoundError(f"CSV file not found: {file_path}")
+
+		# First read a small sample to get column names without type conversion
+		sample_df = pd.read_csv(file_path, nrows=5)
+		columns   = sample_df.columns.tolist()
+
+		# Filter dtypes and parse_dates to only include existing columns
+		dtypes      = {col: dtype for col, dtype in dtypes_all.items() if col in columns}
+		parse_dates = [col for col in parse_dates_all if col in columns]
+
+		# Now read with dask using correct types
+		df = dd.read_csv(
+			urlpath        = file_path,
+			dtype          = dtypes,
+			parse_dates    = parse_dates if parse_dates else None,
+			assume_missing = True,
+			blocksize      = None if file_path.suffix == '.gz' else '200MB'
+		)
+
+		return df
+
+
+	def save_all_tables_as_parquet(self, tables_list: Optional[List[str]] = None):
+		""" Checks if parquet versions exist and creates them if needed. """
+
+		if self.dataset_info_df is None:
+			self.dataset_info_df , _ = self.scan_mimic_directory()
+
+
+		if tables_list is not None:
+			dataset_info_df = self.dataset_info_df[self.dataset_info_df.table_name.isin(tables_list)]
+		else:
+			dataset_info_df = self.dataset_info_df
+
+
+		for i in tqdm(range(len(dataset_info_df)), desc="Saving tables as parquet"):
+
+			row        = dataset_info_df.iloc[i]
+			table_name = row.table_name
+			file_path  = row.file_path
+
+			if (tables_list is not None) and (table_name not in tables_list):
+				continue
+
+			tqdm.write(f"Processing {table_name}")
+			self.save_as_parquet(source_csv_path=file_path)
+
+
+	def save_as_parquet(self, source_csv_path: Path, df: Optional[pd.DataFrame]=None, target_parquet_path: Optional[Path]=None):
+		""" Saves a DataFrame as a Parquet file in the parquet_files directory. """
+
+		def _fix_source_csv_path() -> Path:
+			""" Fixes the source csv path if it is a parquet file. """
+
+			if source_csv_path.name.endswith('.parquet'):
+
+				csv_dir = source_csv_path.parent / source_csv_path.name.replace('.parquet', '.csv')
+				gz_dir  = source_csv_path.parent / source_csv_path.name.replace('.parquet', '.csv.gz')
+
+				if csv_dir.exists():
+					return csv_dir
+
+				if gz_dir.exists():
+					return gz_dir
+
+				else:
+					raise ValueError(f"Cannot find csv or csv.gz file for {source_csv_path}")
+
+			return source_csv_path
+
 
 		try:
-			logging.info(f"Loading '{PATIENTS_TABLE_NAME}' from {self._patients_file_path} to extract subject IDs...")
-			# Directly load patients.csv as it's small, only subject_id column needed.
-			compression = 'gzip' if self._patients_file_path.endswith('.gz') else None
-			patients_df = pd.read_csv(
-				self._patients_file_path,
-				usecols=[SUBJECT_ID_COL],
-				compression=compression,
-				encoding='latin-1' # Assuming consistent encoding
-			)
-			if SUBJECT_ID_COL not in patients_df.columns:
-				logging.error(f"'{SUBJECT_ID_COL}' column not found in {self._patients_file_path}.")
-				self._all_subject_ids = []
-			else:
-				self._all_subject_ids = patients_df[SUBJECT_ID_COL].unique().tolist()
-				logging.info(f"Found {len(self._all_subject_ids)} unique subject IDs.")
+
+			if df is None:
+
+				source_csv_path = _fix_source_csv_path()
+
+				# Load table
+				df = self._load_table_with_correct_column_datatypes(file_path=source_csv_path)
+
+			# Get parquet directory
+			if target_parquet_path is None:
+				suffix = '.csv.gz' if source_csv_path.name.endswith('.gz') else '.csv'
+				target_parquet_path = source_csv_path.parent / source_csv_path.name.replace(suffix, '.parquet')
+
+			# Save to parquet
+			df.to_parquet(target_parquet_path, engine='pyarrow')
+
 		except Exception as e:
-			logging.error(f"Error loading subject IDs from {self._patients_file_path}: {e}")
-			traceback.print_exc()
-			self._all_subject_ids = []
+			logging.error(f"Failed to save {source_csv_path} to parquet: {str(e)}")
 
-		return self._all_subject_ids
 
-	def get_total_unique_subjects(self) -> int:
-		"""Returns the total number of unique subject_ids found in patients.csv."""
-		self._get_all_subject_ids() # Ensures subject IDs are loaded if not already
-		return len(self._all_subject_ids) if self._all_subject_ids is not None else 0
+	@cached_property
+	def subject_ids_list(self) -> List[Any]:
+		""" Returns a list of unique subject_ids found in patients.csv. """
 
-	def get_subject_ids_for_sampling(self, num_subjects: Optional[int]) -> Optional[List[Any]]:
+		# Load subject IDs if not already loaded or if the list is empty
+		if not self._subject_ids_list:
+			self._update_subject_ids_list()
+
+		return self._subject_ids_list
+
+
+	def _update_subject_ids_list(self):
+		logging.info("Loading subject IDs from patients table (this will be cached)")
+
+		if self.dataset_info_df is None:
+			self.dataset_info_df , _ = self.scan_mimic_directory()
+
+		patients_df_file_path = Path(self.dataset_info_df[
+			(self.dataset_info_df.module == PATIENTS_TABLE_MODULE) &
+			(self.dataset_info_df.table_name == PATIENTS_TABLE_NAME)
+		].file_path.values[0])
+
+
+		if not patients_df_file_path.exists():
+			logging.warning(f"patients.csv not found at {patients_df_file_path}. Cannot load subject IDs.")
+			self._subject_ids_list = []
+
+		# Load patients table
+		patients_df = self.load_table_full(file_path=patients_df_file_path)
+
+		# Get subject IDs
+		self._subject_ids_list = patients_df[SUBJECT_ID_COL].unique().compute().tolist()
+
+
+	def get_sampled_subject_ids_list(self, num_subjects: int = 100, random_selection: bool = False) -> List[Any]:
 		"""Returns a list of subject_ids for sampling.
 
 		Args:
-			num_subjects: The number of subject_ids to return from the top of the list.
-						  If None or 0, returns None (indicating no specific subject sampling).
-
-		Returns:
-			A list of subject_ids, or None.
+			num_subjects: 	The number of subject_ids to return from the top of the list.
+							If None or 0, returns None (indicating no specific subject sampling).
 		"""
-		self._get_all_subject_ids() # Ensures subject IDs are loaded
-		if self._all_subject_ids is None or not self._all_subject_ids:
-			return None
-		if num_subjects is None or num_subjects <= 0:
-			# Consider if returning all subjects (self._all_subject_ids[:]) is better here
-			# For now, None means no specific subject-based sampling requested through this path.
-			return None
-		return self._all_subject_ids[:num_subjects]
+		if not self.subject_ids_list or num_subjects <= 0:
+			return []
+
+		if random_selection:
+			return random.sample(self.subject_ids_list, num_subjects)
+
+		return self.subject_ids_list[:num_subjects]
 
 
-	def load_mimic_table(self, file_path: str, sample_size: int = DEFAULT_SAMPLE_SIZE, encoding: str = 'latin-1', use_dask: bool = False, max_chunks: Optional[int] = None, target_subject_ids: Optional[List[Any]] = None) -> Tuple[Optional[Union[pd.DataFrame, dd.DataFrame]], int]:
+	def load_mimic_table(self,
+							file_path         : Path,
+							sample_size       : int = DEFAULT_SAMPLE_SIZE,
+							encoding          : str = 'latin-1',
+							use_dask          : bool = False,
+							max_chunks        : Optional[int] = None,
+							target_subject_ids: Optional[List[Any]] = 'subject_id'
+						) -> Tuple[Optional[Union[pd.DataFrame, dd.DataFrame]], int]:
 		"""Loads a specific MIMIC-IV table, handling large files and sampling.
 
 		Args:
@@ -202,67 +466,104 @@ class DataLoader:
 				- Total row count (can be estimate or count after filtering, context dependent)
 		"""
 
-		try:
-			file_size_mb  = os.path.getsize(file_path) / (1024 * 1024)
-			is_compressed = file_path.endswith('.gz')
-			compression   = 'gzip' if is_compressed else None
-			read_params   = { 'encoding': encoding, 'compression': compression, 'low_memory': False }
-			# Attempt to get header to check for SUBJECT_ID_COL before full load for filtering decisions
+		def _has_subject_id_col():
+			"""Attempts to check if the file has the SUBJECT_ID_COL without loading the entire file."""
 			try:
 				header_df = pd.read_csv(file_path, nrows=0, **read_params)
-				has_subject_id_col = SUBJECT_ID_COL in header_df.columns
+				return SUBJECT_ID_COL in header_df.columns
+
 			except Exception as e:
 				logging.warning(f"Could not read header for {os.path.basename(file_path)}: {e}. Assuming no '{SUBJECT_ID_COL}'.")
-				has_subject_id_col = False
+				return False
 
-			# Primary filtering logic: If target_subject_ids are provided and the file is large and has subject_id
-			if target_subject_ids and has_subject_id_col and file_size_mb > LARGE_FILE_THRESHOLD_MB:
-				logging.info(f"Attempting to load by {len(target_subject_ids)} subject_ids for large file: {os.path.basename(file_path)}")
-				if use_dask:
-					logging.info(f"Using Dask to filter by subject_id for {os.path.basename(file_path)}.")
-					try:
-						# Define dtypes for known columns to help Dask if possible
-						# This part might need to be more dynamic or passed in if we want to optimize for all tables
-						dtypes_for_dask = {SUBJECT_ID_COL: 'Int64'} # Example, might need more
-						# For very large files, only load subject_id and other essential columns if specified elsewhere
-						# For now, loads all columns then filters.
+
+		def _load_large_table():
+
+			def load_with_dask():
+				"""Loads a large file by filtering by subject_ids using Dask."""
+
+				logging.info(f"Using Dask to filter by subject_id for {os.path.basename(file_path)}.")
+				try:
+					# Define dtypes for known columns to help Dask if possible
+					# This part might need to be more dynamic or passed in if we want to optimize for all tables
+					dtypes_for_dask = {SUBJECT_ID_COL: 'Int64', 'expirationdate': 'datetime64[ns]'} # Example, might need more
+
+					# For very large files, only load subject_id and other essential columns if specified elsewhere
+					# For now, loads all columns then filters.
+					if file_path.suffix == '.parquet':
+						ddf = dd.read_parquet(file_path)
+					else:
 						ddf = dd.read_csv(file_path, dtype=dtypes_for_dask, **read_params)
-						filtered_ddf = ddf[ddf[SUBJECT_ID_COL].isin(target_subject_ids)]
-						df_result = filtered_ddf.compute()
-						total_rows_loaded = len(df_result)
-						logging.info(f"Loaded {total_rows_loaded} rows for {len(target_subject_ids)} subjects from {os.path.basename(file_path)} using Dask.")
-						return convert_string_dtypes(df_result), total_rows_loaded
-					except Exception as e:
-						logging.error(f"Dask filtering by subject_id failed for {os.path.basename(file_path)}: {e}. Falling back.")
-						traceback.print_exc()
+
+					# Filter by target_subject_ids
+					filtered_ddf = ddf[ddf[SUBJECT_ID_COL].isin(target_subject_ids)]
+
+					# Convert Dask DataFrame to pandas DataFrame
+					df_result = filtered_ddf.compute()
+
+					# Calculate total rows loaded
+					total_rows_loaded = len(df_result)
+
+					# Log the result
+					logging.info(f"Loaded {total_rows_loaded} rows for {len(target_subject_ids)} subjects from {os.path.basename(file_path)} using Dask.")
+					return convert_string_dtypes(df_result), total_rows_loaded
+
+				except Exception as e:
+					logging.error(f"Dask filtering by subject_id failed for {os.path.basename(file_path)}: {e}. Falling back.")
+					traceback.print_exc()
 					# Fallback if Dask direct filter fails; will go to standard Dask load or pandas load below
 
-				else: # Pandas chunked reading for large files with target_subject_ids
-					logging.info(f"Using Pandas chunking to filter by subject_id for {os.path.basename(file_path)}.")
-					chunks_for_target_ids = []
-					total_rows_in_file_estimate = 0 # We can't easily get total rows without reading all
-					processed_chunks = 0
-					with pd.read_csv(file_path, chunksize=100000, **read_params) as reader:
-						for chunk in reader:
-							processed_chunks += 1
-							filtered_chunk = chunk[chunk[SUBJECT_ID_COL].isin(target_subject_ids)]
-							if not filtered_chunk.empty:
-								chunks_for_target_ids.append(filtered_chunk)
-							if max_chunks is not None and max_chunks != -1 and processed_chunks >= max_chunks:
-								logging.info(f"Reached max_chunks ({max_chunks}) during subject_id filtering for {os.path.basename(file_path)}.")
-								break
+			def _load_with_pandas_chunking():
+				"""Loads a large file by filtering by subject_ids using pandas chunking."""
+
+				logging.info(f"Using Pandas chunking to filter by subject_id for {os.path.basename(file_path)}.")
+
+				chunks_for_target_ids = []
+				processed_chunks      = 0
+
+				# Read the file in chunks
+				with pd.read_csv(file_path, chunksize=100000, **read_params) as reader:
+
+					# Iterate through chunks
+					for chunk in reader:
+
+						# Increment processed chunks counter
+						processed_chunks += 1
+
+						# Filter chunk by target_subject_ids
+						filtered_chunk = chunk[chunk[SUBJECT_ID_COL].isin(target_subject_ids)]
+
+						# Add to chunks if not empty
+						if not filtered_chunk.empty:
+							chunks_for_target_ids.append(filtered_chunk)
+
+						# Check if we've reached max chunks
+						if max_chunks is not None and max_chunks != -1 and processed_chunks >= max_chunks:
+							logging.info(f"Reached max_chunks ({max_chunks}) during subject_id filtering for {os.path.basename(file_path)}.")
+							break
+
+					# Combine filtered chunks into final DataFrame
 					if chunks_for_target_ids:
 						df_result = pd.concat(chunks_for_target_ids, ignore_index=True)
 					else:
 						df_result = pd.DataFrame(columns=header_df.columns) # Empty df with correct columns
+
+					# Calculate total rows loaded
 					total_rows_loaded = len(df_result)
+
+					# Log the result
 					logging.info(f"Loaded {total_rows_loaded} rows for {len(target_subject_ids)} subjects from {os.path.basename(file_path)} using Pandas chunking.")
-					return convert_string_dtypes(df_result), total_rows_loaded
 
-			# --- Standard loading logic (if not filtered by subject_ids for large files or if it's a small file) ---
-			logging.info(f"Proceeding with standard load for {os.path.basename(file_path)} (use_dask={use_dask}, sample_size={sample_size}).")
+				return convert_string_dtypes(df_result), total_rows_loaded
 
-			if use_dask:
+			logging.info(f"Attempting to load {len(target_subject_ids)} subject_ids for large file: {os.path.basename(file_path)}")
+
+			return load_with_dask() if use_dask else _load_with_pandas_chunking()
+
+
+		def _load_table_normal_logic():
+
+			def _load_with_dask():
 				# Using Dask for large file processing (or if explicitly requested)
 				try:
 					# First attempt to detect datetime columns by reading a small sample with pandas
@@ -316,21 +617,35 @@ class DataLoader:
 					df = dask_df.compute()
 					if target_subject_ids and has_subject_id_col and SUBJECT_ID_COL in df.columns: # Apply subject filter if small file
 						df = df[df[SUBJECT_ID_COL].isin(target_subject_ids)]
-			else:
+
+					return convert_string_dtypes(df), total_rows
+
+			def _load_with_pandas():
 				# Traditional pandas approach
 				# Get total row count without loading entire file
-				total_rows = 0
-				chunks = []
-				chunk_count = 0
+				total_rows           = 0
+				chunks               = []
+				chunk_count          = 0
 				total_rows_processed = 0
+
+				# Load chunks
 				with pd.read_csv(file_path, chunksize=100000, **read_params) as reader: # chunksize can be tuned
+
+					# Iterate through chunks
 					for chunk in reader:
 						chunks.append(chunk)
 						chunk_count += 1
 						total_rows_processed += len(chunk)
+
+						# Log progress
+						logging.info(f"Processed chunk {chunk_count} for {os.path.basename(file_path)}. Total rows processed: {total_rows_processed}")
+
+						# Check if we've reached max chunks
 						if max_chunks is not None and max_chunks != -1 and chunk_count >= max_chunks:
 							logging.info(f"Reached max_chunks ({max_chunks}) for {os.path.basename(file_path)}. Processed {chunk_count} chunks.")
 							break
+
+				# Calculate total rows
 				total_rows = total_rows_processed
 
 				# Load actual data (with sampling if needed)
@@ -338,18 +653,44 @@ class DataLoader:
 					df = pd.read_csv(file_path, nrows=sample_size, **read_params)
 				else:
 					df = pd.concat(chunks, ignore_index=True)
-					# Apply subject_id filtering if it's a small file or fallback
-					if target_subject_ids and has_subject_id_col and SUBJECT_ID_COL in df.columns:
-						df = df[df[SUBJECT_ID_COL].isin(target_subject_ids)]
-					# Apply sampling only if sample_size is specified and df is larger
-					if sample_size is not None and len(df) > sample_size:
-						df = df.sample(sample_size, random_state=RANDOM_STATE)
 
-			# Convert StringDtype columns to avoid PyArrow conversion issues in Streamlit
-			if df is not None:
-				df = convert_string_dtypes(df)
+				# Apply subject_id filtering if it's a small file or fallback
+				if target_subject_ids and has_subject_id_col and SUBJECT_ID_COL in df.columns:
+					df = df[df[SUBJECT_ID_COL].isin(target_subject_ids)]
+
+				# Apply sampling only if sample_size is specified and df is larger
+				if sample_size is not None and len(df) > sample_size:
+					df = df.sample(sample_size, random_state=RANDOM_STATE)
+
+				return convert_string_dtypes(df), total_rows
+
+			logging.info(f"Proceeding with standard load for {os.path.basename(file_path)} (use_dask={use_dask}, sample_size={sample_size}).")
+
+			df, total_rows = _load_with_dask() if use_dask else _load_with_pandas()
 
 			return df, total_rows
+
+
+		try:
+			logging.info(f"Loading data from {os.path.basename(file_path)}...")
+
+			file_size_mb  = os.path.getsize(file_path) / (1024 * 1024)
+			is_compressed = file_path.endswith('.gz')
+			compression   = 'gzip' if is_compressed else None
+			read_params   = { 'encoding': encoding, 'compression': compression, 'low_memory': False }
+
+			# Check if the file has the SUBJECT_ID_COL
+			has_subject_id_col = _has_subject_id_col()
+
+
+			# Primary filtering logic: If target_subject_ids are provided and the file is large and has subject_id
+			if target_subject_ids and has_subject_id_col and file_size_mb > LARGE_FILE_THRESHOLD_MB:
+				return _load_large_table()
+
+			# Standard loading logic (if not filtered by subject_ids for large files or if it's a small file)
+			return _load_table_normal_logic()
+
+
 		except Exception as e:
 			logging.error(f"Error loading data from {os.path.basename(file_path)}: {str(e)}")
 			return None, 0
@@ -465,74 +806,42 @@ class DataLoader:
 		return filtered_df
 
 
-	def get_table_info(self, module: str, table_name: str) -> str:
+	def get_table_description(self, module: str, table_name: str) -> str:
 		"""Get descriptive information about a specific MIMIC-IV table."""
 		table_info = {
-			('hosp', 'admissions'): "Patient hospital admissions information",
-			('hosp', 'patients'): "Patient demographic data",
-			('hosp', 'labevents'): "Laboratory measurements (large file)",
+			('hosp', 'admissions')        : "Patient hospital admissions information",
+			('hosp', 'patients')          : "Patient demographic data",
+			('hosp', 'labevents')         : "Laboratory measurements (large file)",
 			('hosp', 'microbiologyevents'): "Microbiology test results",
-			('hosp', 'pharmacy'): "Pharmacy orders",
-			('hosp', 'prescriptions'): "Medication prescriptions",
-			('hosp', 'procedures_icd'): "Patient procedures",
-			('hosp', 'diagnoses_icd'): "Patient diagnoses",
-			('hosp', 'emar'): "Electronic medication administration records",
-			('hosp', 'emar_detail'): "Detailed medication administration data",
-			('hosp', 'poe'): "Provider order entries",
-			('hosp', 'poe_detail'): "Detailed order information",
-			('hosp', 'd_hcpcs'): "HCPCS code definitions",
-			('hosp', 'd_icd_diagnoses'): "ICD diagnosis code definitions",
-			('hosp', 'd_icd_procedures'): "ICD procedure code definitions",
-			('hosp', 'd_labitems'): "Laboratory test definitions",
-			('hosp', 'hcpcsevents'): "HCPCS events",
-			('hosp', 'drgcodes'): "Diagnosis-related group codes",
-			('hosp', 'services'): "Hospital services",
-			('hosp', 'transfers'): "Patient transfers",
-			('hosp', 'provider'): "Provider information",
-			('hosp', 'omr'): "Order monitoring results",
-			('icu', 'chartevents'): "Patient charting data (vital signs, etc.)",
-			('icu', 'datetimeevents'): "Date/time-based events",
-			('icu', 'inputevents'): "Patient intake data",
-			('icu', 'outputevents'): "Patient output data",
-			('icu', 'procedureevents'): "ICU procedures",
-			('icu', 'ingredientevents'): "Detailed medication ingredients",
-			('icu', 'd_items'): "Dictionary of ICU items",
-			('icu', 'icustays'): "ICU stay information",
-			('icu', 'caregiver'): "Caregiver information"
+			('hosp', 'pharmacy')          : "Pharmacy orders",
+			('hosp', 'prescriptions')     : "Medication prescriptions",
+			('hosp', 'procedures_icd')    : "Patient procedures",
+			('hosp', 'diagnoses_icd')     : "Patient diagnoses",
+			('hosp', 'emar')              : "Electronic medication administration records",
+			('hosp', 'emar_detail')       : "Detailed medication administration data",
+			('hosp', 'poe')               : "Provider order entries",
+			('hosp', 'poe_detail')        : "Detailed order information",
+			('hosp', 'd_hcpcs')           : "HCPCS code definitions",
+			('hosp', 'd_icd_diagnoses')   : "ICD diagnosis code definitions",
+			('hosp', 'd_icd_procedures')  : "ICD procedure code definitions",
+			('hosp', 'd_labitems')        : "Laboratory test definitions",
+			('hosp', 'hcpcsevents')       : "HCPCS events",
+			('hosp', 'drgcodes')          : "Diagnosis-related group codes",
+			('hosp', 'services')          : "Hospital services",
+			('hosp', 'transfers')         : "Patient transfers",
+			('hosp', 'provider')          : "Provider information",
+			('hosp', 'omr')               : "Order monitoring results",
+			('icu', 'chartevents')        : "Patient charting data (vital signs, etc.)",
+			('icu', 'datetimeevents')     : "Date/time-based events",
+			('icu', 'inputevents')        : "Patient intake data",
+			('icu', 'outputevents')       : "Patient output data",
+			('icu', 'procedureevents')    : "ICU procedures",
+			('icu', 'ingredientevents')   : "Detailed medication ingredients",
+			('icu', 'd_items')            : "Dictionary of ICU items",
+			('icu', 'icustays')           : "ICU stay information",
+			('icu', 'caregiver')          : "Caregiver information"
 		}
 		return table_info.get((module, table_name), "No description available")
-
-
-	def convert_to_parquet(self, df: Union[pd.DataFrame, dd.DataFrame], table_name: str, current_file_path: str) -> Optional[str]:
-		"""Converts the loaded DataFrame to Parquet format. Returns path or None."""
-		try:
-			# Use current_file_path directly as the base directory for 'parquet_files'
-			parquet_dir = os.path.join(current_file_path, 'parquet_files')
-			os.makedirs(parquet_dir, exist_ok=True)
-			parquet_file = os.path.join(parquet_dir, f"{table_name}.parquet")
-
-			if isinstance(df, pd.DataFrame):
-				table = pa.Table.from_pandas(df)
-				pq.write_table(table, parquet_file)
-				logging.info(f"Pandas DataFrame {table_name} converted to Parquet: {parquet_file}")
-			elif isinstance(df, dd.DataFrame):
-				# For Dask, to_parquet can write a directory or a single file.
-				# To ensure a single file is written (consistent with pandas behavior here),
-				# we can compute and then write, or use single_file=True if available/desired.
-				# For simplicity, let's compute and then use pandas-like writing if it's small enough
-				# or use Dask's direct to_parquet for larger Dask dataframes.
-				# A more robust Dask approach is df.to_parquet(parquet_file, write_index=False, engine='pyarrow')
-				# which will create a directory if df has multiple partitions.
-				# For now, assuming we want a single file output for this utility:
-				df.to_parquet(parquet_file, write_index=False, engine='pyarrow') # Removed single_file=True
-				logging.info(f"Dask DataFrame {table_name} converted to Parquet: {parquet_file}")
-			else:
-				logging.error(f"Unsupported DataFrame type for Parquet conversion: {type(df)}")
-				return None
-			return parquet_file
-		except Exception as e:
-			logging.error(f"Error converting {table_name} to Parquet: {str(e)}")
-			return None
 
 
 	def load_reference_table(self, mimic_path: str, module: str, table_name: str,
@@ -697,7 +1006,16 @@ class DataLoader:
 			return pd.DataFrame(), set()
 
 
-	def load_filtered_table(self, mimic_path: str, module: str, table_name: str, filter_column: str, filter_values: set, encoding: str = 'latin-1', use_dask: bool = False, max_chunks: Optional[int] = None) -> pd.DataFrame:
+	def load_filtered_table(self,
+								mimic_path     : str,
+								module         : str,
+								table_name     : str,
+								filter_column  : str,
+								filter_values  : set,
+								encoding       : str = 'latin-1',
+								use_dask       : bool = False,
+								max_chunks     : Optional[int] = None
+								) -> pd.DataFrame:
 		"""
 			Loads a table and filters it based on specified column values.
 
@@ -886,7 +1204,14 @@ class DataLoader:
 		return result
 
 
-	def load_connected_tables(self, mimic_path: str, sample_size: int = DEFAULT_SAMPLE_SIZE, encoding: str = 'latin-1', use_dask: bool = False, merged_view: bool = False, max_chunks: Optional[int] = None) -> Tuple[Dict[str, pd.DataFrame], pd.DataFrame]:
+	def load_connected_tables(self,
+									mimic_path : str,
+									sample_size: int = DEFAULT_SAMPLE_SIZE,
+									encoding   : str = 'latin-1',
+									use_dask   : bool = False,
+									merged_view: bool = False,
+									max_chunks : Optional[int] = None
+									) -> Tuple[Dict[str, pd.DataFrame], pd.DataFrame]:
 		"""
 			Loads and connects the six main MIMIC-IV tables: patients, admissions, diagnoses_icd, d_icd_diagnoses, poe, and poe_detail.
 
@@ -920,8 +1245,13 @@ class DataLoader:
 		return tables, merged_df
 
 
-
-	def _get_individual_tables(self, mimic_path: str, sample_size: int = DEFAULT_SAMPLE_SIZE, encoding: str = 'latin-1', use_dask: bool = False, max_chunks: Optional[int] = None) -> Dict[str, pd.DataFrame]:
+	def _get_individual_tables(self,
+									mimic_path : str,
+									sample_size: int = DEFAULT_SAMPLE_SIZE,
+									encoding   : str = 'latin-1',
+									use_dask   : bool = False,
+									max_chunks : Optional[int] = None
+									) -> Dict[str, pd.DataFrame]:
 
 		tables = {}
 
@@ -1101,3 +1431,18 @@ class DataLoader:
 
 		logging.warning("Cannot create merged view: missing core tables")
 		return pd.DataFrame()
+
+
+	@property
+	def study_table_list(self):
+		return ['patients', 'admissions', 'diagnoses_icd', 'd_icd_diagnoses', 'poe', 'poe_detail']
+
+if __name__ == '__main__':
+
+	MIMIC_DATA_PATH = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1"
+
+	data_loader = DataLoader()
+
+	# Scan the directory
+	dataset_info_df, _ = data_loader.scan_mimic_directory()
+	data_loader.save_all_tables_as_parquet(tables_list=data_loader.study_table_list)

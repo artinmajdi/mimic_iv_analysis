@@ -75,15 +75,18 @@ class ExampleDataLoader:
         if not ExampleDataLoader.check_mimic_path():
             return
 
-        available_tables, file_paths, file_sizes, table_display_names = loader.scan_mimic_directory(MIMIC_DATA_PATH)
+        dataset_info_df, dataset_info = loader.scan_mimic_directory(MIMIC_DATA_PATH)
 
-        if available_tables:
-            logging.info(f"Found {len(available_tables)} modules: {list(available_tables.keys())}")
-            for module, tables in available_tables.items():
+        if dataset_info['available_tables']:
+            logging.info(f"Found {len(dataset_info['available_tables'])} modules: {list(dataset_info['available_tables'].keys())}")
+
+            for module, tables in dataset_info['available_tables'].items():
                 logging.info(f"  Module '{module}' has {len(tables)} tables: {tables[:3]}...") # Print first 3
-            logging.info(f"Example file path for ('hosp', 'patients'): {file_paths.get(('hosp', 'patients'))}")
-            logging.info(f"Example file size for ('hosp', 'patients'): {file_sizes.get(('hosp', 'patients'))} MB")
-            logging.info(f"Example display name for ('hosp', 'patients'): {table_display_names.get(('hosp', 'patients'))}")
+
+            logging.info(f"Example file path for ('hosp', 'patients'): {dataset_info['file_paths'].get(('hosp', 'patients'))}")
+            logging.info(f"Example file size for ('hosp', 'patients'): {dataset_info['file_sizes'].get(('hosp', 'patients'))} MB")
+            logging.info(f"Example display name for ('hosp', 'patients'): {dataset_info['table_display_names'].get(('hosp', 'patients'))}")
+
         else:
             logging.info("No tables found. Check your MIMIC_DATA_PATH.")
 
@@ -91,33 +94,57 @@ class ExampleDataLoader:
     @staticmethod
     def example_load_mimic_table(loader: DataLoader):
         """Demonstrates loading a single MIMIC-IV table with various options."""
+
         logging.info("\n--- Example: Load MIMIC Table (patients) ---")
+
+        # Check if MIMIC_DATA_PATH is set and valid
         if not ExampleDataLoader.check_mimic_path():
             return
 
         patients_file_path = os.path.join(MIMIC_DATA_PATH, "hosp", "patients.csv.gz")
+
+        # Check if file exists
         if not os.path.exists(patients_file_path):
             patients_file_path = os.path.join(MIMIC_DATA_PATH, "hosp", "patients.csv") # Try uncompressed
+
+            # Check if uncompressed file exists
             if not os.path.exists(patients_file_path):
                 logging.warning(f"patients.csv.gz or patients.csv not found in {os.path.join(MIMIC_DATA_PATH, 'hosp')}. Skipping.")
                 return
 
         # 1. Load with sampling (Pandas)
         logging.info("Loading 'patients' table with sampling (100 rows, Pandas)...")
-        df_sampled_pd, total_rows_pd = loader.load_mimic_table(patients_file_path, sample_size=100, use_dask=False, max_chunks=MAX_CHUNKS)
+        df_sampled_pd, total_rows_pd = loader.load_mimic_table(file_path    = patients_file_path,
+                                                                sample_size = 100,
+                                                                use_dask    = False,
+                                                                max_chunks  = MAX_CHUNKS)
+
+        # Check if loading was successful
         if df_sampled_pd is not None:
+
             logging.info(f"Loaded {len(df_sampled_pd)} rows (sampled) out of {total_rows_pd} total (Pandas). Columns: {df_sampled_pd.columns.tolist()}")
+
             logging.info(f"Sample data (Pandas):\n{df_sampled_pd.head(3)}")
+
+
         else:
             logging.warning("Failed to load sampled (Pandas).")
 
         # 2. Load with sampling (Dask)
         logging.info("Loading 'patients' table with sampling (100 rows, Dask)...")
-        df_sampled_dd, total_rows_dd = loader.load_mimic_table(patients_file_path, sample_size=100, use_dask=True, max_chunks=MAX_CHUNKS)
+        df_sampled_dd, total_rows_dd = loader.load_mimic_table(file_path    = patients_file_path,
+                                                                sample_size = 100,
+                                                                use_dask    = True,
+                                                                max_chunks  = MAX_CHUNKS)
+
+        # Check if loading was successful
         if df_sampled_dd is not None:
+
             # For Dask, len() triggers computation. df_sampled_dd is already computed by head() in load_mimic_table.
             logging.info(f"Loaded {len(df_sampled_dd)} rows (sampled) out of {total_rows_dd} total (Dask). Columns: {df_sampled_dd.columns.tolist()}")
+
             logging.info(f"Sample data (Dask):\n{df_sampled_dd.head(3)}") # .head() is fine as it's already computed
+
         else:
             logging.warning("Failed to load sampled (Dask).")
 
@@ -125,17 +152,27 @@ class ExampleDataLoader:
         # For demonstration, we'll try loading a smaller table if patients is too large
         # Or use a known smaller table like d_labitems
         d_labitems_path = os.path.join(MIMIC_DATA_PATH, "hosp", "d_labitems.csv.gz")
+
+        # Check if file exists
         if not os.path.exists(d_labitems_path):
             d_labitems_path = os.path.join(MIMIC_DATA_PATH, "hosp", "d_labitems.csv")
 
+        # Check if file exists
         if os.path.exists(d_labitems_path):
             logging.info("Loading 'd_labitems' table fully (Pandas)...")
+
             # Use a large number for sample_size to effectively load the full table
-            df_full_pd, total_rows_full_pd = loader.load_mimic_table(d_labitems_path, sample_size=10**9, use_dask=False, max_chunks=MAX_CHUNKS)
+            df_full_pd, total_rows_full_pd = loader.load_mimic_table(file_path  = d_labitems_path,
+                                                                    sample_size = 10**9,
+                                                                    use_dask    = False,
+                                                                    max_chunks  = MAX_CHUNKS)
+
+            # Check if loading was successful
             if df_full_pd is not None:
                 logging.info(f"Loaded {len(df_full_pd)} rows (full) out of {total_rows_full_pd} total (Pandas).")
             else:
                 logging.warning("Failed to load d_labitems full (Pandas).")
+
         else:
             logging.info("d_labitems.csv.gz or .csv not found, skipping full load example for it.")
 
@@ -197,53 +234,12 @@ class ExampleDataLoader:
     def example_get_table_info(loader: DataLoader):
         """Demonstrates getting descriptive information for a table."""
         logging.info("\n--- Example: Get Table Info ---")
-        info_admissions = loader.get_table_info("hosp", "admissions")
+        info_admissions = loader.get_table_description("hosp", "admissions")
         logging.info(f"Info for ('hosp', 'admissions'): {info_admissions}")
-        info_chartevents = loader.get_table_info("icu", "chartevents")
+        info_chartevents = loader.get_table_description("icu", "chartevents")
         logging.info(f"Info for ('icu', 'chartevents'): {info_chartevents}")
-        info_unknown = loader.get_table_info("hosp", "non_existent_table")
+        info_unknown = loader.get_table_description("hosp", "non_existent_table")
         logging.info(f"Info for ('hosp', 'non_existent_table'): {info_unknown}")
-
-
-    @staticmethod
-    def example_convert_to_parquet(loader: DataLoader):
-        """Demonstrates converting a loaded DataFrame to Parquet."""
-        logging.info("\n--- Example: Convert to Parquet ---")
-        if not ExampleDataLoader.check_mimic_path():
-            return
-
-        d_labitems_path = os.path.join(MIMIC_DATA_PATH, "hosp", "d_labitems.csv.gz")
-        if not os.path.exists(d_labitems_path):
-            d_labitems_path = os.path.join(MIMIC_DATA_PATH, "hosp", "d_labitems.csv")
-
-        if not os.path.exists(d_labitems_path):
-            logging.warning(f"d_labitems.csv.gz or .csv not found. Skipping Parquet conversion example.")
-            return
-
-        df_labitems, _ = loader.load_mimic_table(d_labitems_path, sample_size=None, max_chunks=MAX_CHUNKS) # Load full
-        if df_labitems is not None and not df_labitems.empty:
-            # Create a dummy examples/parquet_files directory for this example
-            example_parquet_dir = "mimic_iv_analysis/examples/parquet_files"
-            os.makedirs(example_parquet_dir, exist_ok=True)
-
-            # The method expects current_file_path to deduce the parquet_files subdir
-            # We'll simulate it by creating a dummy current file path within examples
-            dummy_current_file_path = os.path.join("mimic_iv_analysis/examples", "dummy_file.py")
-
-            parquet_file = loader.convert_to_parquet(df_labitems, "d_labitems_example", dummy_current_file_path)
-            if parquet_file:
-                logging.info(f"Converted 'd_labitems' to Parquet: {parquet_file}")
-                # You can try reading it back:
-                # df_from_parquet = pd.read_parquet(parquet_file)
-                # logging.info(f"Read back {len(df_from_parquet)} rows from Parquet.")
-                if os.path.exists(parquet_file):
-                    logging.info(f"Parquet file exists at: {os.path.abspath(parquet_file)}")
-                else:
-                    logging.warning(f"Parquet file was reportedly created but not found at: {parquet_file}")
-            else:
-                logging.warning("Failed to convert to Parquet.")
-        else:
-            logging.warning("Could not load d_labitems for Parquet example.")
 
 
     @staticmethod
@@ -389,7 +385,7 @@ class ExampleDataLoader:
         # Ensure directory is scanned so subject IDs are available
         if not loader._data_scan_complete:
             logging.info("Scanning MIMIC directory first to get subject ID list...")
-            loader.scan_mimic_directory(MIMIC_DATA_PATH)
+            _, dataset_info = loader.scan_mimic_directory(MIMIC_DATA_PATH)
             if not loader._data_scan_complete:
                 logging.warning("Scan failed, cannot proceed with subject ID example.")
                 return
@@ -403,34 +399,34 @@ class ExampleDataLoader:
         num_subjects_to_load = min(5, total_subjects) # Load for 5 subjects, or fewer if not enough
         logging.info(f"Attempting to load data for {num_subjects_to_load} subjects.")
 
-        target_subject_ids = loader.get_subject_ids_for_sampling(num_subjects_to_load)
+        target_subject_ids = loader.get_sampled_subject_ids_list(num_subjects_to_load)
 
         if not target_subject_ids:
             logging.warning(f"Could not retrieve target subject IDs for sampling. Found {len(loader._all_subject_ids if loader._all_subject_ids else [])} subjects in loader state.")
             return
-        
+
         logging.info(f"Target subject IDs for loading: {target_subject_ids[:10]}... (first 10 if many)")
 
         # Example: Load 'admissions' table for these subjects
         # admissions_file_path = loader.file_paths.get(('hosp', 'admissions'), None)
         # A more robust way to get path, assuming scan_mimic_directory populates file_paths correctly
         admissions_key = ('hosp', 'admissions') # Using the tuple key
-        if admissions_key not in loader.file_paths:
-            logging.warning(f"Admissions table path not found in loader.file_paths after scan. Available keys: {list(loader.file_paths.keys())}")
+        if admissions_key not in dataset_info['file_paths']:
+            logging.warning(f"Admissions table path not found in loader.file_paths after scan. Available keys: {list(dataset_info['file_paths'].keys())}")
             # Fallback to constructing path directly for robustness in example if needed
             admissions_file_path = os.path.join(MIMIC_DATA_PATH, "hosp", "admissions.csv.gz")
             if not os.path.exists(admissions_file_path):
                 admissions_file_path = os.path.join(MIMIC_DATA_PATH, "hosp", "admissions.csv")
         else:
-            admissions_file_path = loader.file_paths[admissions_key]
+            admissions_file_path = dataset_info['file_paths'][admissions_key]
 
         if not admissions_file_path or not os.path.exists(admissions_file_path):
             logging.warning(f"Admissions file path not found or file does not exist: {admissions_file_path}. Skipping 'admissions' load by subject ID.")
         else:
             logging.info(f"Loading 'admissions' table for {len(target_subject_ids)} specific subjects (Pandas)... Path: {admissions_file_path}")
             df_admissions_subject_pd, count_pd = loader.load_mimic_table(
-                admissions_file_path, 
-                target_subject_ids=target_subject_ids, 
+                admissions_file_path,
+                target_subject_ids=target_subject_ids,
                 use_dask=False
             )
             if df_admissions_subject_pd is not None and not df_admissions_subject_pd.empty:
@@ -443,22 +439,22 @@ class ExampleDataLoader:
         # Example: Load a potentially larger table like 'chartevents' if it's likely to exist, using Dask
         # For this example, we'll try 'outputevents' as it's also common and can be large
         outputevents_key = ('icu', 'outputevents')
-        if outputevents_key not in loader.file_paths:
+        if outputevents_key not in dataset_info['file_paths']:
             logging.info(f"'outputevents' not found in scanned files. Trying direct path construction.")
             outputevents_file_path = os.path.join(MIMIC_DATA_PATH, "icu", "outputevents.csv.gz")
             if not os.path.exists(outputevents_file_path):
                 outputevents_file_path = os.path.join(MIMIC_DATA_PATH, "icu", "outputevents.csv")
         else:
             outputevents_file_path = loader.file_paths[outputevents_key]
-        
+
         if outputevents_file_path and os.path.exists(outputevents_file_path):
             logging.info(f"Loading 'outputevents' table for {len(target_subject_ids)} specific subjects (Dask)... Path: {outputevents_file_path}")
             # Using a small sample_size as a fallback if subject_id filtering isn't efficient or applicable internally
             # The primary filter should be target_subject_ids
             df_output_subject_dd, count_dd = loader.load_mimic_table(
-                outputevents_file_path, 
-                target_subject_ids=target_subject_ids, 
-                use_dask=True, 
+                outputevents_file_path,
+                target_subject_ids=target_subject_ids,
+                use_dask=True,
                 sample_size=10000 # Fallback sample for Dask if needed, though subject_id filtering is preferred
             )
             if df_output_subject_dd is not None and not df_output_subject_dd.empty:
@@ -475,6 +471,29 @@ class ExampleDataLoader:
         else:
             logging.info(f"'outputevents.csv.gz' or '.csv' not found at {outputevents_file_path}. Skipping its load by subject ID example.")
 
+    @staticmethod
+    def example_load_mimic_table2(loader: DataLoader):
+
+        # Scan the directory
+        dataset_info_df, _ = loader.scan_mimic_directory(mimic_path=MIMIC_DATA_PATH)
+
+
+        # Load table
+        table_name = 'poe'
+        module     = 'hosp'
+
+        find_row  = dataset_info_df[(dataset_info_df['module'] == module) & (dataset_info_df['table_name'] == table_name)]
+        file_path = dataset_info_df.attrs['mimic_path'] + '/' + find_row['file_path'].values[0]
+
+        print('file_path', file_path)
+
+        patients_df, total_rows = loader.load_mimic_table(file_path=file_path, use_dask=True, sample_size=100)
+        return patients_df
+
+
+    def example_post_processing(loader: DataLoader):
+        pass
+
 
 def main():
     ExampleDataLoader.configure_logging()
@@ -485,17 +504,18 @@ def main():
     if not ExampleDataLoader.check_mimic_path():
         logging.error("Please set the MIMIC_DATA_PATH at the top of this script to your local MIMIC-IV dataset path.")
     else:
-        ExampleDataLoader.example_scan_directory(data_loader)
-        ExampleDataLoader.example_get_table_info(data_loader)
-        ExampleDataLoader.example_load_mimic_table(data_loader)
-        ExampleDataLoader.example_load_reference_table(data_loader)
-        ExampleDataLoader.example_load_patient_cohort(data_loader)
-        ExampleDataLoader.example_load_filtered_table(data_loader)
-        ExampleDataLoader.example_merge_tables(data_loader)
-        ExampleDataLoader.example_convert_to_parquet(data_loader) # Run this after some tables are loaded and files may exist
-        ExampleDataLoader.example_load_connected_tables(data_loader) # This is a more comprehensive one
-        ExampleDataLoader.example_apply_filters(data_loader) # Shows how filters are used with load_mimic_table
-        ExampleDataLoader.example_load_with_subject_ids(data_loader)
+        # ExampleDataLoader.example_scan_directory(data_loader)
+        # ExampleDataLoader.example_get_table_info(data_loader)
+        # ExampleDataLoader.example_load_mimic_table(data_loader)
+        # ExampleDataLoader.example_load_reference_table(data_loader)
+        # ExampleDataLoader.example_load_patient_cohort(data_loader)
+        # ExampleDataLoader.example_load_filtered_table(data_loader)
+        # ExampleDataLoader.example_merge_tables(data_loader)
+        # ExampleDataLoader.example_convert_to_parquet(data_loader) # Run this after some tables are loaded and files may exist
+        # ExampleDataLoader.example_load_connected_tables(data_loader) # This is a more comprehensive one
+        # ExampleDataLoader.example_apply_filters(data_loader) # Shows how filters are used with load_mimic_table
+        # ExampleDataLoader.example_load_with_subject_ids(data_loader)
+        ExampleDataLoader.example_load_mimic_table2(data_loader)
 
     logging.info("\n--- DataLoader Examples Finished ---")
 

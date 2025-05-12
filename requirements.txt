@@ -1,7 +1,7 @@
 # Core scientific computing
 numpy
 pandas
-dask
+dask[distributed]
 pyarrow
 scipy
 scikit-learn
@@ -13,6 +13,7 @@ plotly
 
 # Web & Dashboard
 streamlit
+bokeh
 
 # Machine Learning
 shap
@@ -20,6 +21,11 @@ lifelines  # Survival analysis
 networkx  # Network analysis
 umap-learn
 # pyhealth  # Healthcare machine learning library
+
+# Jupyter notebook support
+jupyter
+ipywidgets
+notebook
 
 # Data processing
 datasets  # Hugging Face datasets library

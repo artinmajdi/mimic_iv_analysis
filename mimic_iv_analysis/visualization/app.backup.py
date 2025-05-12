@@ -2673,16 +2673,16 @@ class MIMICDashboardApp:
 				with st.spinner("Scanning directory..."):
 					try:
 						# Scan the directory structure using the data handler
-						available_tables, file_paths, file_sizes, table_display_names = self.data_handler.scan_mimic_directory(mimic_path)
+						_, dataset_info = self.data_handler.scan_mimic_directory(mimic_path)
 
-						if available_tables:
-							st.session_state.available_tables = available_tables
-							st.session_state.file_paths = file_paths
-							st.session_state.file_sizes = file_sizes
-							st.session_state.table_display_names = table_display_names
-							st.sidebar.success(f"Found {sum(len(tables) for tables in available_tables.values())} tables in {len(available_tables)} modules")
+						if dataset_info['available_tables']:
+							st.session_state.available_tables    = dataset_info['available_tables']
+							st.session_state.file_paths          = dataset_info['file_paths']
+							st.session_state.file_sizes          = dataset_info['file_sizes']
+							st.session_state.table_display_names = dataset_info['table_display_names']
+							st.sidebar.success(f"Found {sum(len(tables) for tables in dataset_info['available_tables'].values())} tables in {len(dataset_info['available_tables'])} modules")
 							# Reset selections if scan is successful
-							st.session_state.selected_module = list(available_tables.keys())[0] if available_tables else None
+							st.session_state.selected_module = list(dataset_info['available_tables'].keys())[0] if dataset_info['available_tables'] else None
 							st.session_state.selected_table = None # Force user to select table after scan
 						else:
 							st.sidebar.error("No MIMIC-IV tables (.csv, .csv.gz, .parquet) found in the specified path or its subdirectories (hosp, icu).")
@@ -2843,14 +2843,14 @@ class MIMICDashboardApp:
 			table: The selected table name
 		"""
 		try:
-			table_info = self.data_handler.get_table_info(module, table)
+			table_info = self.data_handler.get_table_description(module, table)
 			if table_info:
 				st.sidebar.markdown(
 					f"**Description:** {table_info}",
 					help="Table description from MIMIC-IV documentation."
 				)
 		except AttributeError:
-			st.sidebar.warning("Could not retrieve table info (get_table_info method missing).")
+			st.sidebar.warning("Could not retrieve table info (get_table_description method missing).")
 		except Exception as e:
 			st.sidebar.warning(f"Could not retrieve table info: {e}")
 

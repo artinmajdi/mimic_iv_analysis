@@ -40,27 +40,27 @@ class TestDataLoader(unittest.TestCase):
         mock_getsize.return_value = 1024 * 1024  # 1 MB
 
         mimic_path = '/path/to/mimic'
-        available, paths, sizes, display_names = self.loader.scan_mimic_directory(mimic_path)
+        _, dataset_info = self.loader.scan_mimic_directory(mimic_path)
 
-        self.assertIn('hosp', available)
-        self.assertIn('icu', available)
-        self.assertIn('patients', available['hosp'])
-        self.assertIn('admissions', available['hosp'])
-        self.assertIn('chartevents', available['icu'])
+        self.assertIn('hosp',        dataset_info['available_tables'])
+        self.assertIn('icu',         dataset_info['available_tables'])
+        self.assertIn('patients',    dataset_info['available_tables']['hosp'])
+        self.assertIn('admissions',  dataset_info['available_tables']['hosp'])
+        self.assertIn('chartevents', dataset_info['available_tables']['icu'])
 
-        self.assertEqual(paths[('hosp', 'patients')], '/path/to/mimic/hosp/patients.csv.gz')
-        self.assertEqual(sizes[('hosp', 'patients')], 1.0)
-        self.assertEqual(display_names[('hosp', 'patients')], 'patients (1.0 MB)')
+        self.assertEqual(dataset_info['file_paths'][('hosp', 'patients')], '/path/to/mimic/hosp/patients.csv.gz')
+        self.assertEqual(dataset_info['file_sizes'][('hosp', 'patients')], 1.0)
+        self.assertEqual(dataset_info['table_display_names'][('hosp', 'patients')], 'patients (1.0 MB)')
         self.assertEqual(self.loader._patients_file_path, '/path/to/mimic/hosp/patients.csv.gz')
         self.assertTrue(self.loader._data_scan_complete)
 
     @patch('os.path.exists', return_value=False)
     def test_scan_mimic_directory_invalid_path(self, mock_exists):
-        available, paths, sizes, display_names = self.loader.scan_mimic_directory('/invalid/path')
-        self.assertEqual(available, {})
-        self.assertEqual(paths, {})
-        self.assertEqual(sizes, {})
-        self.assertEqual(display_names, {})
+        _, dataset_info = self.loader.scan_mimic_directory('/invalid/path')
+        self.assertEqual(dataset_info['available_tables'], {})
+        self.assertEqual(dataset_info['file_paths'], {})
+        self.assertEqual(dataset_info['file_sizes'], {})
+        self.assertEqual(dataset_info['table_display_names'], {})
         self.assertIsNone(self.loader._patients_file_path) # Should remain None or be reset
         self.assertTrue(self.loader._data_scan_complete) # Scan completes, finds nothing
 
@@ -74,7 +74,7 @@ class TestDataLoader(unittest.TestCase):
         mock_read_csv.return_value = mock_patients_df
 
         with patch('os.path.exists', return_value=True): # Mock os.path.exists for the patients file
-            subject_ids = self.loader._get_all_subject_ids()
+            subject_ids = self.loader.subject_ids_list()
 
         self.assertListEqual(sorted(subject_ids), [1, 2, 3, 4])
         self.assertEqual(self.loader.get_total_unique_subjects(), 4)
@@ -87,7 +87,7 @@ class TestDataLoader(unittest.TestCase):
 
         # Test caching
         mock_read_csv.reset_mock()
-        subject_ids_cached = self.loader._get_all_subject_ids()
+        subject_ids_cached = self.loader.subject_ids_list()
         self.assertListEqual(sorted(subject_ids_cached), [1, 2, 3, 4])
         mock_read_csv.assert_not_called()
 
@@ -95,7 +95,7 @@ class TestDataLoader(unittest.TestCase):
     def test_get_all_subject_ids_scan_not_complete(self):
         self.loader._data_scan_complete = False
         with self.assertLogs(level='WARNING') as log:
-            subject_ids = self.loader._get_all_subject_ids()
+            subject_ids = self.loader.subject_ids_list()
             self.assertIn("MIMIC directory scan has not been performed", log.output[0])
         self.assertEqual(subject_ids, [])
         self.assertEqual(self.loader.get_total_unique_subjects(), 0)
@@ -105,22 +105,22 @@ class TestDataLoader(unittest.TestCase):
         self.loader._data_scan_complete = True
         self.loader._patients_file_path = '/fake/path/hosp/patients.csv.gz' # Path is set but os.path.exists will return False
         with self.assertLogs(level='WARNING') as log:
-            subject_ids = self.loader._get_all_subject_ids()
+            subject_ids = self.loader.subject_ids_list()
             self.assertIn("'.csv' or '.csv.gz' not found during scan or path is invalid", log.output[0])
         self.assertEqual(subject_ids, [])
 
     def test_get_subject_ids_for_sampling(self):
         self.loader._all_subject_ids = [10, 20, 30, 40, 50]
-        self.assertIsNone(self.loader.get_subject_ids_for_sampling(None))
-        self.assertIsNone(self.loader.get_subject_ids_for_sampling(0))
-        self.assertEqual(self.loader.get_subject_ids_for_sampling(3), [10, 20, 30])
-        self.assertEqual(self.loader.get_subject_ids_for_sampling(10), [10, 20, 30, 40, 50])
+        self.assertIsNone(self.loader.get_sampled_subject_ids_list(None))
+        self.assertIsNone(self.loader.get_sampled_subject_ids_list(0))
+        self.assertEqual(self.loader.get_sampled_subject_ids_list(3), [10, 20, 30])
+        self.assertEqual(self.loader.get_sampled_subject_ids_list(10), [10, 20, 30, 40, 50])
 
         self.loader._all_subject_ids = None
-        self.assertIsNone(self.loader.get_subject_ids_for_sampling(3))
+        self.assertIsNone(self.loader.get_sampled_subject_ids_list(3))
 
         self.loader._all_subject_ids = []
-        self.assertIsNone(self.loader.get_subject_ids_for_sampling(3))
+        self.assertIsNone(self.loader.get_sampled_subject_ids_list(3))
 
 
     @patch('os.path.getsize', return_value=10 * 1024 * 1024) # 10MB < LARGE_FILE_THRESHOLD_MB
@@ -327,42 +327,10 @@ class TestDataLoader(unittest.TestCase):
 
 
     def test_get_table_info(self):
-        self.assertEqual(self.loader.get_table_info('hosp', 'admissions'), "Patient hospital admissions information")
-        self.assertEqual(self.loader.get_table_info('icu', 'chartevents'), "Patient charting data (vital signs, etc.)")
-        self.assertEqual(self.loader.get_table_info('non_existent_module', 'some_table'), "No description available")
+        self.assertEqual(self.loader.get_table_description('hosp', 'admissions'), "Patient hospital admissions information")
+        self.assertEqual(self.loader.get_table_description('icu', 'chartevents'), "Patient charting data (vital signs, etc.)")
+        self.assertEqual(self.loader.get_table_description('non_existent_module', 'some_table'), "No description available")
 
-    @patch('os.makedirs')
-    @patch('mimic_iv_analysis.core.data_loader.pa.Table.from_pandas')
-    @patch('mimic_iv_analysis.core.data_loader.pq.write_table')
-    def test_convert_to_parquet_pandas(self, mock_write_table, mock_from_pandas, mock_makedirs):
-        dummy_df = pd.DataFrame({'a': [1]})
-        table_name = "test_table"
-        current_file_path_dir = "/test/dir" # Simulating the directory of the calling script
-
-        expected_parquet_dir = os.path.join(current_file_path_dir, 'parquet_files')
-        expected_parquet_file = os.path.join(expected_parquet_dir, f"{table_name}.parquet")
-
-        result_path = self.loader.convert_to_parquet(dummy_df, table_name, current_file_path_dir)
-
-        mock_makedirs.assert_called_once_with(expected_parquet_dir, exist_ok=True)
-        mock_from_pandas.assert_called_once_with(dummy_df)
-        mock_write_table.assert_called_once_with(mock_from_pandas.return_value, expected_parquet_file)
-        self.assertEqual(result_path, expected_parquet_file)
-
-    @patch('os.makedirs')
-    def test_convert_to_parquet_dask(self, mock_makedirs):
-        dummy_dask_df = MagicMock(spec=dd.DataFrame)
-        table_name = "dask_test_table"
-        current_file_path_dir = "/test/dask_dir"
-
-        expected_parquet_dir = os.path.join(current_file_path_dir, 'parquet_files')
-        expected_parquet_file = os.path.join(expected_parquet_dir, f"{table_name}.parquet")
-
-        result_path = self.loader.convert_to_parquet(dummy_dask_df, table_name, current_file_path_dir)
-
-        mock_makedirs.assert_called_once_with(expected_parquet_dir, exist_ok=True)
-        dummy_dask_df.to_parquet.assert_called_once_with(expected_parquet_file, write_index=False, engine='pyarrow')
-        self.assertEqual(result_path, expected_parquet_file)
 
     @patch('os.path.exists')
     @patch('mimic_iv_analysis.core.data_loader.pd.read_csv')
