@@ -1437,6 +1437,7 @@ class DataLoader:
 	def study_table_list(self):
 		return ['patients', 'admissions', 'diagnoses_icd', 'd_icd_diagnoses', 'poe', 'poe_detail']
 
+
 if __name__ == '__main__':
 
 	MIMIC_DATA_PATH = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1"
@@ -1445,4 +1446,8 @@ if __name__ == '__main__':
 
 	# Scan the directory
 	dataset_info_df, _ = data_loader.scan_mimic_directory()
-	data_loader.save_all_tables_as_parquet(tables_list=data_loader.study_table_list)
+
+	# TODO (next step):
+	# 	1. Filter the large tables with the subject_ids_list.
+	# 	2. Load multiple tables and merge them into one.
+	# 	3. Save the merged table as a parquet file.
