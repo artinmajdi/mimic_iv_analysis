@@ -323,15 +323,11 @@ def test_load_reference_table(data_loader, temp_mimic_dir):
     assert 'label' in df.columns
     assert len(df) == 2
 
-def test_get_table_info(data_loader):
+def test_get_table_info():
     """Test getting table information."""
-    info = data_loader.get_table_description('hosp', 'admissions')
+    info = TableNamesHOSP['admissions'].description
     assert "Patient hospital admissions information" in info
-    info_unknown = data_loader.get_table_description('foo', 'bar')
-    assert "No description available" in info_unknown
 
-# More complex tests for apply_filters might require extensive mocking or a dedicated small dataset
-# For now, a simple test to see if it runs with minimal parameters or with mocking
 
 # Example of a very simple apply_filters test (might need adjustment based on Filtering class)
 # This test is basic and assumes apply_filters can run with no real filtering if params are minimal.

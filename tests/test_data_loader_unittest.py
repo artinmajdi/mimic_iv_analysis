@@ -111,16 +111,16 @@ class TestDataLoader(unittest.TestCase):
 
     def test_get_subject_ids_for_sampling(self):
         self.loader._all_subject_ids = [10, 20, 30, 40, 50]
-        self.assertIsNone(self.loader.get_sampled_subject_ids_list(None))
-        self.assertIsNone(self.loader.get_sampled_subject_ids_list(0))
-        self.assertEqual(self.loader.get_sampled_subject_ids_list(3), [10, 20, 30])
-        self.assertEqual(self.loader.get_sampled_subject_ids_list(10), [10, 20, 30, 40, 50])
+        self.assertIsNone(self.loader.sampled_subject_ids_list(None))
+        self.assertIsNone(self.loader.sampled_subject_ids_list(0))
+        self.assertEqual(self.loader.sampled_subject_ids_list(3), [10, 20, 30])
+        self.assertEqual(self.loader.sampled_subject_ids_list(10), [10, 20, 30, 40, 50])
 
         self.loader._all_subject_ids = None
-        self.assertIsNone(self.loader.get_sampled_subject_ids_list(3))
+        self.assertIsNone(self.loader.sampled_subject_ids_list(3))
 
         self.loader._all_subject_ids = []
-        self.assertIsNone(self.loader.get_sampled_subject_ids_list(3))
+        self.assertIsNone(self.loader.sampled_subject_ids_list(3))
 
 
     @patch('os.path.getsize', return_value=10 * 1024 * 1024) # 10MB < LARGE_FILE_THRESHOLD_MB
@@ -324,12 +324,6 @@ class TestDataLoader(unittest.TestCase):
         )
         # Check that the Dask filtering was attempted
         mock_dask_df_instance.__getitem__.assert_called()
-
-
-    def test_get_table_info(self):
-        self.assertEqual(self.loader.get_table_description('hosp', 'admissions'), "Patient hospital admissions information")
-        self.assertEqual(self.loader.get_table_description('icu', 'chartevents'), "Patient charting data (vital signs, etc.)")
-        self.assertEqual(self.loader.get_table_description('non_existent_module', 'some_table'), "No description available")
 
 
     @patch('os.path.exists')

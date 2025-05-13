@@ -421,14 +421,13 @@ class MIMICDashboardApp:
 			table: The selected table name
 		"""
 		try:
-			table_info = self.data_handler.get_table_description(module, table)
+			table_info = TableNamesHOSP[table].description if module == 'hosp' else TableNamesICU[table].description
+
 			if table_info:
 				st.sidebar.markdown(
 					f"**Description:** {table_info}",
 					help="Table description from MIMIC-IV documentation."
 				)
-		except AttributeError:
-			st.sidebar.warning("Could not retrieve table info (get_table_description method missing).")
 		except Exception as e:
 			st.sidebar.warning(f"Could not retrieve table info: {e}")
 
@@ -448,7 +447,7 @@ class MIMICDashboardApp:
 			# Get target subject IDs if num_subjects_to_load is specified
 			target_subject_ids = None
 			if num_subjects_to_load and num_subjects_to_load > 0:
-				target_subject_ids = self.data_handler.get_sampled_subject_ids_list(num_subjects_to_load)
+				target_subject_ids = self.data_handler.sampled_subject_ids_list(num_subjects_to_load)
 				if target_subject_ids:
 					loading_message_subject_suffix = f" for {len(target_subject_ids)} subjects"
 				else:

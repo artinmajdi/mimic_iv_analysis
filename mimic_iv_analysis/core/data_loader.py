@@ -13,7 +13,7 @@ import dask.dataframe as dd
 from tqdm import tqdm
 from pathlib import Path
 from functools import cached_property
-
+import enum
 
 # TODO: I should create a jupyter notebook, and load the tables there, and do the merging manually, make sure it wokrs. then update this code accordingly (update it manually)
 
@@ -21,32 +21,32 @@ from functools import cached_property
 from mimic_iv_analysis.core.filtering import Filtering
 
 # Utility functions
-def convert_string_dtypes(df):
-	"""Convert pandas StringDtype to object type to avoid Arrow conversion issues in Streamlit.
+# def convert_string_dtypes(df):
+# 	"""Convert pandas StringDtype to object type to avoid Arrow conversion issues in Streamlit.
 
-	Args:
-		df: Input DataFrame (pandas or Dask)
+# 	Args:
+# 		df: Input DataFrame (pandas or Dask)
 
-	Returns:
-		DataFrame with StringDtype columns converted to object type
-	"""
-	if df is None:
-		return df
+# 	Returns:
+# 		DataFrame with StringDtype columns converted to object type
+# 	"""
+# 	if df is None:
+# 		return df
 
-	if hasattr(df, 'compute'):
-		# For Dask DataFrame, apply the conversion without computing
-		string_cols = [col for col in df.columns if str(df[col].dtype) == 'string']
-		if string_cols:
-			return df.map_partitions(lambda partition:
-				partition.assign(**{col: partition[col].astype('object') for col in string_cols})
-			)
-		return df
+# 	if hasattr(df, 'compute'):
+# 		# For Dask DataFrame, apply the conversion without computing
+# 		string_cols = [col for col in df.columns if str(df[col].dtype) == 'string']
+# 		if string_cols:
+# 			return df.map_partitions(lambda partition:
+# 				partition.assign(**{col: partition[col].astype('object') for col in string_cols})
+# 			)
+# 		return df
 
-	# For pandas DataFrame
-	for col in df.columns:
-		if hasattr(df[col], 'dtype') and str(df[col].dtype) == 'string':
-			df[col] = df[col].astype('object')
-	return df
+# 	# For pandas DataFrame
+# 	for col in df.columns:
+# 		if hasattr(df[col], 'dtype') and str(df[col].dtype) == 'string':
+# 			df[col] = df[col].astype('object')
+# 	return df
 
 # Constants
 DEFAULT_MIMIC_PATH    = Path("/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1")
@@ -54,18 +54,176 @@ LARGE_FILE_THRESHOLD_MB = 100
 DEFAULT_SAMPLE_SIZE     = 1000
 RANDOM_STATE            = 42
 
-PATIENTS_TABLE_MODULE = 'hosp'
-PATIENTS_TABLE_NAME   = 'patients'
 SUBJECT_ID_COL        = 'subject_id'
+
+
+
+class TableNamesHOSP(enum.Enum):
+	ADMISSIONS         = 'admissions'
+	D_HCPCS            = 'd_hcpcs'
+	D_ICD_DIAGNOSES    = 'd_icd_diagnoses'
+	D_ICD_PROCEDURES   = 'd_icd_procedures'
+	D_LABITEMS         = 'd_labitems'
+	DIAGNOSES_ICD      = 'diagnoses_icd'
+	DRGCODES           = 'drgcodes'
+	EMAR               = 'emar'
+	EMAR_DETAIL        = 'emar_detail'
+	HCPCSEVENTS        = 'hcpcsevents'
+	LABEVENTS          = 'labevents'
+	MICROBIOLOGYEVENTS = 'microbiologyevents'
+	OMR                = 'omr'
+	PATIENTS           = 'patients'
+	PHARMACY           = 'pharmacy'
+	POE                = 'poe'
+	POE_DETAIL         = 'poe_detail'
+	PRESCRIPTIONS      = 'prescriptions'
+	PROCEDURES_ICD     = 'procedures_icd'
+	PROVIDER           = 'provider'
+	SERVICES           = 'services'
+	TRANSFERS          = 'transfers'
+
+	@classmethod
+	def values(cls):
+		return [member.value for member in cls]
+
+	@property
+	def description(self):
+
+		tables_descriptions = {
+			('hosp', 'admissions')        : "Patient hospital admissions information",
+			('hosp', 'patients')          : "Patient demographic data",
+			('hosp', 'labevents')         : "Laboratory measurements (large file)",
+			('hosp', 'microbiologyevents'): "Microbiology test results",
+			('hosp', 'pharmacy')          : "Pharmacy orders",
+			('hosp', 'prescriptions')     : "Medication prescriptions",
+			('hosp', 'procedures_icd')    : "Patient procedures",
+			('hosp', 'diagnoses_icd')     : "Patient diagnoses",
+			('hosp', 'emar')              : "Electronic medication administration records",
+			('hosp', 'emar_detail')       : "Detailed medication administration data",
+			('hosp', 'poe')               : "Provider order entries",
+			('hosp', 'poe_detail')        : "Detailed order information",
+			('hosp', 'd_hcpcs')           : "HCPCS code definitions",
+			('hosp', 'd_icd_diagnoses')   : "ICD diagnosis code definitions",
+			('hosp', 'd_icd_procedures')  : "ICD procedure code definitions",
+			('hosp', 'd_labitems')        : "Laboratory test definitions",
+			('hosp', 'hcpcsevents')       : "HCPCS events",
+			('hosp', 'drgcodes')          : "Diagnosis-related group codes",
+			('hosp', 'services')          : "Hospital services",
+			('hosp', 'transfers')         : "Patient transfers",
+			('hosp', 'provider')          : "Provider information",
+			('hosp', 'omr')               : "Order monitoring results"
+		}
+
+		return tables_descriptions.get(('hosp', self.value))
+
+class TableNamesICU(enum.Enum):
+	CAREGIVER          = 'caregiver'
+	CHARTEVENTS        = 'chartevents'
+	DATETIMEEVENTS     = 'datetimeevents'
+	D_ITEMS            = 'd_items'
+	ICUSTAYS           = 'icustays'
+	INGREDIENTEVENTS   = 'ingredientevents'
+	INPUTEVENTS        = 'inputevents'
+	OUTPUTEVENTS       = 'outputevents'
+	PROCEDUREEVENTS    = 'procedureevents'
+
+	@classmethod
+	def values(cls):
+		return [member.value for member in cls]
+
+	@property
+	def description(self):
+
+		tables_descriptions = {
+			('icu', 'chartevents')        : "Patient charting data (vital signs, etc.)",
+			('icu', 'datetimeevents')     : "Date/time-based events",
+			('icu', 'inputevents')        : "Patient intake data",
+			('icu', 'outputevents')       : "Patient output data",
+			('icu', 'procedureevents')    : "ICU procedures",
+			('icu', 'ingredientevents')   : "Detailed medication ingredients",
+			('icu', 'd_items')            : "Dictionary of ICU items",
+			('icu', 'icustays')           : "ICU stay information",
+			('icu', 'caregiver')          : "Caregiver information"
+		}
+
+		return tables_descriptions.get(('icu', self.value))
+
+
+dtypes_all = {
+	'discontinued_by_poe_id': 'object',
+	'long_description'      : 'string',
+	'icd_code'              : 'string',
+	'drg_type'              : 'category',
+	'enter_provider_id'     : 'string',
+	'hadm_id'               : 'int',
+	'icustay_id'            : 'int',
+	'leave_provider_id'     : 'string',
+	'poe_id'                : 'string',
+	'emar_id'               : 'string',
+	'subject_id'            : 'int64',
+	'pharmacy_id'           : 'string',
+	'interpretation'        : 'object',
+	'org_name'              : 'object',
+	'quantity'              : 'object',
+	'infusion_type'         : 'object',
+	'sliding_scale'         : 'object',
+	'fill_quantity'         : 'object',
+	'expiration_unit'       : 'category',
+	'duration_interval'     : 'category',
+	'dispensation'          : 'category',
+	'expirationdate'        : 'object',
+	'one_hr_max'            : 'object',
+	'infusion_type'         : 'object',
+	'sliding_scale'         : 'object',
+	'lockout_interval'      : 'object',
+	'basal_rate'            : 'object',
+	'form_unit_disp'        : 'category',
+	'route'                 : 'category',
+	'dose_unit_rx'          : 'category',
+	'drug_type'             : 'category',
+	'form_rx'               : 'object',
+	'form_val_disp'         : 'object',
+	'gsn'                   : 'object',
+	'dose_val_rx'           : 'object',
+	'prev_service'          : 'object',
+	'curr_service'          : 'category'}
+
+parse_dates_all = [
+			'admittime',
+			'dischtime',
+			'deathtime',
+			'edregtime',
+			'edouttime',
+			'charttime',
+			'scheduletime',
+			'storetime',
+			'storedate']
+
+
 
 class DataLoader:
 	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
 
-	def __init__(self):
-		"""Initialize the MIMICDataLoader class."""
-		self.filtering           = Filtering()
-		self.mimic_path          : Path                   = DEFAULT_MIMIC_PATH
-		self._subject_ids_list    : List[str]              = []
+	DEFAULT_STUDY_TABLES_LIST = [	TableNamesHOSP.PATIENTS.value,
+									TableNamesICU.ADMISSIONS.value,
+									TableNamesHOSP.DIAGNOSES_ICD.value,
+									TableNamesICU.D_ICD_DIAGNOSES.value,
+									TableNamesICU.POE.value,
+									TableNamesICU.POE_DETAIL.value]
+
+
+	def __init__(self, 	mimic_path        : Path = DEFAULT_MIMIC_PATH,
+						study_tables_list : Optional[List[TableNamesHOSP | TableNamesICU]] = None):
+
+		# MIMIC_IV v3.1 path
+		self.mimic_path = mimic_path
+
+		# Tables to load. Use list provided by user or default list
+		self.study_table_list = self.DEFAULT_STUDY_TABLES_LIST if study_tables_list is None else [table.value for table in study_tables_list]
+
+		# Class variables
+		self.filtering           : Filtering              = Filtering()
+		self._subject_ids_list   : List[str]              = []
 		self._patients_file_path : Optional[str]          = None
 		self.dataset_info_df     : Optional[pd.DataFrame] = None
 
@@ -236,66 +394,9 @@ class DataLoader:
 		return self.dataset_info_df, dataset_info
 
 
-	def load_table_full(self, file_path: Path) -> pd.DataFrame:
-
-		# The parquet files are already saved with the correct datatypes
-		if file_path.suffix == '.parquet':
-			return dd.read_parquet(file_path)
-
-		return self._load_table_with_correct_column_datatypes(file_path)
 
 
-	def _load_table_with_correct_column_datatypes(self, file_path: Path):
-
-		dtypes_all = {
-			'discontinued_by_poe_id': 'object',
-			'long_description'      : 'string',
-			'icd_code'              : 'string',
-			'drg_type'              : 'category',
-			'enter_provider_id'     : 'string',
-			'hadm_id'               : 'int',
-			'icustay_id'            : 'int',
-			'leave_provider_id'     : 'string',
-			'poe_id'                : 'string',
-			'emar_id'               : 'string',
-			'subject_id'            : 'int64',
-			'pharmacy_id'           : 'string',
-			'interpretation'        : 'object',
-			'org_name'              : 'object',
-			'quantity'              : 'object',
-			'infusion_type'         : 'object',
-			'sliding_scale'         : 'object',
-			'fill_quantity'         : 'object',
-			'expiration_unit'       : 'category',
-			'duration_interval'     : 'category',
-			'dispensation'          : 'category',
-			'expirationdate'        : 'object',
-			'one_hr_max'            : 'object',
-			'infusion_type'         : 'object',
-			'sliding_scale'         : 'object',
-			'lockout_interval'      : 'object',
-			'basal_rate'            : 'object',
-			'form_unit_disp'        : 'category',
-			'route'                 : 'category',
-			'dose_unit_rx'          : 'category',
-			'drug_type'             : 'category',
-			'form_rx'               : 'object',
-			'form_val_disp'         : 'object',
-			'gsn'                   : 'object',
-			'dose_val_rx'           : 'object',
-			'prev_service'          : 'object',
-			'curr_service'          : 'category'}
-
-		parse_dates_all = [
-					'admittime',
-					'dischtime',
-					'deathtime',
-					'edregtime',
-					'edouttime',
-					'charttime',
-					'scheduletime',
-					'storetime',
-					'storedate']
+	def _load_csv_table_with_correct_column_datatypes(self, file_path: Path):
 
 
 		# Check if file exists
@@ -322,17 +423,14 @@ class DataLoader:
 		return df
 
 
-	def save_all_tables_as_parquet(self, tables_list: Optional[List[str]] = None):
+	def save_all_tables_as_parquet(self):
 		""" Checks if parquet versions exist and creates them if needed. """
 
 		if self.dataset_info_df is None:
 			self.dataset_info_df , _ = self.scan_mimic_directory()
 
 
-		if tables_list is not None:
-			dataset_info_df = self.dataset_info_df[self.dataset_info_df.table_name.isin(tables_list)]
-		else:
-			dataset_info_df = self.dataset_info_df
+		dataset_info_df = self.dataset_info_df[self.dataset_info_df.table_name.isin(self.study_tables_list)]
 
 
 		for i in tqdm(range(len(dataset_info_df)), desc="Saving tables as parquet"):
@@ -378,7 +476,7 @@ class DataLoader:
 				source_csv_path = _fix_source_csv_path()
 
 				# Load table
-				df = self._load_table_with_correct_column_datatypes(file_path=source_csv_path)
+				df = self._load_csv_table_with_correct_column_datatypes(file_path=source_csv_path)
 
 			# Get parquet directory
 			if target_parquet_path is None:
@@ -406,18 +504,22 @@ class DataLoader:
 	def _update_subject_ids_list(self):
 		logging.info("Loading subject IDs from patients table (this will be cached)")
 
+		# Scan directory if not already done
 		if self.dataset_info_df is None:
 			self.dataset_info_df , _ = self.scan_mimic_directory()
 
-		patients_df_file_path = Path(self.dataset_info_df[
-			(self.dataset_info_df.module == PATIENTS_TABLE_MODULE) &
-			(self.dataset_info_df.table_name == PATIENTS_TABLE_NAME)
-		].file_path.values[0])
+		# Get patients.csv file path
+		md = self.dataset_info_df.module     == 'hosp'
+		tn = self.dataset_info_df.table_name == TableNamesHOSP.PATIENTS.value
+
+		patients_df_file_path = Path( self.dataset_info_df[ md & tn ].file_path.values[0] )
 
 
+		# Check if patients.csv exists
 		if not patients_df_file_path.exists():
 			logging.warning(f"patients.csv not found at {patients_df_file_path}. Cannot load subject IDs.")
 			self._subject_ids_list = []
+			return
 
 		# Load patients table
 		patients_df = self.load_table_full(file_path=patients_df_file_path)
@@ -426,13 +528,8 @@ class DataLoader:
 		self._subject_ids_list = patients_df[SUBJECT_ID_COL].unique().compute().tolist()
 
 
-	def get_sampled_subject_ids_list(self, num_subjects: int = 100, random_selection: bool = False) -> List[Any]:
-		"""Returns a list of subject_ids for sampling.
-
-		Args:
-			num_subjects: 	The number of subject_ids to return from the top of the list.
-							If None or 0, returns None (indicating no specific subject sampling).
-		"""
+	def sampled_subject_ids_list(self, num_subjects: int = 100, random_selection: bool = False) -> List[Any]:
+		"""Returns a list of subject_ids for sampling. """
 		if not self.subject_ids_list or num_subjects <= 0:
 			return []
 
@@ -440,6 +537,21 @@ class DataLoader:
 			return random.sample(self.subject_ids_list, num_subjects)
 
 		return self.subject_ids_list[:num_subjects]
+
+
+	def load_table_full(self, file_path: Path) -> pd.DataFrame:
+
+		# The parquet files are already saved with the correct datatypes
+		if file_path.suffix == '.parquet':
+			return dd.read_parquet(file_path)
+
+		return self._load_csv_table_with_correct_column_datatypes(file_path)
+
+
+	def load_table_for_sampled_subject_ids(self, file_path: Path, subject_ids: List[Any]) -> pd.DataFrame:
+		"""Loads a table for a list of sampled subject_ids."""
+		table_df = self.load_table_full(file_path)
+		return table_df[table_df['subject_id'].isin(subject_ids)]
 
 
 	def load_mimic_table(self,
@@ -506,7 +618,7 @@ class DataLoader:
 
 					# Log the result
 					logging.info(f"Loaded {total_rows_loaded} rows for {len(target_subject_ids)} subjects from {os.path.basename(file_path)} using Dask.")
-					return convert_string_dtypes(df_result), total_rows_loaded
+					return df_result , total_rows_loaded # convert_string_dtypes(df_result)
 
 				except Exception as e:
 					logging.error(f"Dask filtering by subject_id failed for {os.path.basename(file_path)}: {e}. Falling back.")
@@ -554,7 +666,8 @@ class DataLoader:
 					# Log the result
 					logging.info(f"Loaded {total_rows_loaded} rows for {len(target_subject_ids)} subjects from {os.path.basename(file_path)} using Pandas chunking.")
 
-				return convert_string_dtypes(df_result), total_rows_loaded
+				return df_result, total_rows_loaded # convert_string_dtypes(df_result)
+
 
 			logging.info(f"Attempting to load {len(target_subject_ids)} subject_ids for large file: {os.path.basename(file_path)}")
 
@@ -618,7 +731,7 @@ class DataLoader:
 					if target_subject_ids and has_subject_id_col and SUBJECT_ID_COL in df.columns: # Apply subject filter if small file
 						df = df[df[SUBJECT_ID_COL].isin(target_subject_ids)]
 
-					return convert_string_dtypes(df), total_rows
+					return df, total_rows # convert_string_dtypes(df)
 
 			def _load_with_pandas():
 				# Traditional pandas approach
@@ -662,7 +775,7 @@ class DataLoader:
 				if sample_size is not None and len(df) > sample_size:
 					df = df.sample(sample_size, random_state=RANDOM_STATE)
 
-				return convert_string_dtypes(df), total_rows
+				return df, total_rows # convert_string_dtypes(df)
 
 			logging.info(f"Proceeding with standard load for {os.path.basename(file_path)} (use_dask={use_dask}, sample_size={sample_size}).")
 
@@ -806,348 +919,6 @@ class DataLoader:
 		return filtered_df
 
 
-	def get_table_description(self, module: str, table_name: str) -> str:
-		"""Get descriptive information about a specific MIMIC-IV table."""
-		table_info = {
-			('hosp', 'admissions')        : "Patient hospital admissions information",
-			('hosp', 'patients')          : "Patient demographic data",
-			('hosp', 'labevents')         : "Laboratory measurements (large file)",
-			('hosp', 'microbiologyevents'): "Microbiology test results",
-			('hosp', 'pharmacy')          : "Pharmacy orders",
-			('hosp', 'prescriptions')     : "Medication prescriptions",
-			('hosp', 'procedures_icd')    : "Patient procedures",
-			('hosp', 'diagnoses_icd')     : "Patient diagnoses",
-			('hosp', 'emar')              : "Electronic medication administration records",
-			('hosp', 'emar_detail')       : "Detailed medication administration data",
-			('hosp', 'poe')               : "Provider order entries",
-			('hosp', 'poe_detail')        : "Detailed order information",
-			('hosp', 'd_hcpcs')           : "HCPCS code definitions",
-			('hosp', 'd_icd_diagnoses')   : "ICD diagnosis code definitions",
-			('hosp', 'd_icd_procedures')  : "ICD procedure code definitions",
-			('hosp', 'd_labitems')        : "Laboratory test definitions",
-			('hosp', 'hcpcsevents')       : "HCPCS events",
-			('hosp', 'drgcodes')          : "Diagnosis-related group codes",
-			('hosp', 'services')          : "Hospital services",
-			('hosp', 'transfers')         : "Patient transfers",
-			('hosp', 'provider')          : "Provider information",
-			('hosp', 'omr')               : "Order monitoring results",
-			('icu', 'chartevents')        : "Patient charting data (vital signs, etc.)",
-			('icu', 'datetimeevents')     : "Date/time-based events",
-			('icu', 'inputevents')        : "Patient intake data",
-			('icu', 'outputevents')       : "Patient output data",
-			('icu', 'procedureevents')    : "ICU procedures",
-			('icu', 'ingredientevents')   : "Detailed medication ingredients",
-			('icu', 'd_items')            : "Dictionary of ICU items",
-			('icu', 'icustays')           : "ICU stay information",
-			('icu', 'caregiver')          : "Caregiver information"
-		}
-		return table_info.get((module, table_name), "No description available")
-
-
-	def load_reference_table(self, mimic_path: str, module: str, table_name: str,
-					encoding: str = 'latin-1') -> pd.DataFrame:
-		"""Loads a reference/dictionary table in full.
-
-		Args:
-			mimic_path: Path to the MIMIC-IV dataset
-			module: Module name ('hosp' or 'icu')
-			table_name: Name of the table to load
-			encoding: File encoding
-
-		Returns:
-			DataFrame containing the full reference table
-		"""
-		# Check for uncompressed CSV first (prioritize over compressed)
-		table_path_csv = os.path.join(mimic_path, module, f"{table_name}.csv")
-		table_path_gz  = os.path.join(mimic_path, module, f"{table_name}.csv.gz")
-
-		logging.info(f"Looking for reference table at: {table_path_csv} or {table_path_gz}")
-
-		# Prioritize uncompressed CSV over gzipped format
-		if os.path.exists(table_path_csv):
-			table_path = table_path_csv
-			logging.info(f"Found uncompressed CSV file: {table_path}")
-
-		elif os.path.exists(table_path_gz):
-			table_path = table_path_gz
-			logging.info(f"Found gzipped file: {table_path}")
-
-		else:
-			logging.error(f"Reference table {table_name} not found at {table_path_csv} or {table_path_gz}!")
-			return pd.DataFrame()
-
-		try:
-
-			logging.info(f"Loading reference table {table_name} from {table_path}...")
-			compression = 'gzip' if table_path.endswith('.gz') else None
-
-			# For reference tables, we load the complete file (no sampling)
-			df = pd.read_csv(table_path, encoding=encoding, compression=compression)
-
-			if df is not None:
-				df = convert_string_dtypes(df)
-				logging.info(f"Successfully loaded {table_name} with {len(df)} rows and {len(df.columns)} columns")
-				return df
-			else:
-				logging.error(f"Failed to load reference table {table_name} - empty DataFrame returned")
-				return pd.DataFrame()
-
-		except Exception as e:
-			logging.error(f"Error loading reference table {table_name}: {str(e)}")
-			logging.error(traceback.format_exc())
-			return pd.DataFrame()
-
-
-	def load_patient_cohort(self, mimic_path: str, sample_size: int, encoding: str = 'latin-1',
-						use_dask: bool = False, max_chunks: Optional[int] = None) -> Tuple[pd.DataFrame, set]:
-		"""Loads and samples the patients table to create a base cohort.
-
-		Args:
-			mimic_path: Path to the MIMIC-IV dataset
-			sample_size: Number of patients to sample
-			encoding: File encoding
-			use_dask: Whether to use Dask for loading
-			max_chunks: Maximum number of chunks to process (for debugging or limiting memory usage)
-
-		Returns:
-			Tuple containing:
-				- DataFrame with the sampled patients
-				- Set of sampled subject_ids for filtering other tables
-		"""
-
-		# Prioritize uncompressed CSV over gzipped format
-		patients_path_csv = os.path.join(mimic_path, 'hosp', 'patients.csv')
-		patients_path_gz = os.path.join(mimic_path, 'hosp', 'patients.csv.gz')
-
-		if os.path.exists(patients_path_csv):
-			patients_path = patients_path_csv
-			logging.info(f"Using uncompressed patients file: {patients_path}")
-
-		elif os.path.exists(patients_path_gz):
-			patients_path = patients_path_gz
-			logging.info(f"Using compressed patients file: {patients_path}")
-
-		else:
-			logging.error("Patients table not found!")
-			return pd.DataFrame(), set()
-
-		logging.info(f"Loading patients table with sample_size={sample_size}...")
-
-		try:
-
-			# Load with pandas
-			args = { 'encoding': encoding, 'compression': 'gzip' if patients_path.endswith('.gz') else None }
-
-			if use_dask:
-				# Load with Dask, avoiding the blocksize warning
-				dask_read_params = args.copy()
-				dask_read_params['low_memory'] = False
-
-				try:
-					# Attempt 1: Infer datetime columns and set to object
-					sample_df = pd.read_csv(patients_path, nrows=5, **dask_read_params)
-					datetime_cols = [col for col in sample_df.columns if 'time' in col.lower() or 'date' in col.lower()]
-					dtype_dict = {col: 'object' for col in datetime_cols}
-
-					current_dask_read_params = dask_read_params.copy()
-					current_dask_read_params['dtype'] = dtype_dict
-
-					logging.info(f"Loading patients with Dask, attempting dtypes: {dtype_dict} based on column names.")
-					df = dd.read_csv(patients_path, blocksize=None, **current_dask_read_params)
-
-				except Exception as e:
-					logging.warning(f"Dask dtype specification based on column names failed for patients: {str(e)}. Falling back to all object dtypes for Dask reading.")
-					# Attempt 2: Fallback to all object dtypes
-					fallback_dask_read_params = dask_read_params.copy()
-					fallback_dask_read_params['dtype'] = 'object'
-					df = dd.read_csv(patients_path, blocksize=None, **fallback_dask_read_params)
-
-				# Compute the full DataFrame if sample size is larger than total
-				df_patients = df.compute()
-
-			else: # Not using Dask, use pandas
-				# Load in chunks, respecting max_chunks
-				chunks = []
-				chunk_count = 0
-				total_rows_processed = 0
-				with pd.read_csv(patients_path, chunksize=100000, **args) as reader:
-					for chunk in reader:
-						chunks.append(chunk)
-						chunk_count += 1
-						total_rows_processed += len(chunk)
-						if max_chunks is not None and max_chunks != -1 and chunk_count >= max_chunks:
-							logging.info(f"Reached max_chunks ({max_chunks}) for patients.csv. Processed {chunk_count} chunks.")
-							break
-
-				if not chunks:
-					logging.error("No data loaded from patients.csv with pandas chunking.")
-					return pd.DataFrame(), set()
-
-				df_loaded_patients = pd.concat(chunks, ignore_index=True)
-				total_patients_processed = len(df_loaded_patients)
-
-				# Apply sampling (using head as per original logic) if needed
-				if sample_size and sample_size < total_patients_processed:
-					df_patients = df_loaded_patients.head(sample_size)
-					logging.info(f"Took first {len(df_patients)} patients from {total_patients_processed} processed rows.")
-				else:
-					df_patients = df_loaded_patients
-					logging.info(f"Loaded all {total_patients_processed} processed patient rows (or sample_size was not applicable).")
-
-			df_patients = convert_string_dtypes(df_patients)
-
-			sampled_subject_ids = set(df_patients['subject_id'])
-			logging.info(f"Loaded patients: {len(df_patients)} (processed {total_patients_processed} before sampling)")
-			return df_patients, sampled_subject_ids
-
-		except Exception as e:
-			logging.error(f"Error loading patients table: {str(e)}")
-			logging.error(traceback.format_exc())
-			return pd.DataFrame(), set()
-
-
-	def load_filtered_table(self,
-								mimic_path     : str,
-								module         : str,
-								table_name     : str,
-								filter_column  : str,
-								filter_values  : set,
-								encoding       : str = 'latin-1',
-								use_dask       : bool = False,
-								max_chunks     : Optional[int] = None
-								) -> pd.DataFrame:
-		"""
-			Loads a table and filters it based on specified column values.
-
-			Args:
-				mimic_path   : Path to the MIMIC-IV dataset
-				module       : Module name ('hosp' or 'icu')
-				table_name   : Name of the table to load
-				filter_column: Column name to filter on
-				filter_values: Set of values to include
-				encoding     : File encoding
-				use_dask     : Whether to use Dask for loading
-				max_chunks   : Maximum number of chunks to process (for debugging or limiting memory usage)
-
-			Returns:
-				DataFrame containing the filtered table
-			"""
-
-		def _get_table_path() -> Optional[str]:
-
-			# Prioritize uncompressed CSV over gzipped format
-			table_path_csv = os.path.join(mimic_path, module, f"{table_name}.csv")
-			table_path_gz  = os.path.join(mimic_path, module, f"{table_name}.csv.gz")
-
-			logging.info(f"Looking for table {table_name} at: {table_path_csv} or {table_path_gz}")
-
-			if os.path.exists(table_path_csv):
-				table_path = table_path_csv
-				logging.info(f"Found uncompressed CSV file: {table_path}")
-
-			elif os.path.exists(table_path_gz):
-				table_path = table_path_gz
-				logging.info(f"Found gzipped file: {table_path}")
-
-			else:
-				logging.error(f"Table {table_name} not found!")
-				return None
-
-			logging.info(f"Loading and filtering {table_name} table...")
-			logging.info(f"Filtering on column {filter_column} with {len(filter_values)} unique values")
-
-			return table_path
-
-		# Get the table path
-		table_path = _get_table_path()
-
-		if table_path is None:
-			return pd.DataFrame()
-
-		args = { 'encoding': encoding, 'compression': 'gzip' if table_path.endswith('.gz') else None }
-
-		if use_dask:
-			# More robust Dask dtype handling, similar to load_mimic_table
-			dask_read_params = args.copy()
-			dask_read_params['low_memory'] = False
-
-			try:
-				# Attempt 1: Infer datetime columns and set to object
-				sample_df = pd.read_csv(table_path, nrows=5, **dask_read_params)
-				datetime_cols = [col for col in sample_df.columns if 'time' in col.lower() or 'date' in col.lower()]
-				dtype_dict = {col: 'object' for col in datetime_cols}
-
-				current_dask_read_params = dask_read_params.copy()
-				current_dask_read_params['dtype'] = dtype_dict
-
-				logging.info(f"Loading {table_name} with Dask, attempting dtypes: {dtype_dict} based on column names.")
-				df = dd.read_csv(table_path, blocksize=None, **current_dask_read_params)
-
-			except Exception as e:
-				logging.warning(f"Dask dtype specification based on column names failed for {table_name}: {str(e)}. Falling back to all object dtypes for Dask reading.")
-				# Attempt 2: Fallback to all object dtypes
-				fallback_dask_read_params = dask_read_params.copy()
-				fallback_dask_read_params['dtype'] = 'object'
-				df = dd.read_csv(table_path, blocksize=None, **fallback_dask_read_params)
-
-			# Check if filter column exists
-			if filter_column not in df.columns:
-				logging.warning(f"Filter column {filter_column} not found in {table_name}")
-				return pd.DataFrame()
-
-			# Filter the DataFrame (this is efficient in Dask as it's a lazy operation)
-			filtered_df = df[df[filter_column].isin(list(filter_values))]
-
-			# Compute the filtered result
-			result_df = filtered_df.compute()
-			logging.info(f"Filtered {table_name} to {len(result_df)} rows using Dask")
-
-			return convert_string_dtypes(result_df)
-
-
-		# For pandas: Use chunking to filter while loading to minimize memory usage
-		filtered_chunks = []
-
-		logging.info(f"Loading {table_name} with pandas chunk processing...")
-
-		with pd.read_csv(table_path, chunksize=100000, **args) as reader:
-
-			# Process file in chunks to minimize memory usage
-			chunk_count = 0
-			for chunk in reader:
-				chunk_count += 1
-
-				# Check filter column on first chunk
-				if chunk_count == 1 and filter_column not in chunk.columns:
-					logging.warning(f"Filter column {filter_column} not found in {table_name}")
-					return pd.DataFrame()
-
-				# Filter each chunk
-				filtered_chunk = chunk[chunk[filter_column].isin(filter_values)]
-
-				# Only keep chunks with matching rows
-				if len(filtered_chunk) > 0:
-					filtered_chunks.append(filtered_chunk)
-
-				if max_chunks is not None and max_chunks != -1 and chunk_count >= max_chunks:
-					logging.info(f"Reached max_chunks ({max_chunks}) for {table_name} during filtered load. Processed {chunk_count} chunks.")
-					break
-
-				# Log progress periodically
-				if chunk_count % 10 == 0:
-					logging.info(f"Processed {chunk_count} chunks of {table_name}...")
-
-		# Combine all filtered chunks
-		if filtered_chunks:
-			result_df = pd.concat(filtered_chunks, ignore_index=True)
-			logging.info(f"Loaded {len(result_df)} rows from {table_name} after filtering")
-
-			return convert_string_dtypes(result_df)
-
-
-		logging.warning(f"No rows found in {table_name} after filtering")
-		return pd.DataFrame()
-
 
 	def merge_tables(self,
 						left_df : Union[pd.DataFrame, dd.DataFrame],
@@ -1165,7 +936,7 @@ class DataLoader:
 		Returns:
 			Merged DataFrame (pandas or Dask, matches input type if consistent)
 		"""
-		is_dask_left = isinstance(left_df, dd.DataFrame)
+		is_dask_left  = isinstance(left_df, dd.DataFrame)
 		is_dask_right = isinstance(right_df, dd.DataFrame)
 
 		if is_dask_left != is_dask_right:
@@ -1204,238 +975,8 @@ class DataLoader:
 		return result
 
 
-	def load_connected_tables(self,
-									mimic_path : str,
-									sample_size: int = DEFAULT_SAMPLE_SIZE,
-									encoding   : str = 'latin-1',
-									use_dask   : bool = False,
-									merged_view: bool = False,
-									max_chunks : Optional[int] = None
-									) -> Tuple[Dict[str, pd.DataFrame], pd.DataFrame]:
-		"""
-			Loads and connects the six main MIMIC-IV tables: patients, admissions, diagnoses_icd, d_icd_diagnoses, poe, and poe_detail.
 
-			This method coordinates the loading of all tables in the proper order to maintain
-			data integrity throughout the connected tables.
 
-			Args:
-				mimic_path: Path to the MIMIC-IV dataset
-				sample_size: Number of rows to sample for patients table
-				encoding: File encoding
-				use_dask: Whether to use Dask for loading larger tables
-				merged_view: If True, merges tables into a single comprehensive DataFrame
-				max_chunks: Maximum number of chunks to process for underlying table loads
-
-			Returns:
-				If merged_view=False: Dictionary containing the loaded tables
-				If merged_view=True: Tuple containing (Dictionary of tables, Merged DataFrame)
-		"""
-
-		logging.info("Loading connected MIMIC-IV tables...")
-		tables = self._get_individual_tables(mimic_path=mimic_path, sample_size=sample_size, encoding=encoding, use_dask=use_dask, max_chunks=max_chunks)
-
-		# If merged view is requested, create a comprehensive merged dataframe
-		merged_df = pd.DataFrame()
-		if merged_view:
-			logging.info("Merged view requested by caller, creating comprehensive merged dataframe...")
-			merged_df = self.create_merged_view(tables)
-		else:
-			logging.info("Merged view not requested by caller.")
-
-		return tables, merged_df
-
-
-	def _get_individual_tables(self,
-									mimic_path : str,
-									sample_size: int = DEFAULT_SAMPLE_SIZE,
-									encoding   : str = 'latin-1',
-									use_dask   : bool = False,
-									max_chunks : Optional[int] = None
-									) -> Dict[str, pd.DataFrame]:
-
-		tables = {}
-
-		# Prepare args for table loading functions, excluding max_chunks for load_reference_table
-		cohort_args = { 'mimic_path': mimic_path, 'encoding': encoding, 'use_dask': use_dask, 'max_chunks': max_chunks }
-		filter_args = { 'mimic_path': mimic_path, 'module':'hosp', 'encoding': encoding, 'use_dask': use_dask, 'max_chunks': max_chunks } # module will be overridden per call if needed for icu
-
-		# Step 1: Load reference table d_icd_diagnoses (always load in full, no max_chunks)
-		tables['d_icd_diagnoses'] = self.load_reference_table(
-			mimic_path=mimic_path,
-			module='hosp',
-			table_name='d_icd_diagnoses',
-			encoding=encoding
-		)
-
-		if tables['d_icd_diagnoses'].empty:
-			return {}  # Cannot proceed without reference table
-
-		# Step 2: Load and sample patients table
-		tables['patients'], sampled_subject_ids = self.load_patient_cohort(sample_size=sample_size, **cohort_args)
-
-		if tables['patients'].empty:
-			return {}  # Cannot proceed without patients
-
-		# Step 3: Load admissions for sampled patients
-		tables['admissions'] = self.load_filtered_table(table_name='admissions', filter_column='subject_id', filter_values=sampled_subject_ids, **filter_args )
-
-		if tables['admissions'].empty:
-			logging.warning("No admissions found for sampled patients")
-
-
-
-		# Get hadm_ids for filtering subsequent tables
-		sampled_hadm_ids = set(tables['admissions']['hadm_id']) if 'hadm_id' in tables['admissions'].columns else set()
-
-
-		# Step 4: Load diagnoses for sampled admissions
-		if sampled_hadm_ids:
-			tables['diagnoses_icd'] = self.load_filtered_table(table_name='diagnoses_icd', filter_column='hadm_id', filter_values=sampled_hadm_ids, **filter_args )
-
-			# Step 5: Link diagnoses with their descriptions
-			if not tables['diagnoses_icd'].empty:
-				tables['diagnoses_icd'] = self.merge_tables( left_df=tables['diagnoses_icd'], right_df=tables['d_icd_diagnoses'], on=['icd_code', 'icd_version'], how='left' )
-
-		else:
-			tables['diagnoses_icd'] = pd.DataFrame()
-			logging.warning("No diagnoses loaded: missing admission IDs")
-
-
-		# Step 6: Load POE (Provider Order Entry) for sampled admissions
-		if sampled_hadm_ids:
-			tables['poe'] = self.load_filtered_table(table_name='poe', filter_column='hadm_id', filter_values=sampled_hadm_ids, **filter_args )
-
-			# Get poe_ids for filtering poe_detail
-			sampled_poe_ids = set(tables['poe']['poe_id']) if 'poe_id' in tables['poe'].columns else set()
-
-			# Step 7: Load POE_detail for orders in our cohort
-			if sampled_poe_ids:
-				tables['poe_detail'] = self.load_filtered_table(table_name='poe_detail', filter_column='poe_id', filter_values=sampled_poe_ids, **filter_args )
-			else:
-				tables['poe_detail'] = pd.DataFrame()
-				logging.warning("No POE details loaded: missing POE IDs")
-
-		else:
-			tables['poe'] = pd.DataFrame()
-			tables['poe_detail'] = pd.DataFrame()
-			logging.warning("No POE data loaded: missing admission IDs")
-
-		logging.info("Completed loading connected MIMIC-IV tables")
-
-		return tables
-
-
-	def create_merged_view(self, tables: Dict[str, pd.DataFrame]) -> pd.DataFrame:
-		"""
-		Creates a comprehensive merged view of connected MIMIC-IV tables.
-
-		Args:
-			tables: Dictionary containing loaded MIMIC-IV tables
-
-		Returns:
-			Merged DataFrame
-		"""
-
-		logging.info("Creating merged view of connected tables...")
-
-		# Extract the tables for readability
-		patients_df        = tables.get('patients', pd.DataFrame())
-		admissions_df      = tables.get('admissions', pd.DataFrame())
-		diagnoses_df       = tables.get('diagnoses_icd', pd.DataFrame())
-		d_icd_diagnoses_df = tables.get('d_icd_diagnoses', pd.DataFrame())
-		poe_df             = tables.get('poe', pd.DataFrame())
-		poe_detail_df      = tables.get('poe_detail', pd.DataFrame())
-
-		# Check if we have our core tables
-		if not patients_df.empty and not admissions_df.empty:
-
-			# 1. Start with patients + admissions
-			logging.info("Merging patients and admissions tables...")
-
-			merged_df = self.merge_tables( left_df=patients_df, right_df=admissions_df, on=['subject_id'], how='inner' )
-
-			# 2. Add diagnoses if available
-			if not diagnoses_df.empty:
-				logging.info("Adding diagnoses information...")
-
-				# Prepare diagnoses with descriptions
-				if not d_icd_diagnoses_df.empty and 'icd_code' in diagnoses_df.columns:
-					diagnoses_with_desc = self.merge_tables( left_df=diagnoses_df, right_df=d_icd_diagnoses_df, on=['icd_code', 'icd_version'], how='left' )
-
-				else:
-					diagnoses_with_desc = diagnoses_df
-
-				# Take the first diagnosis for each admission to avoid duplicating rows
-				logging.info("Selecting primary diagnoses for each admission...")
-
-				if 'seq_num' in diagnoses_with_desc.columns:
-
-					# Get primary diagnoses
-					first_diag = diagnoses_with_desc.sort_values('seq_num').groupby(['subject_id', 'hadm_id']).first().reset_index()
-
-					# Merge primary diagnoses with the main dataset
-					merged_df = self.merge_tables( left_df=merged_df, right_df=first_diag, on=['subject_id', 'hadm_id'], how='left' )
-
-
-			# 3. Add first POE record for each admission if available
-			if not poe_df.empty:
-				logging.info("Adding provider order information...")
-
-				if 'ordertime' in poe_df.columns:
-					# Take the first order for each admission
-					first_order = poe_df.sort_values('ordertime').groupby(['subject_id', 'hadm_id']).first().reset_index()
-
-					# Merge first order with the main dataset
-					merged_df = self.merge_tables( left_df=merged_df, right_df=first_order, on=['subject_id', 'hadm_id'], how='left' )
-
-					# 4. Add POE details if available
-					if not poe_detail_df.empty:
-						logging.info("Adding provider order details...")
-
-						# Reshape order details from tall to wide format for key fields
-						if 'field_name' in poe_detail_df.columns and 'field_value' in poe_detail_df.columns:
-
-							# Get most important fields
-							important_fields = poe_detail_df.field_name.value_counts().head(10).index.tolist()
-
-							# Filter to just the important fields
-							poe_detail_filtered = poe_detail_df[poe_detail_df.field_name.isin(important_fields)]
-
-							# Pivot to get one row per order with columns for each field
-							try:
-
-								poe_detail_wide = poe_detail_filtered.pivot_table(
-									index   = ['poe_id'],
-									columns = 'field_name',
-									values  = 'field_value',
-									aggfunc = 'first'
-								).reset_index()
-
-								# Merge into main dataframe if pivot was successful
-								if not poe_detail_wide.empty:
-									merged_df = self.merge_tables( left_df=merged_df, right_df=poe_detail_wide, on=['poe_id'], how='left' )
-
-							except Exception as e:
-
-								logging.warning(f"Could not pivot POE details: {e}")
-
-								# Just merge in the first detail record for each POE
-								first_detail = poe_detail_df.groupby('poe_id').first().reset_index()
-
-								merged_df = self.merge_tables( left_df=merged_df, right_df=first_detail, on=['poe_id'], how='left' )
-
-			# Finalize merged dataframe
-			logging.info(f"Created merged view with {len(merged_df)} rows and {len(merged_df.columns)} columns")
-			return merged_df
-
-
-		logging.warning("Cannot create merged view: missing core tables")
-		return pd.DataFrame()
-
-
-	@property
-	def study_table_list(self):
-		return ['patients', 'admissions', 'diagnoses_icd', 'd_icd_diagnoses', 'poe', 'poe_detail']
 
 
 if __name__ == '__main__':
@@ -1446,6 +987,9 @@ if __name__ == '__main__':
 
 	# Scan the directory
 	dataset_info_df, _ = data_loader.scan_mimic_directory()
+
+	subject_ids_list = data_loader.sampled_subject_ids_list(num_samples=10, random_selection=True)
+	print(subject_ids_list)
 
 	# TODO (next step):
 	# 	1. Filter the large tables with the subject_ids_list.

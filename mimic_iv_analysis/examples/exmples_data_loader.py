@@ -399,7 +399,7 @@ class ExampleDataLoader:
         num_subjects_to_load = min(5, total_subjects) # Load for 5 subjects, or fewer if not enough
         logging.info(f"Attempting to load data for {num_subjects_to_load} subjects.")
 
-        target_subject_ids = loader.get_sampled_subject_ids_list(num_subjects_to_load)
+        target_subject_ids = loader.sampled_subject_ids_list(num_subjects_to_load)
 
         if not target_subject_ids:
             logging.warning(f"Could not retrieve target subject IDs for sampling. Found {len(loader._all_subject_ids if loader._all_subject_ids else [])} subjects in loader state.")
