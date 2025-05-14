@@ -28,7 +28,7 @@ For detailed information on the MIMIC-IV data structure used by this project, pl
 The repository is organized as follows:
 
 
-
+```
 mimic_iv_analysis/
 ├── mimic_iv_analysis/ # Main package source code
 │ ├── init.py # Package initialization
@@ -52,6 +52,9 @@ mimic_iv_analysis/
 ├── README.md # This file
 ├── requirements.txt # Python package dependencies
 └── setup.py # Package setup script
+```
+
+
 ## Installation
 
 ### Prerequisites
