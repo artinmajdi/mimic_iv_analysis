@@ -880,6 +880,5 @@ if __name__ == '__main__':
 
 
 	# TODO (next step):
-	#   3. Save the merged table as a parquet file.
-	#   4. Figure out what to do, for the poe table (if after filtering , it make sense to merge that into the rest of the table, do it. otherwise, I should update the rest of the code to work with two files (one poe, the other , the rest of tables))
-	#   5. convert the code into a MacOS/Windows app
+	#   1. fix the dashboard not showing the merged table
+	#   2. Save the merged table as a parquet file.

@@ -383,7 +383,6 @@ class MIMICDashboardApp:
 		Returns:
 			str: The selected display name for the table
 		"""
-		# TODO: need to fix the merged table mode. currently it is not working.
 
 		# Get sorted table options for the selected module
 		table_options = sorted(st.session_state.available_tables[module])
