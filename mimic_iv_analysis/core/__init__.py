@@ -11,6 +11,5 @@ Components:
 
 from .clustering import ClusteringAnalyzer, ClusterInterpreter
 from .feature_engineering import FeatureEngineerUtils
-from .data_loader import DataLoader, TableNamesHOSP, TableNamesICU
 
-__all__ = ['ClusteringAnalyzer', 'ClusterInterpreter', 'FeatureEngineerUtils', 'DataLoader', 'TableNamesHOSP', 'TableNamesICU']
+__all__ = ['ClusteringAnalyzer', 'ClusterInterpreter', 'FeatureEngineerUtils']
