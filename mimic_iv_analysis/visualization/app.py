@@ -11,6 +11,7 @@ import pandas as pd
 
 # Streamlit import
 import streamlit as st
+import streamlit.web.cli as stcli # For programmatic Sreamlit launch
 
 # Local application imports
 from mimic_iv_analysis.core import FeatureEngineerUtils
@@ -34,10 +35,15 @@ class MIMICDashboardApp:
 
 	def __init__(self):
 		logging.info("Initializing MIMICDashboardApp...")
+
 		# Initialize core components
+		logging.info(f"Initializing DataLoader with path: {DEFAULT_MIMIC_PATH}")
 		self.data_handler      = DataLoader(mimic_path=Path(DEFAULT_MIMIC_PATH))
+
+		logging.info("Initializing ParquetConverter...")
 		self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
-		self.example_loader    = ExampleDataLoader()
+
+		logging.info("Initializing FeatureEngineerUtils...")
 		self.feature_engineer  = FeatureEngineerUtils()
 
 		# Initialize UI components for tabs
@@ -65,7 +71,7 @@ class MIMICDashboardApp:
 		st.session_state.selected_module = None
 		st.session_state.selected_table = None
 		st.session_state.df = None
-		st.session_state.num_subjects_to_load = 0
+		st.session_state.num_subjects_to_load = 10
 		st.session_state.sample_size = DEFAULT_SAMPLE_SIZE
 		st.session_state.available_tables = {}
 		st.session_state.file_paths = {}
@@ -116,7 +122,9 @@ class MIMICDashboardApp:
 
 	def run(self):
 		"""Run the main application loop."""
+
 		logging.info("Starting MIMICDashboardApp run...")
+
 		# Set page config (do this only once at the start)
 		st.set_page_config( page_title="MIMIC-IV Explorer", page_icon="🏥", layout="wide", initial_sidebar_state="expanded" )
 
@@ -203,14 +211,18 @@ class MIMICDashboardApp:
 			st.session_state.selected_table = None
 			st.sidebar.info("Path changed. Please re-scan.")
 
-
 		# Scan button
 		if st.sidebar.button("Scan MIMIC-IV Directory", key="scan_button"):
+
 			if not mimic_path or not os.path.isdir(mimic_path):
 				st.sidebar.error("Please enter a valid directory path for the MIMIC-IV dataset")
+
 			else:
+
 				with st.spinner("Scanning directory..."):
+
 					try:
+
 						# Update the data handler's path if it changed
 						if mimic_path != str(self.data_handler.mimic_path):
 							self.data_handler = DataLoader(mimic_path=Path(mimic_path))
@@ -338,7 +350,7 @@ class MIMICDashboardApp:
 							disabled=total_unique_subjects == 0,
 							key="num_subjects_input",
 							step=10,
-							value=max(1, st.session_state.get('num_subjects_to_load', 10)),
+							value=st.session_state.get('num_subjects_to_load', 10),
 							help=help_text_num_subjects
 						)
 						st.sidebar.caption(f"Total unique subjects found: {total_unique_subjects if total_unique_subjects > 0 else 'N/A (Scan or check patients.csv)'}")
@@ -817,8 +829,9 @@ class MIMICDashboardApp:
 
 
 def main():
-	app = MIMICDashboardApp()
-	app.run()
+    app = MIMICDashboardApp()
+    app.run()
+
 
 if __name__ == "__main__":
-	main()
+    main()

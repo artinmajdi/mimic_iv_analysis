@@ -869,9 +869,7 @@ class ParquetConverter:
 
 if __name__ == '__main__':
 
-	MIMIC_DATA_PATH = "/Users/artinmajdi/Documents/GitHubs/RAP/mimic__pankaj/dataset/mimic-iv-3.1"
-
-	examples = Examples(partial_loading=True, num_subjects=100)
+	examples = Examples(partial_loading=True, num_subjects=10)
 
 	# Scan the directory
 	examples.counter()
