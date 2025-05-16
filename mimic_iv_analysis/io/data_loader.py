@@ -25,31 +25,31 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Utility functions
 # def convert_string_dtypes(df):
-# 	"""Convert pandas StringDtype to object type to avoid Arrow conversion issues in Streamlit.
+#   """Convert pandas StringDtype to object type to avoid Arrow conversion issues in Streamlit.
 
-# 	Args:
-# 		df: Input DataFrame (pandas or Dask)
+#   Args:
+#       df: Input DataFrame (pandas or Dask)
 
-# 	Returns:
-# 		DataFrame with StringDtype columns converted to object type
-# 	"""
-# 	if df is None:
-# 		return df
+#   Returns:
+#       DataFrame with StringDtype columns converted to object type
+#   """
+#   if df is None:
+#       return df
 
-# 	if hasattr(df, 'compute'):
-# 		# For Dask DataFrame, apply the conversion without computing
-# 		string_cols = [col for col in df.columns if str(df[col].dtype) == 'string']
-# 		if string_cols:
-# 			return df.map_partitions(lambda partition:
-# 				partition.assign(**{col: partition[col].astype('object') for col in string_cols})
-# 			)
-# 		return df
+#   if hasattr(df, 'compute'):
+#       # For Dask DataFrame, apply the conversion without computing
+#       string_cols = [col for col in df.columns if str(df[col].dtype) == 'string']
+#       if string_cols:
+#           return df.map_partitions(lambda partition:
+#               partition.assign(**{col: partition[col].astype('object') for col in string_cols})
+#           )
+#       return df
 
-# 	# For pandas DataFrame
-# 	for col in df.columns:
-# 		if hasattr(df[col], 'dtype') and str(df[col].dtype) == 'string':
-# 			df[col] = df[col].astype('object')
-# 	return df
+#   # For pandas DataFrame
+#   for col in df.columns:
+#       if hasattr(df[col], 'dtype') and str(df[col].dtype) == 'string':
+#           df[col] = df[col].astype('object')
+#   return df
 
 # Constants
 DEFAULT_MIMIC_PATH      = Path("/Users/artinmajdi/Documents/GitHubs/RAP/mimic__pankaj/dataset/mimic-iv-3.1")
@@ -224,9 +224,10 @@ parse_dates_all = [
 
 
 
-class DataLoader:	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
+class DataLoader:
+	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
 
-	DEFAULT_STUDY_TABLES_LIST = [	TableNamesHOSP.PATIENTS,
+	DEFAULT_STUDY_TABLES_LIST = [   TableNamesHOSP.PATIENTS,
 									TableNamesHOSP.ADMISSIONS,
 									TableNamesHOSP.DIAGNOSES_ICD,
 									TableNamesHOSP.D_ICD_DIAGNOSES,
@@ -234,7 +235,7 @@ class DataLoader:	"""Handles scanning, loading, and providing info for MIMIC-IV 
 									TableNamesHOSP.POE_DETAIL]
 
 
-	def __init__(self, 	mimic_path        : Path = DEFAULT_MIMIC_PATH,
+	def __init__(self,  mimic_path        : Path = DEFAULT_MIMIC_PATH,
 						study_tables_list : Optional[List[TableNamesHOSP | TableNamesICU]] = None):
 
 		# MIMIC_IV v3.1 path
@@ -850,6 +851,6 @@ if __name__ == '__main__':
 
 
 	# TODO (next step):
-	# 	3. Save the merged table as a parquet file.
+	#   3. Save the merged table as a parquet file.
 	#   4. Figure out what to do, for the poe table (if after filtering , it make sense to merge that into the rest of the table, do it. otherwise, I should update the rest of the code to work with two files (one poe, the other , the rest of tables))
 	#   5. convert the code into a MacOS/Windows app
