@@ -18,6 +18,8 @@ import dask.dataframe as dd
 import humanize
 from tqdm import tqdm
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 
 # Import filtering functionality
 
@@ -769,10 +771,12 @@ if __name__ == '__main__':
 	data_loader.scan_mimic_directory()
 
 	subject_ids_list = data_loader.get_partial_subject_id_list_for_partial_loading(num_subjects=10, random_selection=True)
-	print(subject_ids_list)
 
 	# Load table
 	df = data_loader.load_table(table_name=TableNamesHOSP.DIAGNOSES_ICD, partial_loading=True, subject_ids=subject_ids_list)
+
+
+	print('done')
 
 
 	# TODO (next step):
