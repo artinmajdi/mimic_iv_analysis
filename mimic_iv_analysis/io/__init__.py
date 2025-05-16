@@ -1,3 +1,3 @@
-from .data_loader import DataLoader, ParquetConverter, TableNamesHOSP, TableNamesICU, Examples
+from .data_loader import DataLoader, ParquetConverter, TableNamesHOSP, TableNamesICU, ExampleDataLoader
 
-__all__ = ['DataLoader', 'ParquetConverter', 'TableNamesHOSP', 'TableNamesICU', 'Examples']
+__all__ = ['DataLoader', 'ParquetConverter', 'TableNamesHOSP', 'TableNamesICU', 'ExampleDataLoader']

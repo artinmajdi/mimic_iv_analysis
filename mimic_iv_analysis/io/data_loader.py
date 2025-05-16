@@ -224,8 +224,7 @@ parse_dates_all = [
 
 
 
-class DataLoader:
-	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
+class DataLoader:	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
 
 	DEFAULT_STUDY_TABLES_LIST = [	TableNamesHOSP.PATIENTS,
 									TableNamesHOSP.ADMISSIONS,
@@ -254,8 +253,7 @@ class DataLoader:
 
 	@lru_cache(maxsize=None)
 	def scan_mimic_directory(self):
-		"""
-			Scans the MIMIC-IV directory structure and updates the tables_info_df and tables_info_dict attributes.
+		"""Scans the MIMIC-IV directory structure and updates the tables_info_df and tables_info_dict attributes.
 
 			tables_info_df is a DataFrame containing info:
 				pd.DataFrame: DataFrame containing columns:
@@ -699,7 +697,8 @@ class DataLoader:
 		return {'merged_wo_poe': merged_wo_poe, 'merged_w_poe': merged_w_poe, 'poe_merged': poe_merged}
 
 
-class Examples:
+class ExampleDataLoader:
+	"""ExampleDataLoader class for loading example data."""
 	def __init__(self, partial_loading: bool = False, num_subjects: int = 100, random_selection: bool = False):
 		self.data_loader = DataLoader()
 		self.data_loader.scan_mimic_directory()
@@ -804,16 +803,19 @@ class ParquetConverter:
 				target_parquet_path: Optional target path for the parquet file
 		"""
 
-		csv_file_path, suffix = self._get_csv_file_path(table_name)
-		print(f"Saving {table_name.value} with suffix {suffix}")
+		if df is None or target_parquet_path is None:
 
-		# Load the CSV file
-		if df is None:
-			df = self.data_loader.load_csv_table_with_correct_column_datatypes(file_path=csv_file_path)
+			# Get csv file path
+			csv_file_path, suffix = self._get_csv_file_path(table_name)
+			print(f"Saving {table_name.value} with suffix {suffix}")
 
-		# Get parquet directory
-		if target_parquet_path is None:
-			target_parquet_path = csv_file_path.parent / csv_file_path.name.replace(suffix, '.parquet')
+			# Load the CSV file
+			if df is None:
+				df = self.data_loader.load_csv_table_with_correct_column_datatypes(file_path=csv_file_path)
+
+			# Get parquet directory
+			if target_parquet_path is None:
+				target_parquet_path = csv_file_path.parent / csv_file_path.name.replace(suffix, '.parquet')
 
 		# Save to parquet
 		df.to_parquet(target_parquet_path, engine='pyarrow')
@@ -838,24 +840,16 @@ if __name__ == '__main__':
 
 	MIMIC_DATA_PATH = "/Users/artinmajdi/Documents/GitHubs/RAP/mimic__pankaj/dataset/mimic-iv-3.1"
 
-	data_loader = DataLoader()
+	examples = Examples(partial_loading=True, num_subjects=100)
 
 	# Scan the directory
-	data_loader.scan_mimic_directory()
-
-	# subject_ids_list = data_loader.get_partial_subject_id_list_for_partial_loading(num_subjects=10, random_selection=True)
-
-	# Load table
-	# df = data_loader.load_table(table_name=TableNamesHOSP.DIAGNOSES_ICD, partial_loading=True, subject_ids=subject_ids_list)
-
+	examples.counter()
 
 
 	print('done')
 
 
 	# TODO (next step):
-	# 	1. Check loading of all tables to make sure filtering works fine
-	# 	2. double check the merging of tables
 	# 	3. Save the merged table as a parquet file.
 	#   4. Figure out what to do, for the poe table (if after filtering , it make sense to merge that into the rest of the table, do it. otherwise, I should update the rest of the code to work with two files (one poe, the other , the rest of tables))
 	#   5. convert the code into a MacOS/Windows app

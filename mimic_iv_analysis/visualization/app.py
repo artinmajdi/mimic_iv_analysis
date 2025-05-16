@@ -26,7 +26,7 @@ from sklearn.preprocessing import MinMaxScaler
 import streamlit as st
 
 # Local application imports
-from mimic_iv_analysis.core import FeatureEngineerUtils, DataLoader
+from mimic_iv_analysis.core import FeatureEngineerUtils, DataLoader, ParquetConverter, ExampleDataLoader
 from mimic_iv_analysis.visualization.app_components import FilteringTab, FeatureEngineeringTab, AnalysisVisualizationTab, ClusteringAnalysisTab
 
 from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtils
@@ -47,8 +47,10 @@ class MIMICDashboardApp:
 	def __init__(self):
 		logging.info("Initializing MIMICDashboardApp...")
 		# Initialize core components
-		self.data_handler     = DataLoader()
-		self.feature_engineer = FeatureEngineerUtils()
+		self.data_handler      = DataLoader()
+		self.parquet_converter = ParquetConverter()
+		self.example_loader    = ExampleDataLoader()
+		self.feature_engineer  = FeatureEngineerUtils()
 
 		# Initialize UI components for tabs
 		self.feature_engineering_ui    = None
@@ -304,14 +306,16 @@ class MIMICDashboardApp:
 				load_full = st.sidebar.checkbox("Load Full Table (Ignore Subject Count/Sampling)", value=st.session_state.get('load_full', False), key="load_full")
 
 				# Get total unique subjects to display
-				total_unique_subjects = self.data_handler.get_total_unique_subjects()
+				total_unique_subjects = len(self.data_handler.all_subject_ids)
 
-				help_text_num_subjects = f"Number of subjects to load from '{self.data_handler.PATIENTS_TABLE_NAME}.csv'. Max: {total_unique_subjects}. \
+				help_text_num_subjects = f"Number of subjects to load from '{TableNamesHOSP.PATIENTS}.csv'. Max: {total_unique_subjects}. \
 				\nLeave blank to load all subjects (if 'Load Full Table' is checked) or use default row sampling (if not)."
 
-				if total_unique_subjects == 0 and self.data_handler._data_scan_complete and self.data_handler._patients_file_path:
-					help_text_num_subjects = f"Could not load subject IDs from '{self.data_handler.PATIENTS_TABLE_NAME}'. Ensure it's present and readable. Falling back to row sampling."
-				elif not self.data_handler._data_scan_complete:
+				if total_unique_subjects == 0 and self.data_handler.tables_info_df is not None:
+
+					help_text_num_subjects = f"Could not load subject IDs from '{TableNamesHOSP.PATIENTS}'. Ensure it's present and readable. Falling back to row sampling."
+
+				elif self.data_handler.tables_info_df is None:
 					help_text_num_subjects = "Scan the directory first to see available subjects. Falling back to row sampling."
 
 				# Initialize num_subjects in session state if not present, default to a placeholder like 0 or a small number
