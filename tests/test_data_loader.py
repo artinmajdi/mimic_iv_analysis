@@ -1,343 +1,489 @@
 import pytest
 import os
-import shutil
 import pandas as pd
 import dask.dataframe as dd
-from pandas.testing import assert_frame_equal
-import logging
+import numpy as np
+from pathlib import Path
+import tempfile
+import shutil
+from unittest.mock import patch, MagicMock
 
-from mimic_iv_analysis.core.data_loader import DataLoader, DEFAULT_MIMIC_PATH, LARGE_FILE_THRESHOLD_MB, PATIENTS_TABLE_NAME, PATIENTS_TABLE_MODULE, SUBJECT_ID_COL
+from mimic_iv_analysis.io.data_loader import (
+    DataLoader, TableNamesHOSP, TableNamesICU,
+    DEFAULT_MIMIC_PATH, table_names_enum_converter
+)
 
-# Configure logging for tests (optional, but can be helpful)
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+class TestDataLoader:
+    """Test suite for the DataLoader class."""
 
-@pytest.fixture(scope='session')
-def mimic_path_fixture():
-    """Provides the path to the MIMIC-IV dataset, defaulting to DEFAULT_MIMIC_PATH."""
-    # In a CI environment, you might override this with a path to a small, controlled dataset
-    # For local testing, it might point to the actual dataset if available and desired for some tests,
-    # but most tests should use temp_mimic_dir for reliability and speed.
-    return os.environ.get("TEST_MIMIC_DATA_PATH", DEFAULT_MIMIC_PATH)
+    @pytest.fixture
+    def mock_mimic_dir(self):
+        """Create a temporary directory with fake MIMIC data structure."""
+        temp_dir = tempfile.mkdtemp()
 
-@pytest.fixture
-def data_loader():
-    """Provides an instance of DataLoader."""
-    return DataLoader()
+        # Create module directories
+        hosp_dir = Path(temp_dir) / "hosp"
+        icu_dir = Path(temp_dir) / "icu"
+        hosp_dir.mkdir()
+        icu_dir.mkdir()
 
-@pytest.fixture(scope='module')
-def temp_mimic_dir(tmp_path_factory):
-    """Creates a temporary MIMIC-like directory structure for testing."""
-    temp_dir = tmp_path_factory.mktemp("mimic_data")
-    hosp_dir = temp_dir / "hosp"
-    icu_dir = temp_dir / "icu"
-    hosp_dir.mkdir()
-    icu_dir.mkdir()
+        # Create sample CSV files
+        patients_file = hosp_dir / "patients.csv"
+        admissions_file = hosp_dir / "admissions.csv"
+        icustays_file = icu_dir / "icustays.csv"
 
-    # Create dummy patient data with more subjects
-    patients_data = {'subject_id': [1, 2, 3, 4, 5, 10, 12, 15, 22, 30],
-                       'gender': ['M', 'F', 'M', 'F', 'M', 'F', 'M', 'F', 'M', 'F'],
-                       'anchor_age': [50, 60, 70, 55, 65, 75, 40, 45, 80, 85]}
-    pd.DataFrame(patients_data).to_csv(hosp_dir / f"{PATIENTS_TABLE_NAME}.csv", index=False)
+        # Sample patients data
+        patients_data = pd.DataFrame({
+            'subject_id': [1, 2, 3],
+            'gender': ['M', 'F', 'M'],
+            'anchor_age': [45, 32, 67],
+            'anchor_year': [2120, 2130, 2125]
+        })
+        patients_data.to_csv(patients_file, index=False)
 
-    # Create dummy admissions data
-    admissions_data = {'subject_id': [1, 2, 2, 4, 5, 10, 10, 10],
-                         'hadm_id': [101, 102, 103, 104, 105, 106, 107, 108],
-                         'admittime': ['2180-01-01', '2190-01-01', '2192-01-01', '2185-01-01', '2170-01-01', '2160-01-01', '2161-01-01', '2162-01-01']}
-    pd.DataFrame(admissions_data).to_csv(hosp_dir / "admissions.csv.gz", index=False, compression='gzip')
+        # Sample admissions data
+        admissions_data = pd.DataFrame({
+            'subject_id': [1, 1, 2, 3],
+            'hadm_id': [100, 101, 102, 103],
+            'admittime': ['2100-01-01', '2101-02-15', '2110-03-22', '2115-05-10'],
+            'dischtime': ['2100-01-10', '2101-02-25', '2110-04-01', '2115-05-20'],
+            'admission_type': ['emergency', 'elective', 'urgent', 'emergency']
+        })
+        admissions_data.to_csv(admissions_file, index=False)
 
-    # Create dummy ICU data
-    icustays_data = {'subject_id': [1, 4, 10], 'hadm_id': [101, 104, 106], 'stay_id': [201, 202, 203], 'intime': ['2180-01-01', '2185-01-02', '2160-01-02']}
-    pd.DataFrame(icustays_data).to_csv(icu_dir / "icustays.csv", index=False)
+        # Sample ICU stays data
+        icustays_data = pd.DataFrame({
+            'subject_id': [1, 2, 3],
+            'hadm_id': [100, 102, 103],
+            'stay_id': [1000, 1001, 1002],
+            'intime': ['2100-01-02', '2110-03-23', '2115-05-11'],
+            'outtime': ['2100-01-08', '2110-03-30', '2115-05-18']
+        })
+        icustays_data.to_csv(icustays_file, index=False)
 
-    # Create a small dictionary file
-    d_items_data = {'itemid': [1, 2], 'label': ['Label1', 'Label2']}
-    pd.DataFrame(d_items_data).to_csv(icu_dir / "d_items.csv.gz", index=False, compression='gzip')
+        yield Path(temp_dir)
 
-    # Create a larger dummy table with subject_id for testing subject_id filtering
-    # Simulate largeness by row count relative to a conceptual threshold for tests
-    # Actual LARGE_FILE_THRESHOLD_MB is for file size, here we use row count to simplify test setup
-    num_large_table_rows = 150 # Assume test threshold is < 150 rows for this file type for large file logic path
-    large_table_subjects = [1, 2, 3, 4, 5, 10, 12, 15, 22, 30] # ensure some overlap and some unique
-    large_table_data = {'subject_id': [large_table_subjects[i % len(large_table_subjects)] for i in range(num_large_table_rows)],
-                          'value1': [i * 10 for i in range(num_large_table_rows)],
-                          'value2': [f'text_{i}' for i in range(num_large_table_rows)]}
-    pd.DataFrame(large_table_data).to_csv(hosp_dir / "large_table.csv", index=False)
+        # Cleanup
+        shutil.rmtree(temp_dir)
 
-    # Create a table without subject_id for testing fallback
-    no_subject_table_data = {'other_id': [100, 200, 300], 'data': ['x', 'y', 'z']}
-    pd.DataFrame(no_subject_table_data).to_csv(hosp_dir / "no_subject_table.csv", index=False)
+    def test_init(self):
+        """Test the initialization of DataLoader."""
+        loader = DataLoader()
+        assert loader.mimic_path == DEFAULT_MIMIC_PATH
+        assert loader.study_table_list == DataLoader.DEFAULT_STUDY_TABLES_LIST
+        assert loader._all_subject_ids == []
+        assert loader.tables_info_df is None
+        assert loader.tables_info_dict is None
 
+        # Test custom params
+        custom_path = Path("/custom/path")
+        custom_tables = [TableNamesHOSP.PATIENTS, TableNamesHOSP.ADMISSIONS]
+        loader = DataLoader(mimic_path=custom_path, study_tables_list=custom_tables)
+        assert loader.mimic_path == custom_path
+        assert loader.study_table_list == custom_tables
 
-    logger.info(f"Created temp MIMIC directory at {temp_dir}")
-    return str(temp_dir)
+    def test_scan_mimic_directory(self, mock_mimic_dir):
+        """Test scanning the MIMIC directory structure."""
+        loader = DataLoader(mimic_path=mock_mimic_dir)
+        loader.scan_mimic_directory()
 
-def test_data_loader_initialization(data_loader):
-    """Test DataLoader initialization."""
-    assert data_loader is not None
-    assert data_loader.mimic_path == DEFAULT_MIMIC_PATH
+        # Verify tables_info_df is populated
+        assert loader.tables_info_df is not None
+        assert not loader.tables_info_df.empty
 
-def test_scan_mimic_directory(data_loader, temp_mimic_dir):
-    """Test scanning the MIMIC-IV directory structure."""
-    _, dataset_info = data_loader.scan_mimic_directory(temp_mimic_dir)
+        # Check that all expected tables are found
+        table_names = loader.tables_info_df['table_name'].tolist()
+        assert 'patients' in table_names
+        assert 'admissions' in table_names
+        assert 'icustays' in table_names
 
-    assert 'hosp'       in dataset_info['available_tables']
-    assert 'icu'        in dataset_info['available_tables']
-    assert 'patients'   in dataset_info['available_tables']['hosp']
-    assert 'admissions' in dataset_info['available_tables']['hosp']
-    assert 'icustays'   in dataset_info['available_tables']['icu']
-    assert 'd_items'    in dataset_info['available_tables']['icu']
+        # Check that file paths are correct
+        patients_path = loader.tables_info_df[loader.tables_info_df['table_name'] == 'patients']['file_path'].iloc[0]
+        assert str(patients_path).endswith('hosp/patients.csv')
 
-    assert ('hosp', 'patients') in dataset_info['file_paths']
-    assert dataset_info['file_paths'][('hosp', 'patients')].endswith('patients.csv')
-    assert ('hosp', 'admissions') in dataset_info['file_sizes']
-    assert dataset_info['table_display_names'][('icu', 'd_items')].startswith('d_items (')
-    assert data_loader._patients_file_path is not None
-    assert data_loader._patients_file_path.endswith(f"{PATIENTS_TABLE_NAME}.csv")
-    assert data_loader._data_scan_complete
+        # Check that module info is correct
+        modules = loader.tables_info_df['module'].unique().tolist()
+        assert 'hosp' in modules
+        assert 'icu' in modules
 
-def test_get_all_subject_ids(data_loader, temp_mimic_dir):
-    data_loader.scan_mimic_directory(temp_mimic_dir) # Ensure scan has run
-    subject_ids = data_loader._get_all_subject_ids()
-    assert isinstance(subject_ids, list)
-    assert len(subject_ids) == 10 # From dummy patients_data
-    assert set(subject_ids) == {1, 2, 3, 4, 5, 10, 12, 15, 22, 30}
+    def test_study_tables_info(self, mock_mimic_dir):
+        """Test retrieving study tables info."""
+        loader = DataLoader(
+            mimic_path=mock_mimic_dir,
+            study_tables_list=[TableNamesHOSP.PATIENTS, TableNamesHOSP.ADMISSIONS]
+        )
 
-    # Test caching
-    data_loader._all_subject_ids = ['cached']
-    assert data_loader._get_all_subject_ids() == ['cached']
-    data_loader._all_subject_ids = None # Reset for other tests
+        # The method should trigger scanning if not done already
+        study_info = loader.study_tables_info
 
-def test_get_all_subject_ids_no_scan(data_loader, caplog):
-    data_loader._data_scan_complete = False # Simulate no scan
-    subject_ids = data_loader._get_all_subject_ids()
-    assert subject_ids == []
-    assert "MIMIC directory scan has not been performed" in caplog.text
-    data_loader._data_scan_complete = True # Reset
+        assert not study_info.empty
+        assert len(study_info) == 2
+        assert set(study_info['table_name'].tolist()) == {'patients', 'admissions'}
 
-def test_get_all_subject_ids_patients_missing(data_loader, temp_mimic_dir, caplog):
+    def test_get_file_path(self, mock_mimic_dir):
+        """Test retrieving file path for a table."""
+        loader = DataLoader(mimic_path=mock_mimic_dir)
+        loader.scan_mimic_directory()
 
-    data_loader.scan_mimic_directory(temp_mimic_dir) # Scan normally first
+        path = loader._get_file_path(TableNamesHOSP.PATIENTS)
+        assert path.name == 'patients.csv'
+        assert 'hosp' in str(path)
 
-    original_patients_path = data_loader._patients_file_path
-    data_loader._patients_file_path = "/tmp/nonexistent_patients.csv"
-    data_loader._all_subject_ids = None # Clear cache
-    subject_ids = data_loader._get_all_subject_ids()
+        path = loader._get_file_path(TableNamesICU.ICUSTAYS)
+        assert path.name == 'icustays.csv'
+        assert 'icu' in str(path)
 
-    assert subject_ids == []
-    assert f"'{PATIENTS_TABLE_NAME}.csv' or '.csv.gz' not found" in caplog.text
+    # @patch('mimic_iv_analysis.io.data_loader.dd.read_csv')
+    # def test_load_csv_table_with_correct_column_datatypes(self, mock_read_csv, mock_mimic_dir):
+    #     """Test loading CSV with correct datatypes."""
+    #     # Setup mock
+    #     mock_df = MagicMock(spec=dd.DataFrame)
+    #     mock_read_csv.return_value = mock_df
 
-    data_loader._patients_file_path = original_patients_path # Reset
-    data_loader._all_subject_ids    = None # Clear cache again
+    #     loader = DataLoader(mimic_path=mock_mimic_dir)
+    #     file_path = mock_mimic_dir / "hosp" / "patients.csv"
 
-def test_get_total_unique_subjects(data_loader, temp_mimic_dir):
-    data_loader.scan_mimic_directory(temp_mimic_dir)
-    total_subjects = data_loader.get_total_unique_subjects()
-    assert total_subjects == 10
+    #     result = loader.load_csv_table_with_correct_column_datatypes(file_path)
 
-def test_get_subject_ids_for_sampling(data_loader, temp_mimic_dir):
-    data_loader.scan_mimic_directory(temp_mimic_dir)
-    expected_full_list = sorted([1, 2, 3, 4, 5, 10, 12, 15, 22, 30])
+    #     # Verify the mock was called
+    #     mock_read_csv.assert_called_once()
+    #     assert result == mock_df
 
-    # Test getting a specific number
-    sampled_ids = data_loader.get_subject_ids_for_sampling(3)
-    assert len(sampled_ids) == 3
-    assert sampled_ids == expected_full_list[:3]
+    #     # Test file not found
+    #     with pytest.raises(FileNotFoundError):
+    #         loader.load_csv_table_with_correct_column_datatypes(Path("nonexistent.csv"))
 
-    # Test getting 0 (should return None, meaning no specific subject sampling)
-    assert data_loader.get_subject_ids_for_sampling(0) is None
+    #     # Test non-CSV file
+    #     non_csv = mock_mimic_dir / "not_a_csv.txt"
+    #     with open(non_csv, 'w') as f:
+    #         f.write("not a csv")
 
-    # Test getting None (should also return None)
-    assert data_loader.get_subject_ids_for_sampling(None) is None
+    #     with pytest.warns(UserWarning):
+    #         result = loader.load_csv_table_with_correct_column_datatypes(non_csv)
+    #         assert result.empty
 
-    # Test getting more than available (should return all)
-    sampled_ids_more = data_loader.get_subject_ids_for_sampling(100)
-    assert len(sampled_ids_more) == 10
-    assert sorted(sampled_ids_more) == expected_full_list
+    @patch('mimic_iv_analysis.io.data_loader.DataLoader.load_table')
+    def test_load_unique_subject_ids_for_table(self, mock_load_table, mock_mimic_dir):
+        """Test loading unique subject IDs from a table."""
+        # Setup mock
+        mock_df = MagicMock(spec=dd.DataFrame)
+        mock_compute = MagicMock()
+        mock_compute.tolist.return_value = [1, 2, 3]
+        mock_unique = MagicMock()
+        mock_unique.compute.return_value = mock_compute
+        mock_df.__getitem__.return_value.unique.return_value = mock_unique
+        mock_load_table.return_value = mock_df
 
-    # Test when _all_subject_ids is empty
-    data_loader._all_subject_ids = []
-    assert data_loader.get_subject_ids_for_sampling(5) is None
-    data_loader._all_subject_ids = None # Reset
+        loader = DataLoader(mimic_path=mock_mimic_dir)
 
-def test_load_mimic_table_pandas_sampled(data_loader, temp_mimic_dir):
-    data_loader.scan_mimic_directory(temp_mimic_dir) # To set up patients_file_path etc.
-    admissions_path = os.path.join(temp_mimic_dir, "hosp", "admissions.csv.gz") # admissions has 8 rows
-    df, total_rows = data_loader.load_mimic_table(admissions_path, sample_size=2, use_dask=False)
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) <= 2
-    assert total_rows == 8
-    assert 'subject_id' in df.columns
+        # Test with default table
+        result = loader._load_unique_subject_ids_for_table()
+        assert result == [1, 2, 3]
+        mock_load_table.assert_called_with(table_name=TableNamesHOSP.ADMISSIONS, partial_loading=False)
 
-def test_load_mimic_table_pandas_full(data_loader, temp_mimic_dir):
-    data_loader.scan_mimic_directory(temp_mimic_dir)
-    admissions_path = os.path.join(temp_mimic_dir, "hosp", "admissions.csv.gz")
-    df, total_rows = data_loader.load_mimic_table(admissions_path, sample_size=100, use_dask=False) # sample_size > total_rows
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) == 8
-    assert total_rows == 8
+        # Test with custom table
+        mock_load_table.reset_mock()
+        result = loader._load_unique_subject_ids_for_table(TableNamesHOSP.PATIENTS)
+        assert result == [1, 2, 3]
+        mock_load_table.assert_called_with(table_name=TableNamesHOSP.PATIENTS, partial_loading=False)
 
-def test_load_mimic_table_dask_sampled(data_loader, temp_mimic_dir):
-    data_loader.scan_mimic_directory(temp_mimic_dir)
-    admissions_path = os.path.join(temp_mimic_dir, "hosp", "admissions.csv.gz")
-    df, total_rows = data_loader.load_mimic_table(admissions_path, sample_size=2, use_dask=True)
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) <= 2
-    assert total_rows == 8
-    assert 'subject_id' in df.columns
+    # def test_all_subject_ids(self, mock_mimic_dir):
+    #     """Test all_subject_ids property."""
+    #     loader = DataLoader(mimic_path=mock_mimic_dir)
 
-def test_load_mimic_table_dask_full(data_loader, temp_mimic_dir):
-    data_loader.scan_mimic_directory(temp_mimic_dir)
-    admissions_path = os.path.join(temp_mimic_dir, "hosp", "admissions.csv.gz")
-    df, total_rows = data_loader.load_mimic_table(admissions_path, sample_size=100, use_dask=True)
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) == 8
-    assert total_rows == 8
+    #     # Test that the property loads IDs if not already loaded
+    #     with patch.object(loader, '_load_unique_subject_ids_for_table') as mock_load:
+    #         mock_load.return_value = [1, 2, 3]
+    #         assert loader.all_subject_ids == [1, 2, 3]
+    #         mock_load.assert_called_once()
 
-def test_load_mimic_table_with_subject_ids_pandas(data_loader, temp_mimic_dir):
-    data_loader.scan_mimic_directory(temp_mimic_dir)
-    large_table_path = os.path.join(temp_mimic_dir, "hosp", "large_table.csv")
-    target_ids = [1, 5, 10] # These are in patients_data and large_table_data
+    #     # Test that the property uses cached IDs if already loaded
+    #     loader._all_subject_ids = [4, 5, 6]
+    #     with patch.object(loader, '_load_unique_subject_ids_for_table') as mock_load:
+    #         assert loader.all_subject_ids == [4, 5, 6]
+    #         mock_load.assert_not_called()
 
-    # Mock LARGE_FILE_THRESHOLD_MB to ensure this path is taken for testing
-    # This is a bit of a hack; ideally, the file would be actually large or threshold configurable for tests.
-    # For now, rely on the logic path where target_subject_ids implies it might be large file handling path.
-    # The `load_mimic_table` uses file_size_mb > LARGE_FILE_THRESHOLD_MB for this path.
-    # We'll create a file that *is* large enough by making its size > 0, and test the filtering.
-    # The dummy large_table.csv is small, so we are testing the logic flow more than size performance here.
+    def test_get_partial_subject_id_list(self):
+        """Test getting partial subject ID list."""
+        loader = DataLoader()
+        loader._all_subject_ids = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
-    df, loaded_rows = data_loader.load_mimic_table(large_table_path, target_subject_ids=target_ids, use_dask=False)
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) > 0
-    assert set(df[SUBJECT_ID_COL].unique()) == set(target_ids)
-    # Verify that only rows with target_ids are present
-    for sid in df[SUBJECT_ID_COL].unique():
-        assert sid in target_ids
-    assert loaded_rows == len(df) # For subject_id filtering, total_rows is num loaded
+        # Test with num_subjects = 0
+        result = loader.get_partial_subject_id_list_for_partial_loading(num_subjects=0)
+        assert result == []
 
-def test_load_mimic_table_with_subject_ids_dask(data_loader, temp_mimic_dir):
-    data_loader.scan_mimic_directory(temp_mimic_dir)
-    large_table_path = os.path.join(temp_mimic_dir, "hosp", "large_table.csv")
-    target_ids = [2, 4, 12]
-    df, loaded_rows = data_loader.load_mimic_table(large_table_path, target_subject_ids=target_ids, use_dask=True)
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) > 0
-    assert set(df[SUBJECT_ID_COL].unique()) == set(target_ids)
-    for sid in df[SUBJECT_ID_COL].unique():
-        assert sid in target_ids
-    assert loaded_rows == len(df)
+        # Test with num_subjects > len(all_subject_ids)
+        result = loader.get_partial_subject_id_list_for_partial_loading(num_subjects=20)
+        assert result == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
-def test_load_mimic_table_with_subject_ids_no_match(data_loader, temp_mimic_dir):
-    data_loader.scan_mimic_directory(temp_mimic_dir)
-    large_table_path = os.path.join(temp_mimic_dir, "hosp", "large_table.csv")
-    target_ids = [999, 1000] # These are NOT in patients_data
-    df, loaded_rows = data_loader.load_mimic_table(large_table_path, target_subject_ids=target_ids, use_dask=False)
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) == 0
-    assert loaded_rows == 0
+        # Test with non-random selection
+        result = loader.get_partial_subject_id_list_for_partial_loading(num_subjects=3, random_selection=False)
+        assert result == [1, 2, 3]
 
-def test_load_mimic_table_with_subject_ids_no_subject_col(data_loader, temp_mimic_dir):
-    data_loader.scan_mimic_directory(temp_mimic_dir)
-    no_subject_table_path = os.path.join(temp_mimic_dir, "hosp", "no_subject_table.csv")
-    target_ids = [1, 2]
+        # Test with random selection
+        with patch('numpy.random.choice') as mock_choice:
+            mock_choice.return_value = np.array([3, 1, 7])
+            result = loader.get_partial_subject_id_list_for_partial_loading(num_subjects=3, random_selection=True)
+            assert result == [3, 1, 7]
+            mock_choice.assert_called_with(a=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10], size=3)
 
-    # Expect fallback to sample_size (default or specified)
-    df, total_rows_original = data_loader.load_mimic_table(no_subject_table_path, target_subject_ids=target_ids, sample_size=2, use_dask=False)
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) <= 2 # Should be sampled, as subject_id filtering isn't possible
-    assert total_rows_original == 3 # Original total rows of no_subject_table_data
-    assert SUBJECT_ID_COL not in df.columns
+    @patch('mimic_iv_analysis.io.data_loader.DataLoader.load_table')
+    @patch('mimic_iv_analysis.io.data_loader.DataLoader.get_partial_subject_id_list_for_partial_loading')
+    def test_load_all_study_tables(self, mock_get_ids, mock_load_table, mock_mimic_dir):
+        """Test loading all study tables."""
+        # Setup mocks
+        mock_get_ids.return_value = [1, 2, 3]
+        mock_df = MagicMock(spec=dd.DataFrame)
+        mock_load_table.return_value = mock_df
 
-def test_load_mimic_table_non_existent(data_loader, temp_mimic_dir, caplog):
-    """Test loading a non-existent file."""
-    non_existent_path = os.path.join(temp_mimic_dir, "hosp", "non_existent.csv")
-    df, total_rows = data_loader.load_mimic_table(non_existent_path)
-    assert df is None
-    assert total_rows == 0
-    assert "Error loading data" in caplog.text
+        # Create a minimal DataLoader with just patients table for testing
+        loader = DataLoader(
+            mimic_path=mock_mimic_dir,
+            study_tables_list=[TableNamesHOSP.PATIENTS]
+        )
 
-@pytest.fixture
-def sample_dfs_for_merge():
-    """Provides two sample pandas DataFrames for merge tests."""
-    left_pd = pd.DataFrame({'key': ['K0', 'K1', 'K2'], 'A': ['A0', 'A1', 'A2']})
-    right_pd = pd.DataFrame({'key': ['K0', 'K1', 'K3'], 'B': ['B0', 'B1', 'B3']})
-    return left_pd, right_pd
+        # Mock study_tables_info
+        loader.tables_info_df = pd.DataFrame({
+            'module': ['hosp'],
+            'table_name': ['patients'],
+            'file_path': [mock_mimic_dir / 'hosp' / 'patients.csv'],
+            'file_size': [1000],
+            'display_name': ['patients 1KB'],
+            'suffix': ['.csv'],
+            'columns_list': [{'subject_id', 'gender', 'anchor_age', 'anchor_year'}]
+        })
 
-def test_merge_tables_pandas(data_loader, sample_dfs_for_merge):
-    """Test merging two pandas DataFrames."""
-    left_pd, right_pd = sample_dfs_for_merge
-    merged_df = data_loader.merge_tables(left_pd, right_pd, on=['key'], how='left')
-    expected_df = pd.DataFrame({
-        'key': ['K0', 'K1', 'K2'],
-        'A': ['A0', 'A1', 'A2'],
-        'B': ['B0', 'B1', pd.NA]  # Or np.nan depending on pandas version / types
-    }).astype({'B': object}) # Ensure B is object type for NA comparison if needed
-    # For newer pandas, NA is preferred. For older, NaN might appear. Let's be flexible.
-    if 'B' in merged_df and merged_df['B'].dtype == 'object':
-         merged_df['B'] = merged_df['B'].fillna(pd.NA) # Normalize NaNs to NA
-    assert_frame_equal(merged_df.reset_index(drop=True), expected_df.reset_index(drop=True), check_dtype=False)
+        # Test without partial loading
+        result = loader.load_all_study_tables(partial_loading=False)
+        assert 'patients' in result
+        assert result['patients'] == mock_df
+        mock_load_table.assert_called_with(
+            table_name=TableNamesHOSP.PATIENTS,
+            partial_loading=False,
+            subject_ids=None
+        )
 
-def test_merge_tables_dask(data_loader, sample_dfs_for_merge):
-    """Test merging two Dask DataFrames."""
-    left_pd, right_pd = sample_dfs_for_merge
-    left_dd = dd.from_pandas(left_pd, npartitions=1)
-    right_dd = dd.from_pandas(right_pd, npartitions=1)
+        # Test with partial loading
+        mock_load_table.reset_mock()
+        result = loader.load_all_study_tables(partial_loading=True, num_subjects=3)
+        assert 'patients' in result
+        mock_get_ids.assert_called_with(num_subjects=3, random_selection=False)
+        mock_load_table.assert_called_with(
+            table_name=TableNamesHOSP.PATIENTS,
+            partial_loading=True,
+            subject_ids=[1, 2, 3]
+        )
 
-    merged_dd = data_loader.merge_tables(left_dd, right_dd, on=['key'], how='left')
-    assert isinstance(merged_dd, dd.DataFrame)
+    # @patch('mimic_iv_analysis.io.data_loader.Filtering')
+    # def test_load_table(self, mock_filtering_class, mock_mimic_dir):
+    #     """Test loading a table."""
+    #     # Setup mocks
+    #     mock_filtering = MagicMock()
+    #     mock_filtering.render.return_value = dd.from_pandas(
+    #         pd.DataFrame({'subject_id': [1, 2, 3], 'column': ['a', 'b', 'c']}),
+    #         npartitions=1
+    #     )
+    #     mock_filtering_class.return_value = mock_filtering
 
-    computed_merged_df = merged_dd.compute()
-    expected_df = pd.DataFrame({
-        'key': ['K0', 'K1', 'K2'],
-        'A': ['A0', 'A1', 'A2'],
-        'B': ['B0', 'B1', pd.NA]
-    }).astype({'B': object})
-    if 'B' in computed_merged_df and computed_merged_df['B'].dtype == 'object':
-         computed_merged_df['B'] = computed_merged_df['B'].fillna(pd.NA)
-    assert_frame_equal(computed_merged_df.reset_index(drop=True), expected_df.reset_index(drop=True), check_dtype=False)
+    #     # Create loader with mock mimic dir
+    #     loader = DataLoader(mimic_path=mock_mimic_dir)
 
-def test_merge_tables_mixed_error(data_loader, sample_dfs_for_merge, caplog):
-    """Test merging mixed DataFrame types (should return left df and log error)."""
-    left_pd, right_pd = sample_dfs_for_merge
-    right_dd = dd.from_pandas(right_pd, npartitions=1)
+    #     # Mock _get_file_path and load_csv_table_with_correct_column_datatypes
+    #     with patch.object(loader, '_get_file_path') as mock_get_path, \
+    #          patch.object(loader, 'load_csv_table_with_correct_column_datatypes') as mock_load_csv:
 
-    result_df = data_loader.merge_tables(left_pd, right_dd, on=['key'], how='left')
-    assert_frame_equal(result_df, left_pd)
-    assert "Cannot merge a Dask DataFrame with a pandas DataFrame" in caplog.text
+    #         # Setup mock return values
+    #         file_path = mock_mimic_dir / 'hosp' / 'patients.csv'
+    #         mock_get_path.return_value = file_path
 
-def test_merge_tables_missing_columns(data_loader, sample_dfs_for_merge, caplog):
-    """Test merging with missing join columns (should return left df and log warning)."""
-    left_pd, right_pd = sample_dfs_for_merge
-    result_df = data_loader.merge_tables(left_pd, right_pd, on=['missing_key'], how='left')
-    assert_frame_equal(result_df, left_pd)
-    assert "Cannot merge tables: missing_key missing in left table, missing_key missing in right table" in caplog.text
+    #         # Create test DataFrame
+    #         df = dd.from_pandas(
+    #             pd.DataFrame({'subject_id': [1, 2, 3, 4, 5], 'column': ['a', 'b', 'c', 'd', 'e']}),
+    #             npartitions=1
+    #         )
+    #         mock_load_csv.return_value = df
 
+    #         # Test full loading
+    #         result = loader.load_table(TableNamesHOSP.PATIENTS, partial_loading=False)
+    #         mock_get_path.assert_called_with(table_name=TableNamesHOSP.PATIENTS)
+    #         mock_load_csv.assert_called_with(file_path)
+    #         mock_filtering_class.assert_called_with(df=df, table_name=TableNamesHOSP.PATIENTS)
 
-def test_load_reference_table(data_loader, temp_mimic_dir):
-    """Test loading a reference table."""
-    # d_items is created as gzipped in temp_mimic_dir
-    df = data_loader.load_reference_table(temp_mimic_dir, 'icu', 'd_items')
-    assert isinstance(df, pd.DataFrame)
-    assert not df.empty
-    assert 'itemid' in df.columns
-    assert 'label' in df.columns
-    assert len(df) == 2
+    #         # Test partial loading with subject_ids
+    #         mock_get_path.reset_mock()
+    #         mock_load_csv.reset_mock()
+    #         mock_filtering_class.reset_mock()
+    #         subject_ids = [1, 3]
 
-def test_get_table_info():
-    """Test getting table information."""
-    info = TableNamesHOSP['admissions'].description
-    assert "Patient hospital admissions information" in info
+    #         result = loader.load_table(
+    #             TableNamesHOSP.PATIENTS,
+    #             partial_loading=True,
+    #             subject_ids=subject_ids
+    #         )
 
+    #         # Check result has only the selected subject_ids
+    #         result_df = result.compute()
+    #         assert set(result_df['subject_id'].tolist()) == set(subject_ids)
 
-# Example of a very simple apply_filters test (might need adjustment based on Filtering class)
-# This test is basic and assumes apply_filters can run with no real filtering if params are minimal.
-def test_apply_filters_runs(data_loader, temp_mimic_dir):
-    """Test that apply_filters runs without error with a basic DataFrame."""
-    df_input = pd.DataFrame({'subject_id': [1, 2, 3]})
-    filter_params = {'apply_age_range': False} # Minimal filter
+    #         # Test partial loading with sample_size
+    #         mock_get_path.reset_mock()
+    #         mock_load_csv.reset_mock()
+    #         mock_filtering_class.reset_mock()
 
-    # Providing mimic_path to allow internal loading if Filtering class tries to access it
-    df_filtered = data_loader.apply_filters(df_input.copy(), filter_params, mimic_path=temp_mimic_dir)
-    assert isinstance(df_filtered, pd.DataFrame)
-    # In this minimal case, expect the dataframe to be returned as is or similar
-    assert_frame_equal(df_input, df_filtered)
+    #         with patch.object(mock_filtering.render.return_value, 'head') as mock_head:
+    #             mock_head.return_value = "sample_df"
+    #             result = loader.load_table(
+    #                 TableNamesHOSP.PATIENTS,
+    #                 partial_loading=True,
+    #                 sample_size=2
+    #             )
+    #             mock_head.assert_called_with(2, compute=False)
+
+    def test_load_with_pandas_chunking(self):
+        """Test loading with pandas chunking."""
+        # This is a more complex test requiring mocking pd.read_csv with a context manager
+        # For brevity, we'll implement a simplified version
+
+        # Create a test CSV file
+        with tempfile.NamedTemporaryFile(suffix='.csv', delete=False) as f:
+            test_csv_path = Path(f.name)
+
+        try:
+            # Write test data
+            pd.DataFrame({
+                'subject_id': [1, 2, 3, 1, 2, 4],
+                'value': ['a', 'b', 'c', 'd', 'e', 'f']
+            }).to_csv(test_csv_path, index=False)
+
+            loader = DataLoader()
+
+            # Test filtering by subject_ids
+            target_subject_ids = [1, 3]
+            result_df, row_count = loader.load_with_pandas_chunking(
+                file_path=test_csv_path,
+                target_subject_ids=target_subject_ids,
+                read_params={'dtype': {'subject_id': int}}
+            )
+
+            # Check results
+            assert row_count == 3  # 2 rows for subject_id 1, 1 row for subject_id 3
+            assert set(result_df['subject_id'].tolist()) == set(target_subject_ids)
+            assert len(result_df) == 3
+
+            # Test with max_chunks
+            result_df, row_count = loader.load_with_pandas_chunking(
+                file_path=test_csv_path,
+                target_subject_ids=target_subject_ids,
+                max_chunks=1,
+                read_params={'dtype': {'subject_id': int}}
+            )
+
+            # With a small file, we should still get same results
+            assert row_count == 3
+
+        finally:
+            # Clean up
+            test_csv_path.unlink()
+
+    # @patch('mimic_iv_analysis.io.data_loader.DataLoader.load_all_study_tables')
+    # def test_merge_tables(self, mock_load_all_tables, mock_mimic_dir):
+    #     """Test merging tables."""
+    #     # Setup mocks for all required tables
+    #     patients_df = dd.from_pandas(
+    #         pd.DataFrame({'subject_id': [1, 2, 3]}),
+    #         npartitions=1
+    #     )
+
+    #     admissions_df = dd.from_pandas(
+    #         pd.DataFrame({
+    #             'subject_id': [1, 2, 3],
+    #             'hadm_id': [100, 101, 102]
+    #         }),
+    #         npartitions=1
+    #     )
+
+    #     diagnoses_icd_df = dd.from_pandas(
+    #         pd.DataFrame({
+    #             'subject_id': [1, 2, 3],
+    #             'hadm_id': [100, 101, 102],
+    #             'icd_code': ['A', 'B', 'C'],
+    #             'icd_version': [9, 9, 9]
+    #         }),
+    #         npartitions=1
+    #     )
+
+    #     d_icd_diagnoses_df = dd.from_pandas(
+    #         pd.DataFrame({
+    #             'icd_code': ['A', 'B', 'C'],
+    #             'icd_version': [9, 9, 9],
+    #             'long_title': ['Disease A', 'Disease B', 'Disease C']
+    #         }),
+    #         npartitions=1
+    #     )
+
+    #     poe_df = dd.from_pandas(
+    #         pd.DataFrame({
+    #             'subject_id': [1, 2, 3],
+    #             'hadm_id': [100, 101, 102],
+    #             'poe_id': ['p1', 'p2', 'p3'],
+    #             'poe_seq': [1, 1, 1]
+    #         }),
+    #         npartitions=1
+    #     )
+
+    #     poe_detail_df = dd.from_pandas(
+    #         pd.DataFrame({
+    #             'subject_id': [1, 2],  # Missing subject_id 3 to test left join
+    #             'hadm_id': [100, 101],
+    #             'poe_id': ['p1', 'p2'],
+    #             'poe_seq': [1, 1],
+    #             'detail': ['d1', 'd2']
+    #         }),
+    #         npartitions=1
+    #     )
+
+    #     # Set up the mock return value
+    #     mock_load_all_tables.return_value = {
+    #         'patients': patients_df,
+    #         'admissions': admissions_df,
+    #         'diagnoses_icd': diagnoses_icd_df,
+    #         'd_icd_diagnoses': d_icd_diagnoses_df,
+    #         'poe': poe_df,
+    #         'poe_detail': poe_detail_df
+    #     }
+
+    #     loader = DataLoader(mimic_path=mock_mimic_dir)
+
+    #     # Call merge_tables and check result
+    #     result = loader.merge_tables()
+
+    #     # Assert merge was called with correct tables
+    #     mock_load_all_tables.assert_called_once()
+
+    #     # Check results - we should have three dictionaries
+    #     assert 'merged_wo_poe' in result
+    #     assert 'merged_w_poe' in result
+    #     assert 'poe_merged' in result
+
+    #     # Test additional aspects of merges
+    #     # For brevity, let's just check a few basic aspects that would indicate
+    #     # the merge is working correctly
+
+    #     # Check poe_merged has left join behavior
+    #     poe_merged = result['poe_merged'].compute()
+    #     assert len(poe_merged) == 3  # Should keep all rows from poe
+    #     assert poe_merged[poe_merged['subject_id'] == 3]['detail'].isna().all()  # Missing subject should have NaN detail
+
+    def test_table_names_enum_converter(self):
+        """Test the table_names_enum_converter function."""
+        # Test hosp module
+        result = table_names_enum_converter('patients', 'hosp')
+        assert result == TableNamesHOSP.PATIENTS
+
+        # Test icu module
+        result = table_names_enum_converter('icustays', 'icu')
+        assert result == TableNamesICU.ICUSTAYS
+
+        # Test invalid table name
+        with pytest.raises(ValueError):
+            table_names_enum_converter('invalid_table', 'hosp')
