@@ -29,6 +29,7 @@ notebook
 
 # Data processing
 datasets  # Hugging Face datasets library
+dask-labextension
 
 # Utilities
 tqdm

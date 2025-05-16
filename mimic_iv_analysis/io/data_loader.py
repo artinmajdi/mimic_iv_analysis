@@ -6,7 +6,7 @@ import traceback
 from pathlib import Path
 from functools import lru_cache, cached_property
 from typing import Dict, Optional, Tuple, List, Any, Union, Literal
-
+import warnings
 import enum
 
 # Data processing imports
@@ -582,11 +582,20 @@ class DataLoader:
 					return df
 
 				logging.info(f"Filtering {table_name.value} by subject_id for {len(subject_ids)} subjects.")
-				return df[df['subject_id'].isin(subject_ids)]
+
+				# Convert subject_ids to a set for faster lookups
+				subject_ids_set = set(subject_ids)
+
+				# Use map_partitions for Dask DataFrame or direct isin for pandas
+				if isinstance(df, dd.DataFrame):
+					return df.map_partitions(lambda part: part[part['subject_id'].isin(subject_ids_set)])
+				return df[df['subject_id'].isin(subject_ids_set)]
 
 			# Sampling the table with a fixed number of rows
 			if sample_size is not None:
 				logging.info(f"Sampling {table_name.value} by subject_id for {sample_size} subjects.")
+				if isinstance(df, dd.DataFrame):
+					return df.head(sample_size, compute=False)
 				return df.head(sample_size)
 
 			raise ValueError("partial_loading is True but both subject_ids and sample_size are None")
@@ -598,16 +607,18 @@ class DataLoader:
 			from mimic_iv_analysis.core.filtering import Filtering
 			return Filtering(df=df, table_name=table_name).render()
 
+		logging.info(f"Loading ----- {table_name.value} ----- table.")
+
 		# Load table
 		df = _load_table_full()
-		logging.info(f"Loaded {table_name.value} full table. {_get_n_rows(df)} rows.")
+		logging.info(f"Loading full table: {_get_n_rows(df)} rows.")
 
 		df = _apply_filters(df)
-		logging.info(f"Applied filters to {table_name.value} table. {_get_n_rows(df)} rows.")
+		logging.info(f"Applied filters: {_get_n_rows(df)} rows.")
 
 		if partial_loading:
 			df = _partial_loading(df)
-			logging.info(f"Applied partial loading to {table_name.value} table. {_get_n_rows(df)} rows.")
+			logging.info(f"Applied partial loading: {_get_n_rows(df)} rows.")
 
 		return df
 
@@ -679,13 +690,75 @@ class DataLoader:
 		# Merge tables
 		df12 = patients_df.merge(admissions_df, on='subject_id', how='inner')
 		df34 = diagnoses_icd_df.merge(d_icd_diagnoses_df, on=('icd_code', 'icd_version'), how='inner')
-		df56 = poe_df.merge(poe_detail_df, on=('poe_id', 'poe_seq', 'subject_id'), how='left')
 
-		df1234   = df12.merge(df34, on=('subject_id', 'hadm_id'), how='inner')
-		df123456 = df1234.merge(df56, on=('subject_id', 'hadm_id'), how='inner')
+		# The reason for 'left' is that we want to keep all the rows from poe table. The poe_detail table for unknown reasons, has fewer rows than poe table.
+		poe_merged    = poe_df.merge(poe_detail_df, on=('poe_id', 'poe_seq', 'subject_id'), how='left')
+		merged_wo_poe = df12.merge(df34, on=('subject_id', 'hadm_id'), how='inner')
+		merged_w_poe  = merged_wo_poe.merge(poe_merged, on=('subject_id', 'hadm_id'), how='inner')
 
-		return df123456
+		return {'merged_wo_poe': merged_wo_poe, 'merged_w_poe': merged_w_poe, 'poe_merged': poe_merged}
 
+
+class Examples:
+	def __init__(self, partial_loading: bool = False, num_subjects: int = 100, random_selection: bool = False):
+		self.data_loader = DataLoader()
+		self.data_loader.scan_mimic_directory()
+
+		if partial_loading:
+			self.tables_dict = self.data_loader.load_all_study_tables(partial_loading=True, num_subjects=num_subjects, random_selection=random_selection)
+		else:
+			self.tables_dict = self.data_loader.load_all_study_tables(partial_loading=False)
+
+		with warnings.catch_warnings():
+			warnings.simplefilter("ignore")
+
+	def counter(self):
+
+		get_nrows        = lambda table_name: humanize.intcomma(self.tables_dict[table_name.value].shape[0].compute())
+		get_nsubject_ids = lambda table_name: humanize.intcomma(self.tables_dict[table_name.value].subject_id.unique().shape[0].compute())
+
+		# Format the output in a tabular format
+		print(f"{'Table':<15} | {'Rows':<10} | {'Subject IDs':<10}")
+		print(f"{'-'*15} | {'-'*10} | {'-'*10}")
+		print(f"{'patients':<15} | {get_nrows(TableNamesHOSP.PATIENTS):<10} | {get_nsubject_ids(TableNamesHOSP.PATIENTS):<10}")
+		print(f"{'admissions':<15} | {get_nrows(TableNamesHOSP.ADMISSIONS):<10} | {get_nsubject_ids(TableNamesHOSP.ADMISSIONS):<10}")
+		print(f"{'diagnoses_icd':<15} | {get_nrows(TableNamesHOSP.DIAGNOSES_ICD):<10} | {get_nsubject_ids(TableNamesHOSP.DIAGNOSES_ICD):<10}")
+		print(f"{'poe':<15} | {get_nrows(TableNamesHOSP.POE):<10} | {get_nsubject_ids(TableNamesHOSP.POE):<10}")
+		print(f"{'poe_detail':<15} | {get_nrows(TableNamesHOSP.POE_DETAIL):<10} | {get_nsubject_ids(TableNamesHOSP.POE_DETAIL):<10}")
+
+	def study_table_info(self):
+		return self.data_loader.study_tables_info
+
+	def merge_two_tables(self, table1: TableNamesHOSP | TableNamesICU, table2: TableNamesHOSP | TableNamesICU, on: Tuple[str], how: Literal['inner', 'left', 'right', 'outer'] = 'inner'):
+		return self.tables_dict[table1.value].merge(self.tables_dict[table2.value], on=on, how=how)
+
+	def save_as_parquet(self, table_name: TableNamesHOSP | TableNamesICU):
+		ParquetConverter(data_loader=self.data_loader).save_as_parquet(table_name=table_name)
+
+	def n_rows_after_merge(self):
+
+		patients_df        = self.tables_dict[TableNamesHOSP.PATIENTS.value]
+		admissions_df      = self.tables_dict[TableNamesHOSP.ADMISSIONS.value]
+		diagnoses_icd_df   = self.tables_dict[TableNamesHOSP.DIAGNOSES_ICD.value]
+		poe_df             = self.tables_dict[TableNamesHOSP.POE.value]
+		d_icd_diagnoses_df = self.tables_dict[TableNamesHOSP.D_ICD_DIAGNOSES.value]
+		poe_detail_df      = self.tables_dict[TableNamesHOSP.POE_DETAIL.value]
+
+
+		df12          = patients_df.merge(admissions_df,           on='subject_id',  how='inner')
+		df34          = diagnoses_icd_df.merge(d_icd_diagnoses_df, on=('icd_code',   'icd_version'), how='inner')
+		poe_merged    = poe_df.merge(poe_detail_df,                on=('poe_id',     'poe_seq',      'subject_id'), how='left')
+		merged_wo_poe = df12.merge(df34,                           on=('subject_id', 'hadm_id'),     how='inner')
+		merged_w_poe  = merged_wo_poe.merge(poe_merged,            on=('subject_id', 'hadm_id'),     how='inner')
+
+
+		print(f"{'DataFrame':<15} {'Count':<10} {'DataFrame':<15} {'Count':<10} {'DataFrame':<15} {'Count':<10}")
+		print("-" * 70)
+		print(f"{'df12':<15} {df12.shape[0].compute():<10} {'patients':<15} {patients_df.shape[0].compute():<10} {'admissions':<15} {admissions_df.shape[0].compute():<10}")
+		print(f"{'df34':<15} {df34.shape[0].compute():<10} {'diagnoses_icd':<15} {diagnoses_icd_df.shape[0].compute():<10} {'d_icd_diagnoses':<15} {d_icd_diagnoses_df.shape[0].compute():<10}")
+		print(f"{'poe_merged':<15} {poe_merged.shape[0].compute():<10} {'poe':<15} {poe_df.shape[0].compute():<10} {'poe_detail':<15} {poe_detail_df.shape[0].compute():<10}")
+		print(f"{'merged_wo_poe':<15} {merged_wo_poe.shape[0].compute():<10} {'df34':<15} {df34.shape[0].compute():<10} {'df12':<15} {df12.shape[0].compute():<10}")
+		print(f"{'merged_w_poe':<15} {merged_w_poe.shape[0].compute():<10} {'poe_merged':<15} {poe_merged.shape[0].compute():<10} {'merged_wo_poe':<15} {merged_wo_poe.shape[0].compute():<10}")
 
 class ParquetConverter:
 	"""Handles conversion of CSV/CSV.GZ files to Parquet format."""
@@ -770,10 +843,11 @@ if __name__ == '__main__':
 	# Scan the directory
 	data_loader.scan_mimic_directory()
 
-	subject_ids_list = data_loader.get_partial_subject_id_list_for_partial_loading(num_subjects=10, random_selection=True)
+	# subject_ids_list = data_loader.get_partial_subject_id_list_for_partial_loading(num_subjects=10, random_selection=True)
 
 	# Load table
-	df = data_loader.load_table(table_name=TableNamesHOSP.DIAGNOSES_ICD, partial_loading=True, subject_ids=subject_ids_list)
+	# df = data_loader.load_table(table_name=TableNamesHOSP.DIAGNOSES_ICD, partial_loading=True, subject_ids=subject_ids_list)
+
 
 
 	print('done')
