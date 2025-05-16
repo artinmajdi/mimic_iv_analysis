@@ -20,7 +20,6 @@ from tqdm import tqdm
 
 
 # Import filtering functionality
-from mimic_iv_analysis.core.filtering import Filtering
 
 # Utility functions
 # def convert_string_dtypes(df):
@@ -202,7 +201,13 @@ dtypes_all = {
 	'gsn'                   : 'object',
 	'dose_val_rx'           : 'object',
 	'prev_service'          : 'object',
-	'curr_service'          : 'category'}
+	'curr_service'          : 'category',
+	'admission_type'        : 'category',
+	'discharge_location'    : 'category',
+	'insurance'             : 'category',
+	'language'              : 'category',
+	'marital_status'        : 'category',
+	'race'                  : 'category'}
 
 parse_dates_all = [
 			'admittime',
@@ -238,7 +243,6 @@ class DataLoader:
 		self.study_table_list = study_tables_list or self.DEFAULT_STUDY_TABLES_LIST
 
 		# Class variables
-		self.filtering        : Filtering                      = Filtering()
 		self._all_subject_ids : List[dtypes_all['subject_id']] = []
 		self.tables_info_df   : Optional[pd.DataFrame]         = None # will be updated inside the scan_mimic_directory method()
 		self.tables_info_dict : Optional[Dict[str, Any]]       = None # will be updated inside the scan_mimic_directory method()
@@ -585,11 +589,24 @@ class DataLoader:
 
 			raise ValueError("partial_loading is True but both subject_ids and sample_size are None")
 
+		def _get_n_rows(df):
+			return df.shape[0].compute() if isinstance(df, dd.DataFrame) else df.shape[0]
 
+		def _apply_filters(df):
+			from mimic_iv_analysis.core.filtering import Filtering
+			return Filtering(df=df, table_name=table_name).render()
+
+		# Load table
 		df = _load_table_full()
+		logging.info(f"Loaded {table_name.value} full table. {_get_n_rows(df)} rows.")
+
+		df = _apply_filters(df)
+		logging.info(f"Applied filters to {table_name.value} table. {_get_n_rows(df)} rows.")
 
 		if partial_loading:
-			return _partial_loading(df)
+			df = _partial_loading(df)
+			logging.info(f"Applied partial loading to {table_name.value} table. {_get_n_rows(df)} rows.")
+
 		return df
 
 
@@ -643,122 +660,14 @@ class DataLoader:
 		return df_result, total_rows_loaded # convert_string_dtypes(df_result)
 
 
-	def apply_filters(self, df: pd.DataFrame, filter_params: Dict[str, Any], mimic_path: str=None) -> pd.DataFrame:
-		"""
-		Apply filters to the DataFrame based on the provided filter parameters.
-
-		This method loads necessary related tables (patients, admissions, diagnoses_icd, transfers)
-		and applies the specified filters using the Filtering class.
-
-		Args:
-			df: DataFrame to filter
-			filter_params: Dictionary containing filter parameters
-
-		Returns:
-			Filtered DataFrame
-		"""
-
-		if mimic_path is not None:
-			self.mimic_path = mimic_path
-
-		logging.info("Applying filters to DataFrame...")
-
-		# Check if filtering is enabled
-		if not any(filter_params.get(f, False) for f in [
-			'apply_encounter_timeframe', 'apply_age_range', 'apply_t2dm_diagnosis',
-			'apply_valid_admission_discharge', 'apply_inpatient_stay', 'exclude_in_hospital_death'
-		]):
-			logging.info("No filters enabled. Returning original DataFrame.")
-			return df
-
-		# Load necessary related tables if they're not already in the DataFrame
-		patients_df   = None
-		admissions_df = None
-		diagnoses_df  = None
-		transfers_df  = None
-
-		# Check if we need to load the patients table
-		if filter_params.get('apply_encounter_timeframe', False) or filter_params.get('apply_age_range', False):
-
-			if ('anchor_year_group' not in df.columns) or ('anchor_age' not in df.columns):
-				# Determine the path for the patients table
-				patients_path_gz = os.path.join(mimic_path, 'hosp', 'patients.csv.gz')
-				patients_path_csv = os.path.join(mimic_path, 'hosp', 'patients.csv')
-
-				if os.path.exists(patients_path_gz):
-					patients_file_to_load = patients_path_gz
-				elif os.path.exists(patients_path_csv):
-					patients_file_to_load = patients_path_csv
-				else:
-					patients_file_to_load = None
-					logging.warning("Patients file (.csv.gz or .csv) not found at expected paths. Some filters may not be applied.")
-
-				if patients_file_to_load:
-					patients_df, _ = self.load_mimic_table(patients_file_to_load, sample_size=None, max_chunks=-1)
-					if patients_df is not None:
-						if 'age' not in patients_df.columns and 'anchor_age' in patients_df.columns:
-							patients_df['age'] = patients_df['anchor_age']
-							logging.info("Created 'age' column from 'anchor_age' in patients_df for filtering.")
-						elif 'age' not in patients_df.columns:
-							logging.warning("'anchor_age' column not found in loaded patients_df. Cannot create 'age' column.")
-					# If patients_df is None after load_mimic_table, it means loading failed.
-					elif patients_df is None:
-						logging.warning(f"Failed to load patients table from {patients_file_to_load}. Age filter may not be applied.")
-
-		# Check if we need to load the admissions table
-		if 	filter_params.get('apply_valid_admission_discharge', False) or \
-			filter_params.get('apply_inpatient_stay', False) or \
-			filter_params.get('exclude_in_hospital_death', False):
-
-			if ('admittime' not in df.columns) or ('dischtime' not in df.columns) or ('admission_type' not in df.columns) or ('deathtime' not in df.columns):
-				admissions_path = os.path.join(mimic_path, 'hosp', 'admissions.csv.gz')
-
-				if os.path.exists(admissions_path):
-					# Load full table, filtering happens later
-					admissions_df, _ = self.load_mimic_table(admissions_path)
-				else:
-					logging.warning("Admissions table not found. Some filters may not be applied.")
-
-		# Check if we need to load the diagnoses_icd table
-		if filter_params.get('apply_t2dm_diagnosis', False):
-			if ('icd_code' not in df.columns) or ('seq_num' not in df.columns):
-				diagnoses_path = os.path.join(mimic_path, 'hosp', 'diagnoses_icd.csv.gz')
-
-				if os.path.exists(diagnoses_path):
-					# Load full table, filtering happens later
-					diagnoses_df, _ = self.load_mimic_table(diagnoses_path)
-				else:
-					logging.warning("Diagnoses_icd table not found. T2DM diagnosis filter may not be applied.")
-
-		# Check if we need to load the transfers table
-		if filter_params.get('apply_inpatient_stay', False) and filter_params.get('require_inpatient_transfer', False):
-			if 'careunit' not in df.columns:
-				transfers_path = os.path.join(mimic_path, 'hosp', 'transfers.csv.gz')
-				if os.path.exists(transfers_path):
-					# Load full table, filtering happens later
-					transfers_df, _ = self.load_mimic_table(transfers_path)
-				else:
-					logging.warning("Transfers table not found. Inpatient transfer filter may not be applied.")
-
-		# Apply filters using the Filtering class
-		filtered_df = self.filtering.apply_filters(
-			df            = df,
-			filter_params = filter_params,
-			patients_df   = patients_df,
-			admissions_df = admissions_df,
-			diagnoses_df  = diagnoses_df,
-			transfers_df  = transfers_df
-		)
-
-		return filtered_df
-
-
 	def merge_tables(self) -> pd.DataFrame:
 
 		tables_dict = self.load_all_study_tables()
 
 		patients_df        = tables_dict[TableNamesHOSP.PATIENTS.value]
 		admissions_df      = tables_dict[TableNamesHOSP.ADMISSIONS.value]
+
+		# Get tables
 		diagnoses_icd_df   = tables_dict[TableNamesHOSP.DIAGNOSES_ICD.value]
 		poe_df             = tables_dict[TableNamesHOSP.POE.value]
 		d_icd_diagnoses_df = tables_dict[TableNamesHOSP.D_ICD_DIAGNOSES.value]
@@ -862,9 +771,10 @@ if __name__ == '__main__':
 	subject_ids_list = data_loader.get_partial_subject_id_list_for_partial_loading(num_subjects=10, random_selection=True)
 	print(subject_ids_list)
 
-	ParquetConverter(data_loader=data_loader).save_as_parquet(table_name=TableNamesHOSP.POE)
+	# Load table
+	df = data_loader.load_table(table_name=TableNamesHOSP.DIAGNOSES_ICD, partial_loading=True, subject_ids=subject_ids_list)
 
-	print('---- DONE ----')
+
 	# TODO (next step):
 	# 	1. Load multiple tables and merge them into one.
 	# 	2. Save the merged table as a parquet file.
