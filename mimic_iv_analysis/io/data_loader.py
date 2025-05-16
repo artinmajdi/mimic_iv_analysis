@@ -682,9 +682,10 @@ class DataLoader:
 		return df_result, total_rows_loaded # convert_string_dtypes(df_result)
 
 
-	def load_merged_tables(self, partial_loading: bool = False, num_subjects: int = 100, random_selection: bool = False, use_dask: bool = True) -> pd.DataFrame:
+	def load_merged_tables(self, partial_loading: bool = False, num_subjects: int = 100, random_selection: bool = False, use_dask: bool = True, tables_dict: Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None) -> pd.DataFrame:
 
-		tables_dict = self.load_all_study_tables(partial_loading=partial_loading, num_subjects=num_subjects, random_selection=random_selection, use_dask=use_dask)
+		if tables_dict is None:
+			tables_dict = self.load_all_study_tables(partial_loading=partial_loading, num_subjects=num_subjects, random_selection=random_selection, use_dask=use_dask)
 
 		patients_df        = tables_dict[TableNamesHOSP.PATIENTS.value]
 		admissions_df      = tables_dict[TableNamesHOSP.ADMISSIONS.value]

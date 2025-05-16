@@ -452,25 +452,37 @@ class MIMICDashboardApp:
 				return
 
 			# Determine sampling method and parameters
-			target_subject_ids = None
-			load_sample_size = None
+			target_subject_ids             = None
+			load_sample_size               = None
 			loading_message_subject_suffix = ""
 
+			# Handle partial loading
 			if not load_full:
+
 				sampling_method = st.session_state.get('sampling_method', 'By Number of Subjects')
 
+				# Handle subject-based sampling
 				if sampling_method == "By Number of Subjects":
+
 					num_subjects_to_load = st.session_state.get('num_subjects_to_load', 0)
+
+					# Update the loading message suffix based on the target subject IDs
 					if num_subjects_to_load and num_subjects_to_load > 0:
+
 						target_subject_ids = self.data_handler.get_partial_subject_id_list_for_partial_loading(num_subjects_to_load)
+
 						if target_subject_ids:
 							loading_message_subject_suffix = f" for {len(target_subject_ids)} subjects"
+
 						else:
 							loading_message_subject_suffix = " (subject ID list empty or not found)"
+
 							st.sidebar.warning("Cannot perform subject-based sampling - subject IDs not found")
+
 				else:  # By Row Count
 					load_sample_size = st.session_state.sample_size
 					loading_message_subject_suffix = f" (sampling {load_sample_size} rows)"
+
 
 			# Framework info (currently just Pandas, add Dask logic if implemented)
 			framework = "Dask" if st.session_state.use_dask else "Pandas"
@@ -478,16 +490,18 @@ class MIMICDashboardApp:
 			# Build loading message based on method
 			if load_full:
 				loading_message = f"Loading full table using {framework}..."
+
 			else:
 				loading_message = f"Loading table{loading_message_subject_suffix} using {framework}..."
 
-			# TODO: see if I can merge this two into one. so that I can be sure that the merged table is shown everywhere.
 
 			# Special case for "merged_table" option
 			if selected_display == "merged_table":
 
 				dataset_path = st.session_state.mimic_path
+
 				if not dataset_path or not os.path.exists(dataset_path):
+
 					st.sidebar.error(f"MIMIC-IV directory not found: {dataset_path}. Please set correct path and re-scan.")
 					return
 
@@ -495,15 +509,23 @@ class MIMICDashboardApp:
 
 					# Load connected tables with merged view
 					with st.spinner("Loading and merging connected tables..."):
+
+						# TODO: need to check why the merged table is being shown empty
 						# Use load_all_study_tables and merge_tables methods
 						if target_subject_ids:
+
 							tables_dict = self.data_handler.load_all_study_tables(partial_loading=True, num_subjects=num_subjects_to_load, use_dask=st.session_state.use_dask)
+
+							# Merge the tables
+							merged_results = self.data_handler.load_merged_tables(tables_dict=tables_dict)
+
 						else:
 							tables_dict = self.data_handler.load_all_study_tables(partial_loading=not load_full, num_subjects=DEFAULT_SAMPLE_SIZE, use_dask=st.session_state.use_dask)
 
+							merged_results = self.data_handler.load_merged_tables(tables_dict=tables_dict)
 
-						# Merge the tables
-						merged_results = self.data_handler.merge_tables()
+
+
 
 					# Get the merged dataframe
 					if merged_results and 'merged_w_poe' in merged_results:

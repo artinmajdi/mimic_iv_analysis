@@ -98,7 +98,13 @@ mimic_iv_analysis/
 
 ## Usage
 
-Run the Streamlit dashboard:
+### Install the package from testpypi
+
+```bash
+pip install --index-url https://test.pypi.org/simple/ mimic_iv_analysis==0.5.6
+```
+
+### Run the Streamlit dashboard:
 
 ```bash
 # If installed with pip:

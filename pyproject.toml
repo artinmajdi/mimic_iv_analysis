@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name        = "mimic_iv_analysis"
-version     = "0.5.5"
+version     = "0.5.6"
 description = "A data science and machine learning framework for nursing research"
 readme      = "README.md"
 authors     = [ {name = "Artin Majdi", email = "msm2024@gmail.com"} ]
@@ -41,7 +41,8 @@ dependencies = [
     "python-dotenv",
     "pyyaml",
     "joblib",
-    "watchdog"
+    "watchdog",
+    "humanize"
 ]
 
 [project.optional-dependencies]
@@ -74,7 +75,7 @@ Repository    = "https://github.com/artinmajdi/mimic_iv_analysis.git"
 Issues        = "https://github.com/artinmajdi/mimic_iv_analysis/issues"
 
 [project.scripts]
-mimic-iv = "visualization.app:main"
+mimic-iv = "mimic_iv_analysis.visualization.app:main"
 
 [tool.setuptools]
 packages = [
