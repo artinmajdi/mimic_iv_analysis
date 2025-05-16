@@ -4,24 +4,68 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name        = "mimic_iv_analysis"
-version     = "0.3.0"
+version     = "0.5.5"
 description = "A data science and machine learning framework for nursing research"
 readme      = "README.md"
 authors     = [ {name = "Artin Majdi", email = "msm2024@gmail.com"} ]
 license     = {text = "MIT"}
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Healthcare Industry",
-    "License :: Other/Proprietary License",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 keywords = ["nursing research", "healthcare", "AI", "medical analysis"]
-requires-python = ">=3.10"
-dynamic = ["dependencies"]
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "numpy",
+    "pandas",
+    "dask",
+    "pyarrow",
+    "scipy",
+    "scikit-learn",
+    "matplotlib",
+    "seaborn",
+    "plotly",
+    "streamlit",
+    "shap",
+    "umap-learn",
+    "tqdm",
+    "python-dotenv",
+    "pyyaml",
+    "joblib",
+    "watchdog"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov>=2.0",
+    "black>=22.0",
+    "isort>=5.0",
+    "flake8>=3.9",
+    "mypy>=0.9",
+    "sphinx>=4.0",
+    "sphinx-rtd-theme>=1.0",
+    "twine",
+    "wheel",
+]
+test = [
+    "pytest>=6.0",
+    "pytest-cov>=2.0",
+]
+docs = [
+    "sphinx>=4.0",
+    "sphinx-rtd-theme>=1.0",
+    "sphinx-autodoc-typehints>=1.12",
+]
 
 [project.urls]
 Homepage      = "https://github.com/artinmajdi/mimic_iv_analysis"
@@ -33,16 +77,10 @@ Issues        = "https://github.com/artinmajdi/mimic_iv_analysis/issues"
 mimic-iv = "visualization.app:main"
 
 [tool.setuptools]
-packages = ["mimic_iv_analysis"]
-include-package-data = true
-
-[tool.setuptools.dynamic]
-dependencies = {file = ["requirements.txt"]}
-
-[tool.setuptools.package-data]
-mimic_iv_analysis = ["**/*.py"]
-
-[tool.pytest.ini_options]
-testpaths = [
-    "tests"
+packages = [
+    "mimic_iv_analysis",
+    "mimic_iv_analysis.core",
+    "mimic_iv_analysis.visualization",
+    "mimic_iv_analysis.visualization.app_components"
 ]
+include-package-data = true

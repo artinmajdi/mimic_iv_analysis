@@ -1,0 +1,37 @@
+# Include top-level metadata files for the sdist
+include README.md
+include LICENSE.md
+include pyproject.toml
+include requirements.txt
+# include pytest.ini # Optional: include if needed in sdist
+
+# Include all files within the 'mimic_iv_analysis' package directory
+# This covers .py, .yaml, .json, .csv, .sql etc. if they are inside 'mimic_iv_analysis/'
+graft mimic_iv_analysis
+
+# If you have a top-level 'models/' directory with data files to include in the sdist
+# If models are inside 'mimic_iv_analysis/models/', then 'graft' above covers them.
+recursive-include models *.joblib
+recursive-include models *.pkl
+
+# Standard exclusions
+global-exclude *.py[cod]
+global-exclude __pycache__
+global-exclude *.so
+global-exclude .DS_Store
+global-exclude *.pyc
+global-exclude .git*
+
+# Prune directories not typically part of an sdist or wheel
+prune tests
+prune docs
+prune .venv
+prune venv
+prune env
+prune .tox
+# prune examples # Uncomment if you have an 'examples' directory to exclude
+
+# The build system usually handles these, but explicit prune is fine if preferred
+# prune build
+# prune dist
+# prune *.egg-info

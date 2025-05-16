@@ -1,0 +1,20 @@
+[distutils]
+index-servers =
+    pypi
+    testpypi
+    github
+
+[testpypi]
+username = __token__
+password = ${TESTPYPI_TOKEN}
+repository = https://test.pypi.org/legacy/
+
+[pypi]
+username = __token__
+password = ${PYPI_TOKEN}
+
+
+[github]
+username = __token__
+password = ${GITHUB_TOKEN}
+repository = https://pypi.pkg.github.com/artinmajdi
