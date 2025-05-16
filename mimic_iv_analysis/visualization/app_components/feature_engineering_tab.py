@@ -66,13 +66,10 @@ class FeatureEngineeringTab:
 		col1, col2 = st.columns(2)
 		with col1:
 			# Suggest patient ID column but allow selection from all columns
-			patient_id_col_index = 0
-			if st.session_state.get('detected_patient_id_col') in all_columns:
-				patient_id_col_index = all_columns.index(st.session_state['detected_patient_id_col'])
 			patient_id_col = st.selectbox(
 				label   = "Select Patient ID Column",
 				options = all_columns,
-				index   = patient_id_col_index,
+				index   = all_columns.index('subject_id') if 'subject_id' in all_columns else 0,
 				key     = "freq_patient_id_col",
 				help    = "Column containing unique patient identifiers"
 			)

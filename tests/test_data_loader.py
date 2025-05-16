@@ -275,7 +275,7 @@ class TestDataLoader:
             subject_ids=[1, 2, 3],
             use_dask=True
         )
-        
+
         # Test with use_dask=False
         mock_load_table.reset_mock()
         result = loader.load_all_study_tables(partial_loading=False, use_dask=False)
@@ -467,10 +467,10 @@ class TestDataLoader:
 
     #     loader = DataLoader(mimic_path=mock_mimic_dir)
 
-    #     # Call merge_tables and check result
-    #     result = loader.merge_tables()
+    #     # Call load_merged_tables and check result
+    #     result = loader.load_merged_tables()
 
-    #     # Assert merge was called with correct tables
+    #     # Assert load_all_study_tables was called with correct tables
     #     mock_load_all_tables.assert_called_once()
 
     #     # Check results - we should have three dictionaries

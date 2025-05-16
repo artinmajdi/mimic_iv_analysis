@@ -682,9 +682,9 @@ class DataLoader:
 		return df_result, total_rows_loaded # convert_string_dtypes(df_result)
 
 
-	def merge_tables(self) -> pd.DataFrame:
+	def load_merged_tables(self, partial_loading: bool = False, num_subjects: int = 100, random_selection: bool = False, use_dask: bool = True) -> pd.DataFrame:
 
-		tables_dict = self.load_all_study_tables()
+		tables_dict = self.load_all_study_tables(partial_loading=partial_loading, num_subjects=num_subjects, random_selection=random_selection, use_dask=use_dask)
 
 		patients_df        = tables_dict[TableNamesHOSP.PATIENTS.value]
 		admissions_df      = tables_dict[TableNamesHOSP.ADMISSIONS.value]
@@ -710,6 +710,7 @@ class DataLoader:
 
 class ExampleDataLoader:
 	"""ExampleDataLoader class for loading example data."""
+
 	def __init__(self, partial_loading: bool = False, num_subjects: int = 100, random_selection: bool = False, use_dask: bool = True):
 		self.data_loader = DataLoader()
 		self.data_loader.scan_mimic_directory()
@@ -721,6 +722,7 @@ class ExampleDataLoader:
 
 		with warnings.catch_warnings():
 			warnings.simplefilter("ignore")
+
 
 	def counter(self):
 
@@ -736,14 +738,18 @@ class ExampleDataLoader:
 		print(f"{'poe':<15} | {get_nrows(TableNamesHOSP.POE):<10} | {get_nsubject_ids(TableNamesHOSP.POE):<10}")
 		print(f"{'poe_detail':<15} | {get_nrows(TableNamesHOSP.POE_DETAIL):<10} | {get_nsubject_ids(TableNamesHOSP.POE_DETAIL):<10}")
 
+
 	def study_table_info(self):
 		return self.data_loader.study_tables_info
+
 
 	def merge_two_tables(self, table1: TableNamesHOSP | TableNamesICU, table2: TableNamesHOSP | TableNamesICU, on: Tuple[str], how: Literal['inner', 'left', 'right', 'outer'] = 'inner'):
 		return self.tables_dict[table1.value].merge(self.tables_dict[table2.value], on=on, how=how)
 
+
 	def save_as_parquet(self, table_name: TableNamesHOSP | TableNamesICU):
 		ParquetConverter(data_loader=self.data_loader).save_as_parquet(table_name=table_name)
+
 
 	def n_rows_after_merge(self):
 
@@ -769,6 +775,19 @@ class ExampleDataLoader:
 		print(f"{'poe_merged':<15} {poe_merged.shape[0].compute():<10} {'poe':<15} {poe_df.shape[0].compute():<10} {'poe_detail':<15} {poe_detail_df.shape[0].compute():<10}")
 		print(f"{'merged_wo_poe':<15} {merged_wo_poe.shape[0].compute():<10} {'df34':<15} {df34.shape[0].compute():<10} {'df12':<15} {df12.shape[0].compute():<10}")
 		print(f"{'merged_w_poe':<15} {merged_w_poe.shape[0].compute():<10} {'poe_merged':<15} {poe_merged.shape[0].compute():<10} {'merged_wo_poe':<15} {merged_wo_poe.shape[0].compute():<10}")
+
+
+	def load_table(self, table_name: TableNamesHOSP | TableNamesICU):
+		return self.tables_dict[table_name.value]
+
+
+	def load_all_study_tables(self):
+		return self.tables_dict
+
+
+	def load_merged_tables(self):
+		return self.data_loader.load_merged_tables()
+
 
 class ParquetConverter:
 	"""Handles conversion of CSV/CSV.GZ files to Parquet format."""

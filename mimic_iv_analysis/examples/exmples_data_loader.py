@@ -174,7 +174,7 @@ class DataLoaderExamples:
         df2 = pd.DataFrame(data2)
 
         logging.info("Demonstration of merging two DataFrames:")
-        merged_df = loader.merge_tables()
+        merged_df = loader.load_merged_tables()
 
         logging.info("\nMerged dictionary keys:")
         for key in merged_df.keys():
