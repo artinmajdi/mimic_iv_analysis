@@ -819,6 +819,9 @@ class ParquetConverter:
 
 			return source_path, suffix
 
+		if self.data_loader.tables_info_df is None:
+			self.data_loader.scan_mimic_directory()
+
 
 		source_path = Path(self.data_loader.tables_info_df[(self.data_loader.tables_info_df.table_name == table_name.value)]['file_path'].values[0])
 
@@ -869,10 +872,8 @@ class ParquetConverter:
 
 if __name__ == '__main__':
 
-	examples = Examples(partial_loading=True, num_subjects=10)
-
-	# Scan the directory
-	examples.counter()
+	pc = ParquetConverter(data_loader=DataLoader(mimic_path=DEFAULT_MIMIC_PATH))
+	pc.save_as_parquet(table_name=TableNamesHOSP.ADMISSIONS)
 
 
 	print('done')
