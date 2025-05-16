@@ -443,7 +443,7 @@ class DataLoader:
 		return self.study_tables_info[self.study_tables_info.columns_list.apply(lambda x: 'subject_id' in x)].table_name.tolist()
 
 
-	def load_csv_table_with_correct_column_datatypes(self, file_path: Path):
+	def load_csv_table_with_correct_column_datatypes(self, file_path: Path, use_dask: bool = True):
 
 		# Check if file exists
 		if not os.path.exists(file_path):
@@ -461,14 +461,21 @@ class DataLoader:
 		dtypes      = {col: dtype for col, dtype in dtypes_all.items() if col in columns}
 		parse_dates = [col for col in parse_dates_all if col in columns]
 
-		# Now read with dask using correct types
-		df = dd.read_csv(
-			urlpath        = file_path,
-			dtype          = dtypes,
-			parse_dates    = parse_dates if parse_dates else None,
-			assume_missing = True,
-			blocksize      = None if file_path.suffix == '.gz' else '200MB'
-		)
+		# Read with either dask or pandas based on user choice
+		if use_dask:
+			df = dd.read_csv(
+				urlpath        = file_path,
+				dtype          = dtypes,
+				parse_dates    = parse_dates if parse_dates else None,
+				assume_missing = True,
+				blocksize      = None if file_path.suffix == '.gz' else '200MB'
+			)
+		else:
+			df = pd.read_csv(
+				filepath_or_buffer = file_path,
+				dtype          = dtypes,
+				parse_dates    = parse_dates if parse_dates else None
+			)
 
 		return df
 
@@ -544,7 +551,7 @@ class DataLoader:
 		return self.partial_subject_id_list
 
 
-	def load_all_study_tables(self, partial_loading: bool = False, num_subjects: int = 100, random_selection: bool = False) -> Dict[str, pd.DataFrame | dd.DataFrame]:
+	def load_all_study_tables(self, partial_loading: bool = False, num_subjects: int = 100, random_selection: bool = False, use_dask: bool = True) -> Dict[str, pd.DataFrame | dd.DataFrame]:
 
 		# Get subject IDs for partial loading
 		subject_ids = self.get_partial_subject_id_list_for_partial_loading(num_subjects=num_subjects, random_selection=random_selection) if partial_loading else None
@@ -554,22 +561,25 @@ class DataLoader:
 
 			table_name = table_names_enum_converter(name=row.table_name, module=row.module)
 
-			tables_dict[table_name.value] = self.load_table(table_name=table_name, partial_loading=partial_loading, subject_ids=subject_ids)
+			tables_dict[table_name.value] = self.load_table(table_name=table_name, partial_loading=partial_loading, subject_ids=subject_ids, use_dask=use_dask)
 
 		return tables_dict
 
 
-	def load_table(self, table_name: TableNamesHOSP | TableNamesICU, partial_loading: bool = False, subject_ids: Optional[List[dtypes_all['subject_id']]] = None, sample_size: Optional[int] = None) -> pd.DataFrame | dd.DataFrame:
+	def load_table(self, table_name: TableNamesHOSP | TableNamesICU, partial_loading: bool = False, subject_ids: Optional[List[dtypes_all['subject_id']]] = None, sample_size: Optional[int] = None, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
 
 		def _load_table_full() -> pd.DataFrame | dd.DataFrame:
 
 			file_path = self._get_file_path(table_name=table_name)
 
-			# The parquet files are already saved with the correct datatypes
+			# For parquet files, respect the use_dask flag
 			if file_path.suffix == '.parquet':
-				return dd.read_parquet(file_path)
+				if use_dask:
+					return dd.read_parquet(file_path)
+				else:
+					return pd.read_parquet(file_path)
 
-			return self.load_csv_table_with_correct_column_datatypes(file_path)
+			return self.load_csv_table_with_correct_column_datatypes(file_path, use_dask=use_dask)
 
 		def _partial_loading(df):
 
@@ -700,14 +710,14 @@ class DataLoader:
 
 class ExampleDataLoader:
 	"""ExampleDataLoader class for loading example data."""
-	def __init__(self, partial_loading: bool = False, num_subjects: int = 100, random_selection: bool = False):
+	def __init__(self, partial_loading: bool = False, num_subjects: int = 100, random_selection: bool = False, use_dask: bool = True):
 		self.data_loader = DataLoader()
 		self.data_loader.scan_mimic_directory()
 
 		if partial_loading:
-			self.tables_dict = self.data_loader.load_all_study_tables(partial_loading=True, num_subjects=num_subjects, random_selection=random_selection)
+			self.tables_dict = self.data_loader.load_all_study_tables(partial_loading=True, num_subjects=num_subjects, random_selection=random_selection, use_dask=use_dask)
 		else:
-			self.tables_dict = self.data_loader.load_all_study_tables(partial_loading=False)
+			self.tables_dict = self.data_loader.load_all_study_tables(partial_loading=False, use_dask=use_dask)
 
 		with warnings.catch_warnings():
 			warnings.simplefilter("ignore")

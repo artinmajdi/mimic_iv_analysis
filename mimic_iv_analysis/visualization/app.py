@@ -1,39 +1,27 @@
 # Standard library imports
 import os
 import logging
-import datetime
 from io import BytesIO
+from pathlib import Path
 from typing import Tuple, Optional
 
 # Data processing imports
-import numpy as np
 import pandas as pd
 
-# Visualization imports
-import matplotlib.pyplot as plt
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-
-# Machine learning imports
-from scipy.cluster.hierarchy import dendrogram
-from scipy import stats
-
-from sklearn.metrics import adjusted_rand_score
-from sklearn.preprocessing import MinMaxScaler
 
 # Streamlit import
 import streamlit as st
 
 # Local application imports
-from mimic_iv_analysis.core import FeatureEngineerUtils, DataLoader, ParquetConverter, ExampleDataLoader
+from mimic_iv_analysis.core import FeatureEngineerUtils
+from mimic_iv_analysis.io import DataLoader, ParquetConverter, ExampleDataLoader, TableNamesHOSP, TableNamesICU
 from mimic_iv_analysis.visualization.app_components import FilteringTab, FeatureEngineeringTab, AnalysisVisualizationTab, ClusteringAnalysisTab
 
 from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtils
 
 
 # Constants
-DEFAULT_MIMIC_PATH      = "/Users/artinmajdi/Documents/GitHubs/Career/mimic_iv/dataset/mimic-iv-3.1" # Adjust if necessary
+DEFAULT_MIMIC_PATH      = "/Users/artinmajdi/Documents/GitHubs/RAP/mimic__pankaj/dataset/mimic-iv-3.1" # Adjust if necessary
 LARGE_FILE_THRESHOLD_MB = 100
 DEFAULT_SAMPLE_SIZE     = 1000
 RANDOM_STATE            = 42
@@ -47,8 +35,8 @@ class MIMICDashboardApp:
 	def __init__(self):
 		logging.info("Initializing MIMICDashboardApp...")
 		# Initialize core components
-		self.data_handler      = DataLoader()
-		self.parquet_converter = ParquetConverter()
+		self.data_handler      = DataLoader(mimic_path=Path(DEFAULT_MIMIC_PATH))
+		self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
 		self.example_loader    = ExampleDataLoader()
 		self.feature_engineer  = FeatureEngineerUtils()
 
@@ -85,7 +73,7 @@ class MIMICDashboardApp:
 		st.session_state.table_display_names = {}
 		st.session_state.mimic_path = DEFAULT_MIMIC_PATH
 		st.session_state.total_row_count = 0
-		st.session_state.use_dask = False
+		st.session_state.use_dask = True
 		st.session_state.current_view = 'data_explorer'
 
 		# Feature engineering states
@@ -187,7 +175,7 @@ class MIMICDashboardApp:
 		else:
 			st.title("Cohort Filtering Configuration")
 			# Ensure necessary components are passed if FilteringTab needs them
-			FilteringTab(current_file_path=self.current_file_path).render() # Assuming FilteringTab uses session_state or needs no args
+			FilteringTab(current_file_path=self.current_file_path).render(data_handler=self.data_handler, feature_engineer=self.feature_engineer)
 
 		logging.info("MIMICDashboardApp run finished.")
 
@@ -223,8 +211,17 @@ class MIMICDashboardApp:
 			else:
 				with st.spinner("Scanning directory..."):
 					try:
+						# Update the data handler's path if it changed
+						if mimic_path != str(self.data_handler.mimic_path):
+							self.data_handler = DataLoader(mimic_path=Path(mimic_path))
+							self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
+
 						# Scan the directory structure using the data handler
-						dataset_info_df, dataset_info = self.data_handler.scan_mimic_directory(mimic_path)
+						self.data_handler.scan_mimic_directory()
+
+						# Get the results from the data handler's attributes
+						dataset_info_df = self.data_handler.tables_info_df
+						dataset_info = self.data_handler.tables_info_dict
 
 						if dataset_info_df is not None and not dataset_info_df.empty:
 							st.session_state.available_tables    = dataset_info['available_tables']
@@ -253,7 +250,7 @@ class MIMICDashboardApp:
 		"""Handles the display and logic of the sidebar components."""
 
 		# Logo and Title
-		st.sidebar.image("https://physionet.org/static/images/mimic-logo.png", width=150) # Add logo maybe
+		# st.sidebar.image("https://physionet.org/static/images/mimic-logo.png", width=150) # Add logo maybe
 		st.sidebar.title("MIMIC-IV Navigator")
 
 		# View selection
@@ -276,6 +273,7 @@ class MIMICDashboardApp:
 
 		# Module and table selection (only show if available_tables is populated)
 		if st.session_state.available_tables:
+
 			# Module selection
 			# Use index=0 safely as we check available_tables isn't empty
 			module_options = list(st.session_state.available_tables.keys())
@@ -303,57 +301,63 @@ class MIMICDashboardApp:
 				st.sidebar.markdown("---")
 
 				# Sampling options
-				load_full = st.sidebar.checkbox("Load Full Table (Ignore Subject Count/Sampling)", value=st.session_state.get('load_full', False), key="load_full")
+				load_full = st.sidebar.checkbox("Load Full Table", value=st.session_state.get('load_full', False), key="load_full")
 
-				# Get total unique subjects to display
-				total_unique_subjects = len(self.data_handler.all_subject_ids)
+				if not load_full:
+					# Sampling method selection
+					sampling_method = st.sidebar.radio(
+						"Sampling Method",
+						["By Number of Subjects", "By Row Count"],
+						index=0,
+						key="sampling_method",
+						help="Choose how to sample the data"
+					)
 
-				help_text_num_subjects = f"Number of subjects to load from '{TableNamesHOSP.PATIENTS}.csv'. Max: {total_unique_subjects}. \
-				\nLeave blank to load all subjects (if 'Load Full Table' is checked) or use default row sampling (if not)."
+					if sampling_method == "By Number of Subjects":
+						# Get total unique subjects to display
+						total_unique_subjects = len(self.data_handler.all_subject_ids)
 
-				if total_unique_subjects == 0 and self.data_handler.tables_info_df is not None:
+						help_text_num_subjects = f"Number of subjects to load. Max: {total_unique_subjects}."
 
-					help_text_num_subjects = f"Could not load subject IDs from '{TableNamesHOSP.PATIENTS}'. Ensure it's present and readable. Falling back to row sampling."
+						if total_unique_subjects == 0 and self.data_handler.tables_info_df is not None:
+							st.sidebar.warning(f"Could not load subject IDs from '{TableNamesHOSP.PATIENTS}'. Ensure it's present and readable.")
+							help_text_num_subjects = "Subject-based sampling not available. Please use row-based sampling instead."
 
-				elif self.data_handler.tables_info_df is None:
-					help_text_num_subjects = "Scan the directory first to see available subjects. Falling back to row sampling."
+						elif self.data_handler.tables_info_df is None:
+							st.sidebar.warning("Scan the directory first to see available subjects.")
+							help_text_num_subjects = "Subject-based sampling not available. Please scan directory first."
 
-				# Initialize num_subjects in session state if not present, default to a placeholder like 0 or a small number
-				if 'num_subjects_to_load' not in st.session_state:
-					st.session_state.num_subjects_to_load = 0 # Default to 0, meaning all or fallback to sample_size
+						# Initialize num_subjects in session state if not present
+						if 'num_subjects_to_load' not in st.session_state:
+							st.session_state.num_subjects_to_load = 100 # Default to 100 subjects
 
-				st.session_state.num_subjects_to_load = st.sidebar.number_input(
-					"Number of Subjects to Load",
-					min_value=0,
-					max_value=total_unique_subjects if total_unique_subjects > 0 else 1000000, # Fallback max if no subjects found
-					disabled=load_full,
-					key="num_subjects_input",
-					step=10,
-					value=st.session_state.num_subjects_to_load,
-					help=help_text_num_subjects
-				)
-				st.sidebar.caption(f"Total unique subjects found: {total_unique_subjects if total_unique_subjects > 0 else 'N/A (Scan or check patients.csv)'}")
+						st.session_state.num_subjects_to_load = st.sidebar.number_input(
+							"Number of Subjects to Load",
+							min_value=1,
+							max_value=total_unique_subjects if total_unique_subjects > 0 else 1,
+							disabled=total_unique_subjects == 0,
+							key="num_subjects_input",
+							step=10,
+							value=max(1, st.session_state.get('num_subjects_to_load', 10)),
+							help=help_text_num_subjects
+						)
+						st.sidebar.caption(f"Total unique subjects found: {total_unique_subjects if total_unique_subjects > 0 else 'N/A (Scan or check patients.csv)'}")
 
-				# Keep sample_size for fallback if num_subjects is 0 or subject_id filtering isn't applicable
-				# This original sample_size input is now effectively a fallback or for tables without subject_id
-				st.session_state.sample_size = st.sidebar.number_input(
-					"Fallback Row Sample Size (if needed)",
-					min_value = 100,
-					max_value = 6000000,
-					disabled  = load_full,
-					key       = "fallback_sample_size_input",
-					step      = 100,
-					value     = st.session_state.get('sample_size', DEFAULT_SAMPLE_SIZE), # Use .get for robustness
-					help      = "Number of rows to load if subject-based loading is not active or not applicable (e.g., table without subject_id). Applied randomly."
-				)
+					else:  # By Row Count
+						st.session_state.sample_size = st.sidebar.number_input(
+							"Number of Rows to Sample",
+							min_value = 100,
+							max_value = 6000000,
+							key       = "row_sample_input",
+							step      = 100,
+							value     = st.session_state.get('sample_size', DEFAULT_SAMPLE_SIZE),
+							help      = "Number of rows to load from the table"
+						)
 
-				# Encoding (less critical for parquet, but keep for CSV)
-				encoding = st.sidebar.selectbox("Encoding (for CSV)", ["utf-8", "latin-1", "iso-8859-1"], index=0, key="encoding_select")
+				# Dask option
+				st.session_state.use_dask = st.sidebar.checkbox("Use Dask", value=st.session_state.get('use_dask', True), help="Enable Dask for distributed computing and memory-efficient processing")
 
-				# Dask option (only relevant if dask is installed and intended)
-				st.session_state.use_dask = st.sidebar.checkbox("Use Dask for large files", value=st.session_state.get('use_dask', False), help="Enable Dask for potentially faster processing of very large files (requires Dask installation)")
-
-			self._load_table(encoding=encoding, load_full=load_full, selected_display=selected_display)
+			self._load_table(load_full=load_full, selected_display=selected_display)
 
 		else:
 			st.sidebar.info("Scan a MIMIC-IV directory to select and load tables.")
@@ -424,44 +428,58 @@ class MIMICDashboardApp:
 			module: The selected module
 			table: The selected table name
 		"""
-		try:
-			table_info = TableNamesHOSP[table].description if module == 'hosp' else TableNamesICU[table].description
+		# try:
+		logging.info(f"Displaying table info for {module}.{table}")
+		table_info = TableNamesHOSP(table).description if module == 'hosp' else TableNamesICU(table).description
 
-			if table_info:
-				st.sidebar.markdown(
-					f"**Description:** {table_info}",
-					help="Table description from MIMIC-IV documentation."
-				)
-		except Exception as e:
-			st.sidebar.warning(f"Could not retrieve table info: {e}")
+		if table_info:
+			st.sidebar.markdown(
+				f"**Description:** {table_info}",
+				help="Table description from MIMIC-IV documentation."
+			)
 
-	def _load_table(self, encoding: str = 'latin-1', load_full: bool = False, selected_display: str = None) -> Tuple[Optional[pd.DataFrame], int]:
+		# except Exception as e:
+		# 	st.sidebar.warning(f"Could not retrieve table info: {e}")
+
+	def _load_table(self, load_full: bool = False, selected_display: str = None) -> Tuple[Optional[pd.DataFrame], int]:
 		"""Load a specific MIMIC-IV table, handling large files and sampling."""
 
 		if st.sidebar.button("Load Selected Table", key="load_button"):
+
 			# Normal case for regular table loading
 			if selected_display != "merged_table" and (not st.session_state.selected_module or not st.session_state.selected_table):
 				st.sidebar.warning("Please select a module and table first.")
 				return
 
-			# Determine sample size to use
-			load_sample_size = None if load_full else st.session_state.sample_size
-			num_subjects_to_load = None if load_full else st.session_state.get('num_subjects_to_load', 0)
-
-			# Get target subject IDs if num_subjects_to_load is specified
+			# Determine sampling method and parameters
 			target_subject_ids = None
-			if num_subjects_to_load and num_subjects_to_load > 0:
-				target_subject_ids = self.data_handler.sampled_subject_ids_list(num_subjects_to_load)
-				if target_subject_ids:
-					loading_message_subject_suffix = f" for {len(target_subject_ids)} subjects"
-				else:
-					loading_message_subject_suffix = " (subject ID list empty or not found, using fallback sampling)"
-			else:
-				loading_message_subject_suffix = " (loading all subjects or using fallback sampling)"
+			load_sample_size = None
+			loading_message_subject_suffix = ""
+
+			if not load_full:
+				sampling_method = st.session_state.get('sampling_method', 'By Number of Subjects')
+
+				if sampling_method == "By Number of Subjects":
+					num_subjects_to_load = st.session_state.get('num_subjects_to_load', 0)
+					if num_subjects_to_load and num_subjects_to_load > 0:
+						target_subject_ids = self.data_handler.get_partial_subject_id_list_for_partial_loading(num_subjects_to_load)
+						if target_subject_ids:
+							loading_message_subject_suffix = f" for {len(target_subject_ids)} subjects"
+						else:
+							loading_message_subject_suffix = " (subject ID list empty or not found)"
+							st.sidebar.warning("Cannot perform subject-based sampling - subject IDs not found")
+				else:  # By Row Count
+					load_sample_size = st.session_state.sample_size
+					loading_message_subject_suffix = f" (sampling {load_sample_size} rows)"
 
 			# Framework info (currently just Pandas, add Dask logic if implemented)
-			framework       = "Dask" if st.session_state.use_dask else "Pandas"
-			loading_message = f"Loading { 'full table' if load_full else f'{load_sample_size} rows (sampled)' }{loading_message_subject_suffix} using {framework}..."
+			framework = "Dask" if st.session_state.use_dask else "Pandas"
+
+			# Build loading message based on method
+			if load_full:
+				loading_message = f"Loading full table using {framework}..."
+			else:
+				loading_message = f"Loading table{loading_message_subject_suffix} using {framework}..."
 
 			# TODO: see if I can merge this two into one. so that I can be sure that the merged table is shown everywhere.
 
@@ -477,24 +495,40 @@ class MIMICDashboardApp:
 
 					# Load connected tables with merged view
 					with st.spinner("Loading and merging connected tables..."):
-						result = self.data_handler.load_connected_tables( mimic_path=dataset_path, sample_size=load_sample_size, encoding=encoding, use_dask=st.session_state.use_dask, merged_view=True )
+						# Use load_all_study_tables and merge_tables methods
+						if target_subject_ids:
+							tables_dict = self.data_handler.load_all_study_tables(partial_loading=True, num_subjects=num_subjects_to_load, use_dask=st.session_state.use_dask)
+						else:
+							tables_dict = self.data_handler.load_all_study_tables(partial_loading=not load_full, num_subjects=DEFAULT_SAMPLE_SIZE, use_dask=st.session_state.use_dask)
 
-					# Unpack the result (tables dict and merged dataframe)
-					if len(result) == 2:  # Successful with merged view
-						connected_tables, merged_df = result
+
+						# Merge the tables
+						merged_results = self.data_handler.merge_tables()
+
+					# Get the merged dataframe
+					if merged_results and 'merged_w_poe' in merged_results:
+						merged_df = merged_results['merged_w_poe']
 
 						# Store all tables in session state for later access
-						st.session_state.connected_tables = connected_tables
+						st.session_state.connected_tables = tables_dict
 
 						# Check if we have a valid merged dataframe
-						if merged_df.empty:
-							st.sidebar.error("Failed to load connected tables.")
-							return
+						if hasattr(merged_df, 'compute'):
+							# It's a Dask DataFrame - compute the length
+							total_rows = merged_df.shape[0].compute()
+							if total_rows == 0:
+								st.sidebar.error("Failed to load connected tables.")
+								return
+						else:
+							total_rows = len(merged_df)
+							if merged_df.empty:
+								st.sidebar.error("Failed to load connected tables.")
+								return
 
 						# Set the merged dataframe for display
 						st.session_state.df                 = merged_df
-						st.session_state.total_rows         = len(merged_df)
-						st.session_state.loaded_sample_size = len(merged_df)
+						st.session_state.total_rows         = total_rows
+						st.session_state.loaded_sample_size = total_rows
 						st.session_state.current_file_path  = "merged_tables"
 						st.session_state.table_display_name = "Merged MIMIC-IV View"
 
@@ -502,50 +536,70 @@ class MIMICDashboardApp:
 						self._clear_analysis_states()
 
 						# Show success message with table info
-						tables_loaded = [name for name, df in connected_tables.items() if not df.empty]
-						total_tables = len(tables_loaded)
-						st.sidebar.success(f"Successfully merged {total_tables} tables with {len(merged_df.columns)} columns and {len(merged_df)} rows!")
+						total_tables = len(tables_dict)
+						num_columns = merged_df.shape[1]
+						st.sidebar.success(f"Successfully merged {total_tables} tables with {num_columns} columns and {total_rows} rows!")
 
 			else:
-				file_path = st.session_state.file_paths.get((st.session_state.selected_module, st.session_state.selected_table))
-
-				if not file_path or not os.path.exists(file_path):
-					st.sidebar.error(f"File path not found for {st.session_state.selected_module}/{st.session_state.selected_table}. Please re-scan.")
+				# Get the table enum from module and table name
+				try:
+					if st.session_state.selected_module == 'hosp':
+						table_name = TableNamesHOSP(st.session_state.selected_table)
+					else:
+						table_name = TableNamesICU(st.session_state.selected_table)
+				except ValueError:
+					st.sidebar.error(f"Invalid table name: {st.session_state.selected_table}")
 					return
 
+				file_path = st.session_state.file_paths.get((st.session_state.selected_module, st.session_state.selected_table))
 				st.session_state.current_file_path = file_path
 
 				with st.spinner(loading_message):
 
-					df, total_rows = self.data_handler.load_mimic_table(
-						file_path=file_path,
+					df = self.data_handler.load_table(
+						table_name=table_name,
+						partial_loading=bool(target_subject_ids),
+						subject_ids=target_subject_ids,
 						sample_size=load_sample_size,
-						encoding=encoding,
-						use_dask=st.session_state.use_dask,
-						target_subject_ids=target_subject_ids # Pass the subject IDs here
+						use_dask=st.session_state.use_dask
 					)
+
+					# Get total rows - for Dask DataFrame, need to compute
+					if hasattr(df, 'compute'):
+						total_rows = df.shape[0].compute()
+					else:
+						total_rows = len(df)
 
 					st.session_state.total_row_count = total_rows
 
-					if df is not None and not df.empty:
-						st.session_state.df = df
-						st.sidebar.success(f"Loaded {len(df)} rows out of {total_rows}.")
+					# Check if DataFrame is valid and not empty
+					if df is not None:
+						# For Dask DataFrame, check shape
+						if hasattr(df, 'compute') and total_rows == 0:
+							st.sidebar.warning("Loaded table is empty.")
+							st.session_state.df = None
+						# For pandas DataFrame, check empty
+						elif not hasattr(df, 'compute') and df.empty:
+							st.sidebar.warning("Loaded table is empty.")
+							st.session_state.df = None
+						else:
+							st.session_state.df = df
+							# For display, show the actual loaded count for DataFrames
+							if hasattr(df, 'compute'):
+								st.sidebar.success(f"Loaded {total_rows} rows.")
+							else:
+								st.sidebar.success(f"Loaded {len(df)} rows.")
 
-						# Clear previous analysis results when new data is loaded
-						self._clear_analysis_states()
+							# Clear previous analysis results when new data is loaded
+							self._clear_analysis_states()
 
-						# Auto-detect columns for feature engineering
-						st.session_state.detected_order_cols     = FeatureEngineerUtils.detect_order_columns(df)
-						st.session_state.detected_time_cols      = FeatureEngineerUtils.detect_temporal_columns(df)
-						st.session_state.detected_patient_id_col = FeatureEngineerUtils.detect_patient_id_column(df)
+							# Auto-detect columns for feature engineering
+							st.session_state.detected_order_cols     = FeatureEngineerUtils.detect_order_columns(df)
+							st.session_state.detected_time_cols      = FeatureEngineerUtils.detect_temporal_columns(df)
+							st.session_state.detected_patient_id_col = FeatureEngineerUtils.detect_patient_id_column(df)
 
-						st.sidebar.write("Detected Columns (for Feature Eng):")
-						st.sidebar.caption(f"Patient ID: {st.session_state.detected_patient_id_col}, Order: {st.session_state.detected_order_cols}, Time: {st.session_state.detected_time_cols}")
-
-
-					elif df is not None and df.empty:
-						st.sidebar.warning("Loaded table is empty.")
-						st.session_state.df = None # Set to None if empty
+							st.sidebar.write("Detected Columns (for Feature Eng):")
+							st.sidebar.caption(f"Patient ID: {st.session_state.detected_patient_id_col}, Order: {st.session_state.detected_order_cols}, Time: {st.session_state.detected_time_cols}")
 
 					else: # df is None
 						st.sidebar.error("Failed to load table. Check logs or file format.")

@@ -260,7 +260,8 @@ class TestDataLoader:
         mock_load_table.assert_called_with(
             table_name=TableNamesHOSP.PATIENTS,
             partial_loading=False,
-            subject_ids=None
+            subject_ids=None,
+            use_dask=True
         )
 
         # Test with partial loading
@@ -271,7 +272,19 @@ class TestDataLoader:
         mock_load_table.assert_called_with(
             table_name=TableNamesHOSP.PATIENTS,
             partial_loading=True,
-            subject_ids=[1, 2, 3]
+            subject_ids=[1, 2, 3],
+            use_dask=True
+        )
+        
+        # Test with use_dask=False
+        mock_load_table.reset_mock()
+        result = loader.load_all_study_tables(partial_loading=False, use_dask=False)
+        assert 'patients' in result
+        mock_load_table.assert_called_with(
+            table_name=TableNamesHOSP.PATIENTS,
+            partial_loading=False,
+            subject_ids=None,
+            use_dask=False
         )
 
     # @patch('mimic_iv_analysis.io.data_loader.Filtering')
