@@ -38,6 +38,14 @@ class Filtering:
 
 	def render(self) -> pd.DataFrame | dd.DataFrame:
 
+		# TODO: apply this filter too
+		"""Regarding the table bottleneck, could the size of the poe table be reduced by:
+		Connecting patients table to poe table
+		Filter for anchor_year_group (2017-2019) (Refer to the MIMIC IV Potential Tables Linkages v2 document (https://drive.google.com/file/d/1u9LPf4-gGOG-P_pgCbiu4oq8cp_JGROe/view?usp=drive_link))
+		Once the poe table is filtered by the anchor_year_group then maybe the rest of the tables could be connected and synced
+		This makes sense in my head but forgive me if this does not make sense programmatically.
+		On another note, I have scheduled a zoom meeting for 12 Noon PDT/1500 EDT. The invite is below. I can reschedule a recurring weekly or biweekly touch base call. Does Friday at Noon PDT/1500 EDT still work for you? Please let me know either way. Thanks. """
+
 		if self.table_name == TableNamesHOSP.PATIENTS:
 			return self.df[(self.df.anchor_age >= 18.0) & (self.df.anchor_age <= 75.0)]
 
