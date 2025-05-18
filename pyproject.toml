@@ -25,24 +25,48 @@ classifiers = [
 keywords = ["nursing research", "healthcare", "AI", "medical analysis"]
 requires-python = ">=3.10,<3.13"
 dependencies = [
+    # Core scientific computing
     "numpy",
     "pandas",
-    "dask",
+    "dask[distributed]",
     "pyarrow",
     "scipy",
     "scikit-learn",
+
+    # Data visualization
     "matplotlib",
     "seaborn",
     "plotly",
+
+    # Web & Dashboard
     "streamlit",
-    "shap",
+
+    # Machine Learning
     "umap-learn",
+
+    # Jupyter notebook support
+    "jupyter",
+    "ipywidgets",
+    "notebook",
+
+    # Data processing
+    "dask-labextension",
+
+    # Utilities
     "tqdm",
     "python-dotenv",
     "pyyaml",
     "joblib",
-    "watchdog",
-    "humanize"
+    "watchdog",  # File system monitoring
+    "dotenv",
+    "humanize",
+
+    # Development tools
+    "pytest",
+
+    # Documentation
+    "sphinx",
+    "sphinx-rtd-theme"
 ]
 
 [project.optional-dependencies]

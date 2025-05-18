@@ -13,14 +13,9 @@ plotly
 
 # Web & Dashboard
 streamlit
-bokeh
 
 # Machine Learning
-shap
-lifelines  # Survival analysis
-networkx  # Network analysis
 umap-learn
-# pyhealth  # Healthcare machine learning library
 
 # Jupyter notebook support
 jupyter
@@ -28,7 +23,6 @@ ipywidgets
 notebook
 
 # Data processing
-datasets  # Hugging Face datasets library
 dask-labextension
 
 # Utilities
@@ -37,6 +31,8 @@ python-dotenv
 pyyaml
 joblib
 watchdog  # File system monitoring
+dotenv
+humanize
 
 # Development tools
 pytest
