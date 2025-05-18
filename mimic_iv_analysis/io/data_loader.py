@@ -21,40 +21,9 @@ from tqdm import tqdm
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-# Import filtering functionality
-
-# Utility functions
-# def convert_string_dtypes(df):
-#   """Convert pandas StringDtype to object type to avoid Arrow conversion issues in Streamlit.
-
-#   Args:
-#       df: Input DataFrame (pandas or Dask)
-
-#   Returns:
-#       DataFrame with StringDtype columns converted to object type
-#   """
-#   if df is None:
-#       return df
-
-#   if hasattr(df, 'compute'):
-#       # For Dask DataFrame, apply the conversion without computing
-#       string_cols = [col for col in df.columns if str(df[col].dtype) == 'string']
-#       if string_cols:
-#           return df.map_partitions(lambda partition:
-#               partition.assign(**{col: partition[col].astype('object') for col in string_cols})
-#           )
-#       return df
-
-#   # For pandas DataFrame
-#   for col in df.columns:
-#       if hasattr(df[col], 'dtype') and str(df[col].dtype) == 'string':
-#           df[col] = df[col].astype('object')
-#   return df
-
 # Constants
 DEFAULT_MIMIC_PATH      = Path("/Users/artinmajdi/Documents/GitHubs/RAP/mimic__pankaj/dataset/mimic-iv-3.1")
-LARGE_FILE_THRESHOLD_MB = 100
-DEFAULT_SAMPLE_SIZE     = 1000
+DEFAULT_NUM_SUBJECTS    = 10
 RANDOM_STATE            = 42
 SUBJECT_ID_COL          = 'subject_id'
 
@@ -235,8 +204,8 @@ class DataLoader:
 									TableNamesHOSP.POE_DETAIL]
 
 
-	def __init__(self,  mimic_path        : Path = DEFAULT_MIMIC_PATH,
-						study_tables_list : Optional[List[TableNamesHOSP | TableNamesICU]] = None):
+	def __init__(self,mimic_path: Path = DEFAULT_MIMIC_PATH,
+					study_tables_list : Optional[List[TableNamesHOSP | TableNamesICU]] = None):
 
 		# MIMIC_IV v3.1 path
 		self.mimic_path = mimic_path
@@ -521,7 +490,7 @@ class DataLoader:
 		return self._all_subject_ids
 
 
-	def get_partial_subject_id_list_for_partial_loading(self, num_subjects: int = 100, random_selection: bool = False) -> List[dtypes_all['subject_id']]:
+	def get_partial_subject_id_list_for_partial_loading(self, num_subjects: int = DEFAULT_NUM_SUBJECTS, random_selection: bool = False) -> List[dtypes_all['subject_id']]:
 		"""
 			Returns a subset of subject IDs for sampling.
 
@@ -551,10 +520,17 @@ class DataLoader:
 		return self.partial_subject_id_list
 
 
-	def load_all_study_tables(self, partial_loading: bool = False, num_subjects: int = 100, random_selection: bool = False, use_dask: bool = True) -> Dict[str, pd.DataFrame | dd.DataFrame]:
+	def load_all_study_tables(self,
+								partial_loading  : bool                                     = False,
+								num_subjects     : int                                      = DEFAULT_NUM_SUBJECTS,
+								random_selection : bool                                     = False,
+								subject_ids      : Optional[List[dtypes_all['subject_id']]] = None,
+								use_dask         : bool                                     = True
+								) -> Dict[str, pd.DataFrame | dd.DataFrame]:
 
 		# Get subject IDs for partial loading
-		subject_ids = self.get_partial_subject_id_list_for_partial_loading(num_subjects=num_subjects, random_selection=random_selection) if partial_loading else None
+		if partial_loading and (subject_ids is None):
+			subject_ids = self.get_partial_subject_id_list_for_partial_loading(num_subjects=num_subjects, random_selection=random_selection)
 
 		tables_dict = {}
 		for _, row in self.study_tables_info.iterrows():
@@ -566,7 +542,12 @@ class DataLoader:
 		return tables_dict
 
 
-	def load_table(self, table_name: TableNamesHOSP | TableNamesICU, partial_loading: bool = False, subject_ids: Optional[List[dtypes_all['subject_id']]] = None, sample_size: Optional[int] = None, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
+	def load_table(self,
+						table_name     : TableNamesHOSP | TableNamesICU,
+						partial_loading: bool = False,
+						subject_ids    : Optional[List[dtypes_all['subject_id']]] = None,
+						use_dask       : bool = True
+						) -> pd.DataFrame | dd.DataFrame:
 
 		def _load_table_full() -> pd.DataFrame | dd.DataFrame:
 
@@ -583,31 +564,26 @@ class DataLoader:
 
 		def _partial_loading(df):
 
-			# Sampling the table by getting the rows for the specified subject IDs
-			if subject_ids is not None:
+			if subject_ids is None:
+				raise ValueError("partial_loading is True but both subject_ids is None")
 
-				if 'subject_id' not in df.columns:
-					logging.info(f"Table {table_name.value} does not have a subject_id column. Partial loading is not possible. Skipping partial loading.")
-					return df
 
-				logging.info(f"Filtering {table_name.value} by subject_id for {len(subject_ids)} subjects.")
+			if 'subject_id' not in df.columns:
+				logging.info(f"Table {table_name.value} does not have a subject_id column. Partial loading is not possible. Skipping partial loading.")
+				return df
 
-				# Convert subject_ids to a set for faster lookups
-				subject_ids_set = set(subject_ids)
+			logging.info(f"Filtering {table_name.value} by subject_id for {len(subject_ids)} subjects.")
 
-				# Use map_partitions for Dask DataFrame or direct isin for pandas
-				if isinstance(df, dd.DataFrame):
-					return df.map_partitions(lambda part: part[part['subject_id'].isin(subject_ids_set)])
-				return df[df['subject_id'].isin(subject_ids_set)]
+			# Convert subject_ids to a set for faster lookups
+			subject_ids_set = set(subject_ids)
 
-			# Sampling the table with a fixed number of rows
-			if sample_size is not None:
-				logging.info(f"Sampling {table_name.value} by subject_id for {sample_size} subjects.")
-				if isinstance(df, dd.DataFrame):
-					return df.head(sample_size, compute=False)
-				return df.head(sample_size)
+			# Use map_partitions for Dask DataFrame or direct isin for pandas
+			if isinstance(df, dd.DataFrame):
+				return df.map_partitions(lambda part: part[part['subject_id'].isin(subject_ids_set)])
 
-			raise ValueError("partial_loading is True but both subject_ids and sample_size are None")
+			return df[df['subject_id'].isin(subject_ids_set)]
+
+
 
 		def _get_n_rows(df):
 			return df.shape[0].compute() if isinstance(df, dd.DataFrame) else df.shape[0]
@@ -682,11 +658,21 @@ class DataLoader:
 		return df_result, total_rows_loaded # convert_string_dtypes(df_result)
 
 
-	def load_merged_tables(self, partial_loading: bool = False, num_subjects: int = 100, random_selection: bool = False, use_dask: bool = True, tables_dict: Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None) -> pd.DataFrame:
+	def load_merged_tables(self,
+							partial_loading  : bool = False,
+							num_subjects     : int  = DEFAULT_NUM_SUBJECTS,
+							random_selection : bool = False,
+							use_dask         : bool = True,
+							tables_dict      : Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None
+							) -> pd.DataFrame:
 
 		if tables_dict is None:
-			tables_dict = self.load_all_study_tables(partial_loading=partial_loading, num_subjects=num_subjects, random_selection=random_selection, use_dask=use_dask)
+			tables_dict = self.load_all_study_tables(	partial_loading  = partial_loading,
+														num_subjects     = num_subjects,
+														random_selection = random_selection,
+														use_dask         = use_dask)
 
+		# Get tables
 		patients_df        = tables_dict[TableNamesHOSP.PATIENTS.value]
 		admissions_df      = tables_dict[TableNamesHOSP.ADMISSIONS.value]
 
@@ -702,11 +688,11 @@ class DataLoader:
 		df34 = diagnoses_icd_df.merge(d_icd_diagnoses_df, on=('icd_code', 'icd_version'), how='inner')
 
 		# The reason for 'left' is that we want to keep all the rows from poe table. The poe_detail table for unknown reasons, has fewer rows than poe table.
-		poe_merged    = poe_df.merge(poe_detail_df, on=('poe_id', 'poe_seq', 'subject_id'), how='left')
-		merged_wo_poe = df12.merge(df34, on=('subject_id', 'hadm_id'), how='inner')
-		merged_w_poe  = merged_wo_poe.merge(poe_merged, on=('subject_id', 'hadm_id'), how='inner')
+		poe_and_details   = poe_df.merge(poe_detail_df, on=('poe_id', 'poe_seq', 'subject_id'), how='left')
+		merged_wo_poe     = df12.merge(df34, on=('subject_id', 'hadm_id'), how='inner')
+		merged_full_study = merged_wo_poe.merge(poe_and_details, on=('subject_id', 'hadm_id'), how='inner')
 
-		return {'merged_wo_poe': merged_wo_poe, 'merged_w_poe': merged_w_poe, 'poe_merged': poe_merged}
+		return {'merged_wo_poe': merged_wo_poe, 'merged_full_study': merged_full_study, 'poe_and_details': poe_and_details}
 
 
 class ExampleDataLoader:
@@ -764,18 +750,18 @@ class ExampleDataLoader:
 
 		df12          = patients_df.merge(admissions_df,           on='subject_id',  how='inner')
 		df34          = diagnoses_icd_df.merge(d_icd_diagnoses_df, on=('icd_code',   'icd_version'), how='inner')
-		poe_merged    = poe_df.merge(poe_detail_df,                on=('poe_id',     'poe_seq',      'subject_id'), how='left')
+		poe_and_details    = poe_df.merge(poe_detail_df,                on=('poe_id',     'poe_seq',      'subject_id'), how='left')
 		merged_wo_poe = df12.merge(df34,                           on=('subject_id', 'hadm_id'),     how='inner')
-		merged_w_poe  = merged_wo_poe.merge(poe_merged,            on=('subject_id', 'hadm_id'),     how='inner')
+		merged_full_study  = merged_wo_poe.merge(poe_and_details,            on=('subject_id', 'hadm_id'),     how='inner')
 
 
 		print(f"{'DataFrame':<15} {'Count':<10} {'DataFrame':<15} {'Count':<10} {'DataFrame':<15} {'Count':<10}")
 		print("-" * 70)
 		print(f"{'df12':<15} {df12.shape[0].compute():<10} {'patients':<15} {patients_df.shape[0].compute():<10} {'admissions':<15} {admissions_df.shape[0].compute():<10}")
 		print(f"{'df34':<15} {df34.shape[0].compute():<10} {'diagnoses_icd':<15} {diagnoses_icd_df.shape[0].compute():<10} {'d_icd_diagnoses':<15} {d_icd_diagnoses_df.shape[0].compute():<10}")
-		print(f"{'poe_merged':<15} {poe_merged.shape[0].compute():<10} {'poe':<15} {poe_df.shape[0].compute():<10} {'poe_detail':<15} {poe_detail_df.shape[0].compute():<10}")
+		print(f"{'poe_and_details':<15} {poe_and_details.shape[0].compute():<10} {'poe':<15} {poe_df.shape[0].compute():<10} {'poe_detail':<15} {poe_detail_df.shape[0].compute():<10}")
 		print(f"{'merged_wo_poe':<15} {merged_wo_poe.shape[0].compute():<10} {'df34':<15} {df34.shape[0].compute():<10} {'df12':<15} {df12.shape[0].compute():<10}")
-		print(f"{'merged_w_poe':<15} {merged_w_poe.shape[0].compute():<10} {'poe_merged':<15} {poe_merged.shape[0].compute():<10} {'merged_wo_poe':<15} {merged_wo_poe.shape[0].compute():<10}")
+		print(f"{'merged_full_study':<15} {merged_full_study.shape[0].compute():<10} {'poe_and_details':<15} {poe_and_details.shape[0].compute():<10} {'merged_wo_poe':<15} {merged_wo_poe.shape[0].compute():<10}")
 
 
 	def load_table(self, table_name: TableNamesHOSP | TableNamesICU):

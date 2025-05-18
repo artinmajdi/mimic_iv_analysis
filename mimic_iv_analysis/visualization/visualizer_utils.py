@@ -67,40 +67,25 @@ class MIMICVisualizerUtils:
 
 
 	@staticmethod
-	def display_data_preview(df, use_dask: bool = False):
-		"""Displays a preview of the loaded DataFrame.
+	def display_data_preview(df: pd.DataFrame | dd.DataFrame, use_dask: bool = False):
+		"""Displays a preview of the loaded DataFrame."""
 
-		Args:
-			df: DataFrame to display (can be pandas DataFrame or Dask DataFrame)
-			use_dask: If True, df is treated as a Dask DataFrame and computed when needed
-		"""
-		if df is not None:
-			st.markdown("<h2 class='sub-header'>Data Preview</h2>", unsafe_allow_html=True)
+		st.markdown("<h2 class='sub-header'>Data Preview</h2>", unsafe_allow_html=True)
 
-			# If using Dask, compute the DataFrame for display
-			if use_dask and hasattr(df, 'compute'):
-				with st.spinner('Computing preview from Dask DataFrame...'):
-					# For preview, we can use .head() which is more efficient than computing the whole DataFrame
-					# Using a reasonable number of rows (100) for the preview
-					# Check if it's a Dask DataFrame by checking for compute method
-					if hasattr(df, 'compute'):
-						# This is a Dask DataFrame - handle it appropriately
-						try:
-							# Try with compute parameter (newer Dask versions)
-							preview_df = df.head(100, compute=True)
-						except TypeError:
-							# For older Dask versions
-							preview_df = df.head(100).compute()
-					else:
-						# Regular pandas DataFrame
-						preview_df = df.head(100)
-					st.dataframe(preview_df, use_container_width=True)
-			else:
-				st.dataframe(df, use_container_width=True)
+		if use_dask and isinstance(df, dd.DataFrame):
+
+			with st.spinner('Computing preview from Dask DataFrame...'):
+
+				preview_df = df.head(20, compute=True) if isinstance(df, dd.DataFrame) else df.head(20)
+
+				st.dataframe(preview_df, use_container_width=True)
+
+		else:
+			st.dataframe(df, use_container_width=True)
 
 
 	@staticmethod
-	def display_visualizations(df, use_dask: bool = False):
+	def display_visualizations(df: pd.DataFrame | dd.DataFrame, use_dask: bool = False):
 		"""Displays visualizations of the loaded DataFrame.
 
 		Args:
@@ -120,13 +105,13 @@ class MIMICVisualizerUtils:
 						# This is a Dask DataFrame - handle it appropriately
 						try:
 							# Try with compute parameter (newer Dask versions)
-							viz_df = df.head(1000, compute=True)
+							viz_df = df.head(20, compute=True)
 						except TypeError:
 							# For older Dask versions
-							viz_df = df.head(1000).compute()
+							viz_df = df.head(20).compute()
 					else:
 						# Regular pandas DataFrame
-						viz_df = df.head(1000)
+						viz_df = df.head(20)
 					st.info('Visualizations are based on a sample of the data for better performance.')
 			else:
 				viz_df = df

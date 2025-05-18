@@ -67,8 +67,36 @@ def main():
     # Find available dashboards
     dashboard_apps = find_dashboard_apps(visualization_dir)
 
-    # Let user select a dashboard
-    selected_name, app_path = select_dashboard(dashboard_apps)
+    # MODIFICATION START
+    # Try to auto-select 'app.py' as this is the target specified by the user.
+    # The visualization_dir is already calculated and is where app.py should be.
+    app_py_target_path = os.path.join(visualization_dir, 'app.py')
+    selected_name = None
+    app_path = None
+
+    # Check if dashboard_apps is empty first (this case is also handled by select_dashboard if called)
+    if not dashboard_apps:
+        print(f"No dashboards found in {visualization_dir}. Exiting.")
+        sys.exit(1)
+
+    for name_iter, path_iter in dashboard_apps:
+        # Compare absolute paths to be certain
+        if os.path.abspath(path_iter) == os.path.abspath(app_py_target_path):
+            selected_name = name_iter
+            app_path = path_iter
+            print(f"Automatically selecting dashboard: {selected_name} ({app_path}) as it matches the target app.py.")
+            break
+
+    if not selected_name:
+        # If app.py was not specifically found by path, and there's only one app, select it.
+        if len(dashboard_apps) == 1:
+            selected_name, app_path = dashboard_apps[0]
+            print(f"Automatically selecting the only available dashboard: {selected_name} ({app_path})")
+        else:
+            # Fallback to original interactive selection if multiple choices and target 'app.py' not found by path
+            print("Multiple dashboards found and the target 'app.py' was not uniquely identified by path, proceeding to manual selection.")
+            selected_name, app_path = select_dashboard(dashboard_apps) # Original call
+    # MODIFICATION END
 
     # Setup environment for the subprocess
     env = os.environ.copy()

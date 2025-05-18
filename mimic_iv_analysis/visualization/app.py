@@ -3,11 +3,12 @@ import os
 import logging
 from io import BytesIO
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List, Literal
 
 # Data processing imports
 import pandas as pd
-
+import dask.dataframe as dd
+import enum
 
 # Streamlit import
 import streamlit as st
@@ -16,20 +17,14 @@ import streamlit.web.cli as stcli # For programmatic Sreamlit launch
 # Local application imports
 from mimic_iv_analysis.core import FeatureEngineerUtils
 from mimic_iv_analysis.io import DataLoader, ParquetConverter, ExampleDataLoader, TableNamesHOSP, TableNamesICU
+from mimic_iv_analysis.io.data_loader import table_names_enum_converter, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS
 from mimic_iv_analysis.visualization.app_components import FilteringTab, FeatureEngineeringTab, AnalysisVisualizationTab, ClusteringAnalysisTab
 
 from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtils
 
 
-# Constants
-DEFAULT_MIMIC_PATH      = "/Users/artinmajdi/Documents/GitHubs/RAP/mimic__pankaj/dataset/mimic-iv-3.1" # Adjust if necessary
-LARGE_FILE_THRESHOLD_MB = 100
-DEFAULT_SAMPLE_SIZE     = 1000
-RANDOM_STATE            = 42
-
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
 
 class MIMICDashboardApp:
 
@@ -71,8 +66,7 @@ class MIMICDashboardApp:
 		st.session_state.selected_module = None
 		st.session_state.selected_table = None
 		st.session_state.df = None
-		st.session_state.num_subjects_to_load = 10
-		st.session_state.sample_size = DEFAULT_SAMPLE_SIZE
+		st.session_state.num_subjects_to_load = DEFAULT_NUM_SUBJECTS
 		st.session_state.available_tables = {}
 		st.session_state.file_paths = {}
 		st.session_state.file_sizes = {}
@@ -119,6 +113,7 @@ class MIMICDashboardApp:
 
 		st.session_state.app_initialized = True # Mark as initialized
 		logging.info("Session state initialized.")
+
 
 	def run(self):
 		"""Run the main application loop."""
@@ -186,6 +181,7 @@ class MIMICDashboardApp:
 			FilteringTab(current_file_path=self.current_file_path).render(data_handler=self.data_handler, feature_engineer=self.feature_engineer)
 
 		logging.info("MIMICDashboardApp run finished.")
+
 
 	def _scan_dataset(self):
 
@@ -258,56 +254,152 @@ class MIMICDashboardApp:
 						st.sidebar.error(f"Error scanning directory: {e}")
 						logging.exception("Error during directory scan")
 
+
 	def _display_sidebar(self):
 		"""Handles the display and logic of the sidebar components."""
 
-		# Logo and Title
-		# st.sidebar.image("https://physionet.org/static/images/mimic-logo.png", width=150) # Add logo maybe
-		st.sidebar.title("MIMIC-IV Navigator")
+		def _select_module():
 
-		# View selection
-		st.sidebar.markdown("## Navigation")
-		view_options = ["Data Explorer & Analysis", "Cohort Filtering"]
-
-		# Get current index based on session state
-		current_view_index = 0 if st.session_state.current_view == 'data_explorer' else 1
-
-		selected_view = st.sidebar.radio("Select View", view_options, index=current_view_index, key="view_selector")
-
-		# Update session state based on selection
-		if selected_view == "Data Explorer & Analysis":
-			st.session_state.current_view = 'data_explorer'
-		else:
-			st.session_state.current_view = 'filtering'
-
-		self._scan_dataset()
-
-
-		# Module and table selection (only show if available_tables is populated)
-		if st.session_state.available_tables:
-
-			# Module selection
-			# Use index=0 safely as we check available_tables isn't empty
 			module_options = list(st.session_state.available_tables.keys())
-			selected_module_index = module_options.index(st.session_state.selected_module) if st.session_state.selected_module in module_options else 0
+
 			module = st.sidebar.selectbox(
-				"Select Module",
-				module_options,
-				index=selected_module_index,
-				key="module_select",
-				help="Select which MIMIC-IV module to explore (e.g., hosp, icu)"
+				label   = "Select Module",
+				options = module_options,
+				index   = module_options.index('hosp') if st.session_state.selected_module == 'hosp' else 0,
+				key     = "module_select" ,
+				help    = "Select which MIMIC-IV module to explore (e.g., hosp, icu)"
 			)
 			# Update selected module if changed
 			if module != st.session_state.selected_module:
 				st.session_state.selected_module = module
 				st.session_state.selected_table = None # Reset table selection when module changes
 
+			return module
 
-			# Table selection based on selected module
+		def _select_table(module: str) -> str:
+			"""Display table selection dropdown and handle selection logic."""
+
+			def _get_table_options_list():
+				# Get sorted table options for the selected module
+				table_options = sorted(st.session_state.available_tables[module])
+
+				# Create display options list with the special merged_table option first
+				tables_list_w_size_info = ["merged_table"]
+
+				# Create display-to-table mapping for reverse lookup
+				display_to_table_map = {}
+
+				# Format each table with size information
+				for table in table_options:
+
+					# Get display name from session state
+					display_name = st.session_state.table_display_names.get((module, table), table)
+
+					# Add display name to list
+					tables_list_w_size_info.append(display_name)
+
+					# Map display name to table name
+					display_to_table_map[display_name] = table
+
+				return tables_list_w_size_info, display_to_table_map
+
+			def _display_table_info(table: str) -> None:
+				"""Display table description information in sidebar."""
+
+				logging.info(f"Displaying table info for {module}.{table}")
+
+				table_info = table_names_enum_converter(name=table, module=module).description
+
+				if table_info:
+					st.sidebar.markdown( f"**Description:** {table_info}", help="Table description from MIMIC-IV documentation." )
+
+
+			# Get sorted table options for the selected module
+			tables_list_w_size_info, display_to_table_map = _get_table_options_list()
+
+			# Display the table selection dropdown
+			selected_table_w_size_info = st.sidebar.selectbox(
+				label   = "Select Table",
+				options = tables_list_w_size_info,
+				index   = 0,
+				key     = "table_select",
+				help    = "Select which table to load (file size shown in parentheses)"
+			)
+
+			# Get the actual table name from the selected display
+			table = None if selected_table_w_size_info == "merged_table" else display_to_table_map[selected_table_w_size_info]
+
+			# Update session state if table selection changed
+			if table != st.session_state.selected_table:
+				st.session_state.selected_table = table
+				st.session_state.df = None  # Clear dataframe when table changes
+
+			# Show table description if a regular table is selected
+			if st.session_state.selected_table:
+				_display_table_info(st.session_state.selected_table)
+
+			return selected_table_w_size_info
+
+		def _select_view():
+
+			# View selection
+			st.sidebar.markdown("## Navigation")
+			view_options = ["Data Explorer & Analysis", "Cohort Filtering"]
+
+			# Get current index based on session state
+			current_view_index = 0 if st.session_state.current_view == 'data_explorer' else 1
+
+			selected_view = st.sidebar.radio("Select View", view_options, index=current_view_index, key="view_selector")
+
+			# Update session state based on selection
+			if selected_view == "Data Explorer & Analysis":
+				st.session_state.current_view = 'data_explorer'
+			else:
+				st.session_state.current_view = 'filtering'
+
+			return selected_view
+
+		def _select_sampling_parameters():
+
+			# Get total unique subjects to display
+			total_unique_subjects = len(self.data_handler.all_subject_ids)
+
+			help_text_num_subjects = f"Number of subjects to load. Max: {total_unique_subjects}."
+
+			# Subject-based sampling not available if no subjects found
+			if total_unique_subjects == 0 and self.data_handler.tables_info_df is not None:
+				st.sidebar.warning(f"Could not load subject IDs from '{TableNamesHOSP.PATIENTS}'. Ensure it's present and readable.")
+
+			# Subject-based sampling not available if no subjects found
+			elif self.data_handler.tables_info_df is None:
+				st.sidebar.warning("Scan the directory first to see available subjects.")
+
+			# Initialize num_subjects in session state if not present
+			if 'num_subjects_to_load' not in st.session_state:
+				st.session_state.num_subjects_to_load = DEFAULT_NUM_SUBJECTS
+
+			# Number of subjects to load
+			st.session_state.num_subjects_to_load = st.sidebar.number_input(
+				"Number of Subjects to Load",
+				min_value = 1,
+				max_value = total_unique_subjects if total_unique_subjects > 0 else 1,
+				disabled  = total_unique_subjects==0,
+				key       = "num_subjects_input",
+				step      = 10,
+				value     = st.session_state.get('num_subjects_to_load', 10),
+				help      = help_text_num_subjects
+			)
+
+			st.sidebar.caption(f"Total unique subjects found: {total_unique_subjects if total_unique_subjects > 0 else 'N/A (Scan or check patients.csv)'}")
+
+		def _select_table_module():
+
+			module = _select_module()
+
 			if module in st.session_state.available_tables:
 
 				# Select Table
-				selected_display = self._select_table(module=module)
+				selected_display = _select_table(module=module)
 
 				# Load Table(s)
 				st.sidebar.markdown("---")
@@ -316,327 +408,179 @@ class MIMICDashboardApp:
 				load_full = st.sidebar.checkbox("Load Full Table", value=st.session_state.get('load_full', False), key="load_full")
 
 				if not load_full:
-					# Sampling method selection
-					sampling_method = st.sidebar.radio(
-						"Sampling Method",
-						["By Number of Subjects", "By Row Count"],
-						index=0,
-						key="sampling_method",
-						help="Choose how to sample the data"
-					)
-
-					if sampling_method == "By Number of Subjects":
-						# Get total unique subjects to display
-						total_unique_subjects = len(self.data_handler.all_subject_ids)
-
-						help_text_num_subjects = f"Number of subjects to load. Max: {total_unique_subjects}."
-
-						if total_unique_subjects == 0 and self.data_handler.tables_info_df is not None:
-							st.sidebar.warning(f"Could not load subject IDs from '{TableNamesHOSP.PATIENTS}'. Ensure it's present and readable.")
-							help_text_num_subjects = "Subject-based sampling not available. Please use row-based sampling instead."
-
-						elif self.data_handler.tables_info_df is None:
-							st.sidebar.warning("Scan the directory first to see available subjects.")
-							help_text_num_subjects = "Subject-based sampling not available. Please scan directory first."
-
-						# Initialize num_subjects in session state if not present
-						if 'num_subjects_to_load' not in st.session_state:
-							st.session_state.num_subjects_to_load = 100 # Default to 100 subjects
-
-						st.session_state.num_subjects_to_load = st.sidebar.number_input(
-							"Number of Subjects to Load",
-							min_value=1,
-							max_value=total_unique_subjects if total_unique_subjects > 0 else 1,
-							disabled=total_unique_subjects == 0,
-							key="num_subjects_input",
-							step=10,
-							value=st.session_state.get('num_subjects_to_load', 10),
-							help=help_text_num_subjects
-						)
-						st.sidebar.caption(f"Total unique subjects found: {total_unique_subjects if total_unique_subjects > 0 else 'N/A (Scan or check patients.csv)'}")
-
-					else:  # By Row Count
-						st.session_state.sample_size = st.sidebar.number_input(
-							"Number of Rows to Sample",
-							min_value = 100,
-							max_value = 6000000,
-							key       = "row_sample_input",
-							step      = 100,
-							value     = st.session_state.get('sample_size', DEFAULT_SAMPLE_SIZE),
-							help      = "Number of rows to load from the table"
-						)
+					_select_sampling_parameters()
 
 				# Dask option
 				st.session_state.use_dask = st.sidebar.checkbox("Use Dask", value=st.session_state.get('use_dask', True), help="Enable Dask for distributed computing and memory-efficient processing")
+
+				return selected_display, load_full
+
+
+		st.sidebar.title("MIMIC-IV Navigator")
+
+		_select_view()
+
+		self._scan_dataset()
+
+		# Module and table selection
+		if st.session_state.available_tables:
+
+			selected_display, load_full = _select_table_module()
 
 			self._load_table(load_full=load_full, selected_display=selected_display)
 
 		else:
 			st.sidebar.info("Scan a MIMIC-IV directory to select and load tables.")
 
-	def _select_table(self, module: str) -> str:
-		"""Display table selection dropdown and handle selection logic.
-
-		Args:
-			module: The currently selected module (e.g., 'hosp', 'icu')
-
-		Returns:
-			str: The selected display name for the table
-		"""
-
-		# Get sorted table options for the selected module
-		table_options = sorted(st.session_state.available_tables[module])
-
-		# Create display options list with the special merged_table option first
-		tables_list_w_size_info = ["merged_table"]
-
-		# Create display-to-table mapping for reverse lookup
-		display_to_table_map = {}
-
-		# Format each table with size information
-		for table in table_options:
-			display_name = st.session_state.table_display_names.get((module, table), table)
-			# The display_name already contains the size string from scan_mimic_directory
-			# No need to recalculate size_mb or size_str here, or append it again.
-
-			# Create the display string and add to options
-			display_string = display_name # Corrected: use display_name directly
-			tables_list_w_size_info.append(display_string)
-
-			# Map display string back to table name
-			display_to_table_map[display_string] = table
-
-		# Determine default selection index (prefer 'poe' table if available)
-		default_index = table_options.index('poe') if 'poe' in table_options else 0
-
-		# Display the table selection dropdown
-		selected_table_w_size_info = st.sidebar.selectbox(
-			label   = "Select Table",
-			options = tables_list_w_size_info,
-			index   = default_index,
-			key     = "table_select",
-			help    = "Select which table to load (file size shown in parentheses)"
-		)
-
-		# Determine the actual table name from the selected display
-		table = None if selected_table_w_size_info == "merged_table" else display_to_table_map[selected_table_w_size_info]
-
-		# Update session state if table selection changed
-		if table != st.session_state.selected_table:
-			st.session_state.selected_table = table
-			st.session_state.df = None  # Clear dataframe when table changes
-
-		# Show table description if a regular table is selected
-		if st.session_state.selected_table:
-			self._display_table_info(module, st.session_state.selected_table)
-
-		return selected_table_w_size_info
-
-	def _display_table_info(self, module: str, table: str) -> None:
-		"""Display table description information in sidebar.
-
-		Args:
-			module: The selected module
-			table: The selected table name
-		"""
-		# try:
-		logging.info(f"Displaying table info for {module}.{table}")
-		table_info = TableNamesHOSP(table).description if module == 'hosp' else TableNamesICU(table).description
-
-		if table_info:
-			st.sidebar.markdown(
-				f"**Description:** {table_info}",
-				help="Table description from MIMIC-IV documentation."
-			)
-
-		# except Exception as e:
-		# 	st.sidebar.warning(f"Could not retrieve table info: {e}")
 
 	def _load_table(self, load_full: bool = False, selected_display: str = None) -> Tuple[Optional[pd.DataFrame], int]:
 		"""Load a specific MIMIC-IV table, handling large files and sampling."""
 
-		if st.sidebar.button("Load Selected Table", key="load_button"):
+		def _get_subject_ids_list_and_loading_message() -> Tuple[Optional[List[int]], str]:
 
-			# Normal case for regular table loading
-			if selected_display != "merged_table" and (not st.session_state.selected_module or not st.session_state.selected_table):
-				st.sidebar.warning("Please select a module and table first.")
-				return
+			num_subjects_to_load = st.session_state.get('num_subjects_to_load', 0)
 
-			# Determine sampling method and parameters
-			target_subject_ids             = None
-			load_sample_size               = None
-			loading_message_subject_suffix = ""
+			if num_subjects_to_load and num_subjects_to_load > 0:
 
-			# Handle partial loading
-			if not load_full:
+				target_subject_ids = self.data_handler.get_partial_subject_id_list_for_partial_loading(num_subjects_to_load)
 
-				sampling_method = st.session_state.get('sampling_method', 'By Number of Subjects')
+				lm = f" for {len(target_subject_ids)} subjects" if target_subject_ids else " (subject ID list empty or not found)"
 
-				# Handle subject-based sampling
-				if sampling_method == "By Number of Subjects":
+				return target_subject_ids, f"Loading table{lm} using {"Dask" if st.session_state.use_dask else "Pandas"}..."
 
-					num_subjects_to_load = st.session_state.get('num_subjects_to_load', 0)
+			return None, "Cannot perform subject-based sampling - subject IDs not found"
 
-					# Update the loading message suffix based on the target subject IDs
-					if num_subjects_to_load and num_subjects_to_load > 0:
-
-						target_subject_ids = self.data_handler.get_partial_subject_id_list_for_partial_loading(num_subjects_to_load)
-
-						if target_subject_ids:
-							loading_message_subject_suffix = f" for {len(target_subject_ids)} subjects"
-
-						else:
-							loading_message_subject_suffix = " (subject ID list empty or not found)"
-
-							st.sidebar.warning("Cannot perform subject-based sampling - subject IDs not found")
-
-				else:  # By Row Count
-					load_sample_size = st.session_state.sample_size
-					loading_message_subject_suffix = f" (sampling {load_sample_size} rows)"
-
-
-			# Framework info (currently just Pandas, add Dask logic if implemented)
-			framework = "Dask" if st.session_state.use_dask else "Pandas"
-
-			# Build loading message based on method
-			if load_full:
-				loading_message = f"Loading full table using {framework}..."
-
+		def _get_total_rows(df):
+			if isinstance(df, dd.DataFrame):
+				st.session_state.total_row_count = df.shape[0].compute()
 			else:
-				loading_message = f"Loading table{loading_message_subject_suffix} using {framework}..."
+				st.session_state.total_row_count = df.shape[0]
 
+			return st.session_state.total_row_count
 
-			# Special case for "merged_table" option
-			if selected_display == "merged_table":
+		def _load_merged_table(target_subject_ids, loading_message) -> pd.DataFrame:
+
+			def _merged_df_is_valid(merged_df, total_rows):
+
+				if isinstance(merged_df, dd.DataFrame) and total_rows == 0:
+					st.sidebar.error("Failed to load connected tables.")
+					return False
+
+				if isinstance(merged_df, pd.DataFrame) and merged_df.empty:
+					st.sidebar.error("Failed to load connected tables.")
+					return False
+
+				return True
+
+			def _dataset_path_is_valid():
 
 				dataset_path = st.session_state.mimic_path
 
 				if not dataset_path or not os.path.exists(dataset_path):
-
 					st.sidebar.error(f"MIMIC-IV directory not found: {dataset_path}. Please set correct path and re-scan.")
-					return
+					return False
+				return True
 
-				with st.spinner(loading_message):
+			def _load_connected_tables():
 
-					# Load connected tables with merged view
-					with st.spinner("Loading and merging connected tables..."):
+				with st.spinner("Loading and merging connected tables..."):
 
-						# TODO: need to check why the merged table is being shown empty
-						# Use load_all_study_tables and merge_tables methods
-						if target_subject_ids:
+					# Load tables
+					st.session_state.connected_tables = self.data_handler.load_all_study_tables(partial_loading=True, subject_ids=target_subject_ids, use_dask=st.session_state.use_dask)
 
-							tables_dict = self.data_handler.load_all_study_tables(partial_loading=True, num_subjects=num_subjects_to_load, use_dask=st.session_state.use_dask)
+					# Load merged tables
+					merged_results = self.data_handler.load_merged_tables(tables_dict=st.session_state.connected_tables)
 
-							# Merge the tables
-							merged_results = self.data_handler.load_merged_tables(tables_dict=tables_dict)
+				return merged_results['merged_full_study']
 
-						else:
-							tables_dict = self.data_handler.load_all_study_tables(partial_loading=not load_full, num_subjects=DEFAULT_SAMPLE_SIZE, use_dask=st.session_state.use_dask)
+			if not _dataset_path_is_valid():
+				return
 
-							merged_results = self.data_handler.load_merged_tables(tables_dict=tables_dict)
+			with st.spinner(loading_message):
 
+				merged_df = _load_connected_tables()
 
+				total_rows = _get_total_rows(merged_df)
 
+				if _merged_df_is_valid(merged_df=merged_df, total_rows=total_rows):
 
-					# Get the merged dataframe
-					if merged_results and 'merged_w_poe' in merged_results:
-						merged_df = merged_results['merged_w_poe']
+					st.session_state.df                 = merged_df
+					st.session_state.current_file_path  = "merged_tables"
+					st.session_state.table_display_name = "Merged MIMIC-IV View"
 
-						# Store all tables in session state for later access
-						st.session_state.connected_tables = tables_dict
+					self._clear_analysis_states()
 
-						# Check if we have a valid merged dataframe
-						if hasattr(merged_df, 'compute'):
-							# It's a Dask DataFrame - compute the length
-							total_rows = merged_df.shape[0].compute()
-							if total_rows == 0:
-								st.sidebar.error("Failed to load connected tables.")
-								return
-						else:
-							total_rows = len(merged_df)
-							if merged_df.empty:
-								st.sidebar.error("Failed to load connected tables.")
-								return
+					st.sidebar.success(f"Successfully merged {len(st.session_state.connected_tables)} tables with {len(merged_df.columns)} columns and {total_rows} rows!")
 
-						# Set the merged dataframe for display
-						st.session_state.df                 = merged_df
-						st.session_state.total_rows         = total_rows
-						st.session_state.loaded_sample_size = total_rows
-						st.session_state.current_file_path  = "merged_tables"
-						st.session_state.table_display_name = "Merged MIMIC-IV View"
+		def _load_single_table(target_subject_ids, loading_message):
 
-						# Clear previous analysis states
-						self._clear_analysis_states()
+			def _df_is_valid(df):
+				# Check if DataFrame is not None
+				if df is None:
+					st.sidebar.error("Failed to load table. Check logs or file format.")
+					st.session_state.df = None
+					return False
 
-						# Show success message with table info
-						total_tables = len(tables_dict)
-						num_columns = merged_df.shape[1]
-						st.sidebar.success(f"Successfully merged {total_tables} tables with {num_columns} columns and {total_rows} rows!")
+				# check shape
+				if (isinstance(df, dd.DataFrame) and total_rows == 0) or (isinstance(df, pd.DataFrame) and df.empty):
+					st.sidebar.warning("Loaded table is empty.")
+					st.session_state.df = None
+					return False
 
+				return True
+
+			table_name = table_names_enum_converter(name=st.session_state.selected_table, module=st.session_state.selected_module)
+
+			file_path = st.session_state.file_paths.get((st.session_state.selected_module, st.session_state.selected_table))
+
+			st.session_state.current_file_path = file_path
+
+			with st.spinner(loading_message):
+
+				df = self.data_handler.load_table(
+					table_name      = table_name,
+					partial_loading = not load_full,
+					subject_ids     = target_subject_ids,
+					use_dask        = st.session_state.use_dask
+				)
+
+				total_rows = _get_total_rows(df)
+
+			if _df_is_valid(df):
+
+				st.session_state.df = df
+				st.sidebar.success(f"Loaded {total_rows} rows.")
+
+				# Clear previous analysis results when new data is loaded
+				self._clear_analysis_states()
+
+				# Auto-detect columns for feature engineering
+				st.session_state.detected_order_cols     = FeatureEngineerUtils.detect_order_columns(df)
+				st.session_state.detected_time_cols      = FeatureEngineerUtils.detect_temporal_columns(df)
+				st.session_state.detected_patient_id_col = FeatureEngineerUtils.detect_patient_id_column(df)
+
+				st.sidebar.write("Detected Columns (for Feature Eng):")
+				st.sidebar.caption(f"Patient ID: {st.session_state.detected_patient_id_col}, Order: {st.session_state.detected_order_cols}, Time: {st.session_state.detected_time_cols}")
+
+		def _check_table_selection():
+			if selected_display != "merged_table" and (not st.session_state.selected_module or not st.session_state.selected_table):
+				st.sidebar.warning("Please select a module and table first.")
+				return False
+			return True
+
+		if st.sidebar.button("Load Selected Table", key="load_button") and _check_table_selection():
+
+			if not load_full:
+				target_subject_ids, loading_message = _get_subject_ids_list_and_loading_message()
 			else:
-				# Get the table enum from module and table name
-				try:
-					if st.session_state.selected_module == 'hosp':
-						table_name = TableNamesHOSP(st.session_state.selected_table)
-					else:
-						table_name = TableNamesICU(st.session_state.selected_table)
-				except ValueError:
-					st.sidebar.error(f"Invalid table name: {st.session_state.selected_table}")
-					return
+				target_subject_ids, loading_message = None, "Loading table using " + ("Dask" if st.session_state.use_dask else "Pandas")
 
-				file_path = st.session_state.file_paths.get((st.session_state.selected_module, st.session_state.selected_table))
-				st.session_state.current_file_path = file_path
 
-				with st.spinner(loading_message):
+			if selected_display == "merged_table":
+				_load_merged_table(target_subject_ids, loading_message)
+			else:
+				_load_single_table(target_subject_ids, loading_message)
 
-					df = self.data_handler.load_table(
-						table_name=table_name,
-						partial_loading=bool(target_subject_ids),
-						subject_ids=target_subject_ids,
-						sample_size=load_sample_size,
-						use_dask=st.session_state.use_dask
-					)
-
-					# Get total rows - for Dask DataFrame, need to compute
-					if hasattr(df, 'compute'):
-						total_rows = df.shape[0].compute()
-					else:
-						total_rows = len(df)
-
-					st.session_state.total_row_count = total_rows
-
-					# Check if DataFrame is valid and not empty
-					if df is not None:
-						# For Dask DataFrame, check shape
-						if hasattr(df, 'compute') and total_rows == 0:
-							st.sidebar.warning("Loaded table is empty.")
-							st.session_state.df = None
-						# For pandas DataFrame, check empty
-						elif not hasattr(df, 'compute') and df.empty:
-							st.sidebar.warning("Loaded table is empty.")
-							st.session_state.df = None
-						else:
-							st.session_state.df = df
-							# For display, show the actual loaded count for DataFrames
-							if hasattr(df, 'compute'):
-								st.sidebar.success(f"Loaded {total_rows} rows.")
-							else:
-								st.sidebar.success(f"Loaded {len(df)} rows.")
-
-							# Clear previous analysis results when new data is loaded
-							self._clear_analysis_states()
-
-							# Auto-detect columns for feature engineering
-							st.session_state.detected_order_cols     = FeatureEngineerUtils.detect_order_columns(df)
-							st.session_state.detected_time_cols      = FeatureEngineerUtils.detect_temporal_columns(df)
-							st.session_state.detected_patient_id_col = FeatureEngineerUtils.detect_patient_id_column(df)
-
-							st.sidebar.write("Detected Columns (for Feature Eng):")
-							st.sidebar.caption(f"Patient ID: {st.session_state.detected_patient_id_col}, Order: {st.session_state.detected_order_cols}, Time: {st.session_state.detected_time_cols}")
-
-					else: # df is None
-						st.sidebar.error("Failed to load table. Check logs or file format.")
-						st.session_state.df = None
 
 	def _clear_analysis_states(self):
 		"""Clears session state related to previous analysis when new data is loaded."""
@@ -661,6 +605,7 @@ class MIMICDashboardApp:
 		# Analysis
 		st.session_state.length_of_stay = None
 
+
 	def _export_options(self):
 		st.markdown("<h2 class='sub-header'>Export Loaded Data</h2>", unsafe_allow_html=True)
 		st.info("Export the currently loaded (and potentially sampled) data shown in the 'Exploration' tab.")
@@ -677,12 +622,13 @@ class MIMICDashboardApp:
 					use_dask = st.session_state.get('use_dask', False)
 
 					# Only compute if it's actually a Dask DataFrame
-					if use_dask and hasattr(st.session_state.df, 'compute'):
+					if use_dask and isinstance(st.session_state.df, dd.DataFrame):
 						with st.spinner('Computing data for CSV export...'):
 							# Convert Dask DataFrame to pandas for export
 							df_export = st.session_state.df.compute()
 							csv_data = df_export.to_csv(index=False).encode('utf-8')
 							row_count = len(df_export)
+
 					else:
 						csv_data = st.session_state.df.to_csv(index=False).encode('utf-8')
 						row_count = len(st.session_state.df)
@@ -707,12 +653,13 @@ class MIMICDashboardApp:
 					use_dask = st.session_state.get('use_dask', False)
 
 					# Only compute if it's actually a Dask DataFrame
-					if use_dask and hasattr(st.session_state.df, 'compute'):
+					if use_dask and isinstance(st.session_state.df, dd.DataFrame):
 						with st.spinner('Computing data for Parquet export...'):
 							# Convert Dask DataFrame to pandas for export
 							df_export = st.session_state.df.compute()
 							df_export.to_parquet(buffer, index=False)
 							row_count = len(df_export)
+
 					else:
 						st.session_state.df.to_parquet(buffer, index=False)
 						row_count = len(st.session_state.df)
@@ -725,11 +672,44 @@ class MIMICDashboardApp:
 						mime="application/octet-stream", # Generic binary stream
 						key="download_parquet"
 					)
+
 				except Exception as e:
 					st.error(f"Error preparing Parquet for download: {e}")
 
+
 	def _show_data_explorer_view(self):
 		"""Handles the display of the main content area with tabs for data exploration and analysis."""
+
+		def _show_dataset_info():
+
+			# Display Dataset Info if loaded
+			st.markdown("<h2 class='sub-header'>Dataset Information</h2>", unsafe_allow_html=True)
+			st.markdown(f"<div class='info-box'>", unsafe_allow_html=True)
+
+			col1, col2, col3 = st.columns(3)
+			with col1:
+				st.metric("Module", st.session_state.selected_module or "N/A")
+				st.metric("Table", st.session_state.selected_table or "N/A")
+
+			with col2:
+				# Format file size
+				file_size_mb = st.session_state.file_sizes.get((st.session_state.selected_module, st.session_state.selected_table), 0)
+				if file_size_mb < 0.1: size_str = f"{file_size_mb*1024:.0f} KB"
+				elif file_size_mb < 1024: size_str = f"{file_size_mb:.1f} MB"
+				else: size_str = f"{file_size_mb/1024:.1f} GB"
+				st.metric("File Size (Full)", size_str)
+				st.metric("Total Rows (Full)", f"{st.session_state.total_row_count:,}")
+
+			with col3:
+				st.metric("Rows Loaded", f"{len(st.session_state.df):,}")
+				st.metric("Columns Loaded", f"{len(st.session_state.df.columns)}")
+
+			# Display filename
+			if st.session_state.current_file_path:
+				st.caption(f"Source File: {os.path.basename(st.session_state.current_file_path)}")
+
+			st.markdown("</div>", unsafe_allow_html=True)
+
 
 		# Welcome message or Data Info
 		if st.session_state.df is None:
@@ -766,30 +746,7 @@ class MIMICDashboardApp:
 				""", unsafe_allow_html=True)
 
 		else:
-			# Display Dataset Info if loaded
-			st.markdown("<h2 class='sub-header'>Dataset Information</h2>", unsafe_allow_html=True)
-			st.markdown(f"<div class='info-box'>", unsafe_allow_html=True)
-			col1, col2, col3 = st.columns(3)
-			with col1:
-				st.metric("Module", st.session_state.selected_module or "N/A")
-				st.metric("Table", st.session_state.selected_table or "N/A")
-			with col2:
-				# Format file size
-				file_size_mb = st.session_state.file_sizes.get((st.session_state.selected_module, st.session_state.selected_table), 0)
-				if file_size_mb < 0.1: size_str = f"{file_size_mb*1024:.0f} KB"
-				elif file_size_mb < 1024: size_str = f"{file_size_mb:.1f} MB"
-				else: size_str = f"{file_size_mb/1024:.1f} GB"
-				st.metric("File Size (Full)", size_str)
-				st.metric("Total Rows (Full)", f"{st.session_state.total_row_count:,}")
-			with col3:
-				st.metric("Rows Loaded", f"{len(st.session_state.df):,}")
-				st.metric("Columns Loaded", f"{len(st.session_state.df.columns)}")
-
-			# Display filename
-			if st.session_state.current_file_path:
-				st.caption(f"Source File: {os.path.basename(st.session_state.current_file_path)}")
-			st.markdown("</div>", unsafe_allow_html=True)
-
+			_show_dataset_info()
 
 			# Create tabs for different functionalities
 			tab_titles = [
@@ -810,6 +767,12 @@ class MIMICDashboardApp:
 				# Pass the use_dask parameter to all visualizer methods
 				MIMICVisualizerUtils.display_data_preview(st.session_state.df, use_dask=use_dask)
 				MIMICVisualizerUtils.display_dataset_statistics(st.session_state.df, use_dask=use_dask)
+
+				try:
+					st.info(f'dataframe size: {st.session_state.df.size / len(st.session_state.df.columns)}')
+				except Exception as e:
+					st.error(f"Error calculating dataframe size: {e}")
+
 				MIMICVisualizerUtils.display_visualizations(st.session_state.df, use_dask=use_dask)
 
 

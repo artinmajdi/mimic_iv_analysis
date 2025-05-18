@@ -140,21 +140,6 @@ class DataLoaderExamples:
             logging.info(f"Loaded {len(partial_df)} patients with partial loading. Sample data:")
             logging.info(partial_df.head())
 
-        # 3. Load with sample size
-        logging.info("\nLoading 'patients' table with sample size...")
-        sample_df = loader.load_table(
-            TableNamesHOSP.PATIENTS,
-            partial_loading=True,
-            sample_size=3
-        )
-
-        if isinstance(sample_df, dd.DataFrame):
-            sample_count = sample_df.shape[0].compute()
-            logging.info(f"Loaded {sample_count} patients with sample size. Sample data:")
-            logging.info(sample_df.compute())
-        else:
-            logging.info(f"Loaded {len(sample_df)} patients with sample size. Sample data:")
-            logging.info(sample_df)
 
     @staticmethod
     def example_merge_tables():
@@ -281,46 +266,6 @@ class DataLoaderExamples:
         logging.info("converter.save_all_tables_as_parquet()")
         logging.info("This operation may take a long time for large datasets, so it's not run in this example.")
 
-    @staticmethod
-    def example_load_mimic_table2():
-        """Demonstrates the example_load_mimic_table2 method from the original ExampleDataLoader."""
-
-        logging.info("\n--- Example: Load MIMIC Table 2 ---")
-
-        if not DataLoaderExamples.check_mimic_path():
-            return
-
-        loader = DataLoader(mimic_path=MIMIC_DATA_PATH)
-
-        # Scan the directory
-        loader.scan_mimic_directory()
-        tables_info_df = loader.tables_info_df
-
-
-        # Load table
-        table_name = 'poe'
-        module = 'hosp'
-
-        find_row = tables_info_df[(tables_info_df['module'] == module) & (tables_info_df['table_name'] == table_name)]
-        if len(find_row) == 0:
-            logging.info(f"Table {module}.{table_name} not found")
-            return
-
-        file_path = find_row['file_path'].values[0]
-
-        logging.info(f"file_path: {file_path}")
-
-        # Try to load the table
-        try:
-            poe_df = loader.load_table(TableNamesHOSP.POE, partial_loading=True, sample_size=100)
-            if isinstance(poe_df, dd.DataFrame):
-                logging.info(f"Loaded {poe_df.shape[0].compute()} rows. Sample:")
-                logging.info(poe_df.head().compute())
-            else:
-                logging.info(f"Loaded {len(poe_df)} rows. Sample:")
-                logging.info(poe_df.head())
-        except Exception as e:
-            logging.error(f"Error loading poe table: {e}")
 
 
 def main():
@@ -344,9 +289,6 @@ def main():
 
         # ParquetConverter examples
         # DataLoaderExamples.example_parquet_converter()
-
-        # Additional example from original code
-        DataLoaderExamples.example_load_mimic_table2()
 
     logging.info("\n--- DataLoader Examples Finished ---")
 
