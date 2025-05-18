@@ -21,16 +21,11 @@ import os
 import pandas as pd
 import dask.dataframe as dd
 import logging
-import numpy as np
 from pathlib import Path
 
 # Import our modules
-from mimic_iv_analysis.io.data_loader import (
-    DataLoader, TableNamesHOSP, TableNamesICU, table_names_enum_converter,
-    ExampleDataLoader, ParquetConverter
-)
-from mimic_iv_analysis.core.filtering import Filtering  # DataLoader uses this
-
+from mimic_iv_analysis.io.data_loader import DataLoader, ExampleDataLoader, ParquetConverter
+from mimic_iv_analysis.core.params import TableNamesHOSP, TableNamesICU
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 

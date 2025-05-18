@@ -18,178 +18,19 @@ import dask.dataframe as dd
 import humanize
 from tqdm import tqdm
 
+# Our modules
+from mimic_iv_analysis.core.params import ( TableNamesHOSP,
+                                            TableNamesICU,
+                                            dtypes_all,
+                                            parse_dates_all,
+                                            convert_table_names_to_enum_class,
+                                            DEFAULT_MIMIC_PATH,
+                                            DEFAULT_NUM_SUBJECTS,
+                                            SUBJECT_ID_COL)
+
+from mimic_iv_analysis.core.filtering import Filtering
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-
-# Constants
-DEFAULT_MIMIC_PATH      = Path("/Users/artinmajdi/Documents/GitHubs/RAP/mimic__pankaj/dataset/mimic-iv-3.1")
-DEFAULT_NUM_SUBJECTS    = 10
-RANDOM_STATE            = 42
-SUBJECT_ID_COL          = 'subject_id'
-
-
-class TableNamesHOSP(enum.Enum):
-	ADMISSIONS         = 'admissions'
-	D_HCPCS            = 'd_hcpcs'
-	D_ICD_DIAGNOSES    = 'd_icd_diagnoses'
-	D_ICD_PROCEDURES   = 'd_icd_procedures'
-	D_LABITEMS         = 'd_labitems'
-	DIAGNOSES_ICD      = 'diagnoses_icd'
-	DRGCODES           = 'drgcodes'
-	EMAR               = 'emar'
-	EMAR_DETAIL        = 'emar_detail'
-	HCPCSEVENTS        = 'hcpcsevents'
-	LABEVENTS          = 'labevents'
-	MICROBIOLOGYEVENTS = 'microbiologyevents'
-	OMR                = 'omr'
-	PATIENTS           = 'patients'
-	PHARMACY           = 'pharmacy'
-	POE                = 'poe'
-	POE_DETAIL         = 'poe_detail'
-	PRESCRIPTIONS      = 'prescriptions'
-	PROCEDURES_ICD     = 'procedures_icd'
-	PROVIDER           = 'provider'
-	SERVICES           = 'services'
-	TRANSFERS          = 'transfers'
-
-	@classmethod
-	def values(cls):
-		return [member.value for member in cls]
-
-	@property
-	def description(self):
-
-		tables_descriptions = {
-			('hosp', 'admissions')        : "Patient hospital admissions information",
-			('hosp', 'patients')          : "Patient demographic data",
-			('hosp', 'labevents')         : "Laboratory measurements (large file)",
-			('hosp', 'microbiologyevents'): "Microbiology test results",
-			('hosp', 'pharmacy')          : "Pharmacy orders",
-			('hosp', 'prescriptions')     : "Medication prescriptions",
-			('hosp', 'procedures_icd')    : "Patient procedures",
-			('hosp', 'diagnoses_icd')     : "Patient diagnoses",
-			('hosp', 'emar')              : "Electronic medication administration records",
-			('hosp', 'emar_detail')       : "Detailed medication administration data",
-			('hosp', 'poe')               : "Provider order entries",
-			('hosp', 'poe_detail')        : "Detailed order information",
-			('hosp', 'd_hcpcs')           : "HCPCS code definitions",
-			('hosp', 'd_icd_diagnoses')   : "ICD diagnosis code definitions",
-			('hosp', 'd_icd_procedures')  : "ICD procedure code definitions",
-			('hosp', 'd_labitems')        : "Laboratory test definitions",
-			('hosp', 'hcpcsevents')       : "HCPCS events",
-			('hosp', 'drgcodes')          : "Diagnosis-related group codes",
-			('hosp', 'services')          : "Hospital services",
-			('hosp', 'transfers')         : "Patient transfers",
-			('hosp', 'provider')          : "Provider information",
-			('hosp', 'omr')               : "Order monitoring results"
-		}
-
-		return tables_descriptions.get(('hosp', self.value))
-
-	@property
-	def module(self):
-		return 'hosp'
-
-class TableNamesICU(enum.Enum):
-	CAREGIVER          = 'caregiver'
-	CHARTEVENTS        = 'chartevents'
-	DATETIMEEVENTS     = 'datetimeevents'
-	D_ITEMS            = 'd_items'
-	ICUSTAYS           = 'icustays'
-	INGREDIENTEVENTS   = 'ingredientevents'
-	INPUTEVENTS        = 'inputevents'
-	OUTPUTEVENTS       = 'outputevents'
-	PROCEDUREEVENTS    = 'procedureevents'
-
-	@classmethod
-	def values(cls):
-		return [member.value for member in cls]
-
-	@property
-	def description(self):
-
-		tables_descriptions = {
-			('icu', 'chartevents')        : "Patient charting data (vital signs, etc.)",
-			('icu', 'datetimeevents')     : "Date/time-based events",
-			('icu', 'inputevents')        : "Patient intake data",
-			('icu', 'outputevents')       : "Patient output data",
-			('icu', 'procedureevents')    : "ICU procedures",
-			('icu', 'ingredientevents')   : "Detailed medication ingredients",
-			('icu', 'd_items')            : "Dictionary of ICU items",
-			('icu', 'icustays')           : "ICU stay information",
-			('icu', 'caregiver')          : "Caregiver information"
-		}
-
-		return tables_descriptions.get(('icu', self.value))
-
-	@property
-	def module(self):
-		return 'icu'
-
-
-def table_names_enum_converter(name: str, module: Literal['hosp', 'icu']='hosp') -> TableNamesHOSP | TableNamesICU:
-	if module == 'hosp':
-		return TableNamesHOSP(name)
-	else:
-		return TableNamesICU(name)
-
-
-# Constants
-dtypes_all = {
-	'discontinued_by_poe_id': 'object',
-	'long_description'      : 'string',
-	'icd_code'              : 'string',
-	'drg_type'              : 'category',
-	'enter_provider_id'     : 'string',
-	'hadm_id'               : 'int',
-	'icustay_id'            : 'int',
-	'leave_provider_id'     : 'string',
-	'poe_id'                : 'string',
-	'emar_id'               : 'string',
-	'subject_id'            : 'int64',
-	'pharmacy_id'           : 'string',
-	'interpretation'        : 'object',
-	'org_name'              : 'object',
-	'quantity'              : 'object',
-	'infusion_type'         : 'object',
-	'sliding_scale'         : 'object',
-	'fill_quantity'         : 'object',
-	'expiration_unit'       : 'category',
-	'duration_interval'     : 'category',
-	'dispensation'          : 'category',
-	'expirationdate'        : 'object',
-	'one_hr_max'            : 'object',
-	'infusion_type'         : 'object',
-	'sliding_scale'         : 'object',
-	'lockout_interval'      : 'object',
-	'basal_rate'            : 'object',
-	'form_unit_disp'        : 'category',
-	'route'                 : 'category',
-	'dose_unit_rx'          : 'category',
-	'drug_type'             : 'category',
-	'form_rx'               : 'object',
-	'form_val_disp'         : 'object',
-	'gsn'                   : 'object',
-	'dose_val_rx'           : 'object',
-	'prev_service'          : 'object',
-	'curr_service'          : 'category',
-	'admission_type'        : 'category',
-	'discharge_location'    : 'category',
-	'insurance'             : 'category',
-	'language'              : 'category',
-	'marital_status'        : 'category',
-	'race'                  : 'category'}
-
-parse_dates_all = [
-			'admittime',
-			'dischtime',
-			'deathtime',
-			'edregtime',
-			'edouttime',
-			'charttime',
-			'scheduletime',
-			'storetime',
-			'storedate']
 
 
 
@@ -201,7 +42,8 @@ class DataLoader:
 									TableNamesHOSP.DIAGNOSES_ICD,
 									TableNamesHOSP.D_ICD_DIAGNOSES,
 									TableNamesHOSP.POE,
-									TableNamesHOSP.POE_DETAIL]
+									TableNamesHOSP.POE_DETAIL,
+									TableNamesHOSP.TRANSFERS]
 
 
 	def __init__(self,mimic_path: Path = DEFAULT_MIMIC_PATH,
@@ -409,7 +251,9 @@ class DataLoader:
 	@property
 	def _list_of_tables_w_subject_id_column(self) -> List[str]:
 		"""Returns a list of tables that have subject_id column."""
-		return self.study_tables_info[self.study_tables_info.columns_list.apply(lambda x: 'subject_id' in x)].table_name.tolist()
+		tables_list = self.study_tables_info[self.study_tables_info.columns_list.apply(lambda x: 'subject_id' in x)].table_name.tolist()
+
+		return [convert_table_names_to_enum_class(name=table_name, module='hosp') for table_name in tables_list]
 
 
 	def load_csv_table_with_correct_column_datatypes(self, file_path: Path, use_dask: bool = True):
@@ -483,9 +327,23 @@ class DataLoader:
 	def all_subject_ids(self) -> List[dtypes_all['subject_id']]:
 		""" Returns a list of unique subject_ids found in the admission table. """
 
+		# TODO: I changed this to get the intersection of all subject IDs found in the tables that have subject_id column. but now, it returns empty. why? (could i do the filtering after I merged all the tables?)
+		def _load_unique_subject_id_common_between_all_tables():
+			subject_ids = []
+			for table_name in self._list_of_tables_w_subject_id_column:
+				subject_ids.append(set(self.load_table(table_name=table_name, partial_loading=False)['subject_id'].unique().compute().tolist()))
+
+			# get the intersection of all subject IDs
+			self._all_subject_ids = list(set.intersection(*subject_ids))
+
+
 		# Load subject IDs if not already loaded or if the list is empty
 		if not self._all_subject_ids:
+
 			_ = self._load_unique_subject_ids_for_table()
+
+			# self._load_unique_subject_id_common_between_all_tables()
+
 
 		return self._all_subject_ids
 
@@ -535,7 +393,7 @@ class DataLoader:
 		tables_dict = {}
 		for _, row in self.study_tables_info.iterrows():
 
-			table_name = table_names_enum_converter(name=row.table_name, module=row.module)
+			table_name = convert_table_names_to_enum_class(name=row.table_name, module=row.module)
 
 			tables_dict[table_name.value] = self.load_table(table_name=table_name, partial_loading=partial_loading, subject_ids=subject_ids, use_dask=use_dask)
 
@@ -584,13 +442,8 @@ class DataLoader:
 			return df[df['subject_id'].isin(subject_ids_set)]
 
 
-
 		def _get_n_rows(df):
-			return df.shape[0].compute() if isinstance(df, dd.DataFrame) else df.shape[0]
-
-		def _apply_filters(df):
-			from mimic_iv_analysis.core.filtering import Filtering
-			return Filtering(df=df, table_name=table_name).render()
+			return df.size.compute() / len(df.columns) if isinstance(df, dd.DataFrame) else df.shape[0]
 
 		logging.info(f"Loading ----- {table_name.value} ----- table.")
 
@@ -598,7 +451,9 @@ class DataLoader:
 		df = _load_table_full()
 		logging.info(f"Loading full table: {_get_n_rows(df)} rows.")
 
-		df = _apply_filters(df)
+		df = Filtering(df=df, table_name=table_name).render()
+
+
 		logging.info(f"Applied filters: {_get_n_rows(df)} rows.")
 
 		if partial_loading:
@@ -675,21 +530,29 @@ class DataLoader:
 		# Get tables
 		patients_df        = tables_dict[TableNamesHOSP.PATIENTS.value]
 		admissions_df      = tables_dict[TableNamesHOSP.ADMISSIONS.value]
-
-		# Get tables
 		diagnoses_icd_df   = tables_dict[TableNamesHOSP.DIAGNOSES_ICD.value]
 		poe_df             = tables_dict[TableNamesHOSP.POE.value]
 		d_icd_diagnoses_df = tables_dict[TableNamesHOSP.D_ICD_DIAGNOSES.value]
 		poe_detail_df      = tables_dict[TableNamesHOSP.POE_DETAIL.value]
 
+		if TableNamesHOSP.TRANSFERS.value in tables_dict:
+			transfers_df       = tables_dict[TableNamesHOSP.TRANSFERS.value]
+
 
 		# Merge tables
-		df12 = patients_df.merge(admissions_df, on='subject_id', how='inner')
-		df34 = diagnoses_icd_df.merge(d_icd_diagnoses_df, on=('icd_code', 'icd_version'), how='inner')
+		df12             = patients_df.merge(admissions_df, on='subject_id', how='inner')
+
+		if TableNamesHOSP.TRANSFERS.value in tables_dict:
+			df123            = df12.merge(transfers_df, on=('subject_id', 'hadm_id'), how='inner')
+		else:
+			df123            = df12
+
+		diagnoses_merged = diagnoses_icd_df.merge(d_icd_diagnoses_df, on=('icd_code', 'icd_version'), how='inner')
+		merged_wo_poe    = df123.merge(diagnoses_merged, on=('subject_id', 'hadm_id'), how='inner')
 
 		# The reason for 'left' is that we want to keep all the rows from poe table. The poe_detail table for unknown reasons, has fewer rows than poe table.
 		poe_and_details   = poe_df.merge(poe_detail_df, on=('poe_id', 'poe_seq', 'subject_id'), how='left')
-		merged_wo_poe     = df12.merge(df34, on=('subject_id', 'hadm_id'), how='inner')
+
 		merged_full_study = merged_wo_poe.merge(poe_and_details, on=('subject_id', 'hadm_id'), how='inner')
 
 		return {'merged_wo_poe': merged_wo_poe, 'merged_full_study': merged_full_study, 'poe_and_details': poe_and_details}
@@ -858,8 +721,10 @@ class ParquetConverter:
 
 if __name__ == '__main__':
 
-	pc = ParquetConverter(data_loader=DataLoader(mimic_path=DEFAULT_MIMIC_PATH))
-	pc.save_as_parquet(table_name=TableNamesHOSP.ADMISSIONS)
+	examples_partial = ExampleDataLoader(partial_loading=False, num_subjects=10, random_selection=False)
+
+	# pc = ParquetConverter(data_loader=DataLoader(mimic_path=DEFAULT_MIMIC_PATH))
+	# pc.save_as_parquet(table_name=TableNamesHOSP.ADMISSIONS)
 
 
 	print('done')

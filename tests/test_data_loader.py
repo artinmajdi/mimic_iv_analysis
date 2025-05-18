@@ -1,18 +1,16 @@
+#!/usr/bin/env python
+
 import pytest
-import os
 import pandas as pd
 import dask.dataframe as dd
-import numpy as np
 from pathlib import Path
 import tempfile
 import shutil
 from unittest.mock import patch, MagicMock, PropertyMock
 
-from mimic_iv_analysis.io.data_loader import (
-    DataLoader, TableNamesHOSP, TableNamesICU,
-    DEFAULT_MIMIC_PATH, table_names_enum_converter,
-    ParquetConverter, ExampleDataLoader
-)
+from mimic_iv_analysis.io.data_loader import DataLoader, ParquetConverter, ExampleDataLoader
+
+from mimic_iv_analysis.core.params import TableNamesHOSP, TableNamesICU, DEFAULT_MIMIC_PATH, convert_table_names_to_enum_class
 
 # Path to the core.filtering module to mock for testing
 FILTERING_PATH = 'mimic_iv_analysis.core.filtering.Filtering'
@@ -525,16 +523,16 @@ class TestDataLoader:
     def test_table_names_enum_converter(self):
         """Test the table_names_enum_converter function."""
         # Test hosp module
-        result = table_names_enum_converter('patients', 'hosp')
+        result = convert_table_names_to_enum_class('patients', 'hosp')
         assert result == TableNamesHOSP.PATIENTS
 
         # Test icu module
-        result = table_names_enum_converter('icustays', 'icu')
+        result = convert_table_names_to_enum_class('icustays', 'icu')
         assert result == TableNamesICU.ICUSTAYS
 
         # Test invalid table name
         with pytest.raises(ValueError):
-            table_names_enum_converter('invalid_table', 'hosp')
+            convert_table_names_to_enum_class('invalid_table', 'hosp')
 
     def test_enum_description_and_module(self):
         """Test the description and module properties of TableNamesHOSP and TableNamesICU."""

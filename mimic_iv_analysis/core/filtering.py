@@ -14,7 +14,7 @@ import pandas as pd
 import dask.dataframe as dd
 import numpy as np
 
-from mimic_iv_analysis.io.data_loader import TableNamesHOSP, TableNamesICU
+from mimic_iv_analysis.core.params import TableNamesHOSP, TableNamesICU
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -29,12 +29,11 @@ class Filtering:
 	It handles the relationships between different tables and applies filters efficiently.
 	"""
 
-	def __init__(self, df: pd.DataFrame | dd.DataFrame, table_name: TableNamesHOSP | TableNamesICU):
+	def __init__(self, df: pd.DataFrame | dd.DataFrame, table_name: TableNamesHOSP):
 		"""Initialize the Filtering class."""
 
 		self.df = df
 		self.table_name = table_name
-
 
 	def render(self) -> pd.DataFrame | dd.DataFrame:
 
@@ -47,18 +46,34 @@ class Filtering:
 		On another note, I have scheduled a zoom meeting for 12 Noon PDT/1500 EDT. The invite is below. I can reschedule a recurring weekly or biweekly touch base call. Does Friday at Noon PDT/1500 EDT still work for you? Please let me know either way. Thanks. """
 
 		if self.table_name == TableNamesHOSP.PATIENTS:
-			return self.df[(self.df.anchor_age >= 18.0) & (self.df.anchor_age <= 75.0)]
+			self.df = self.df[(self.df.anchor_age >= 18.0) & (self.df.anchor_age <= 75.0)]
+			self.df = self.df[self.df.anchor_year_group == '2017 - 2019']
 
-		if self.table_name in [TableNamesHOSP.DIAGNOSES_ICD, TableNamesHOSP.D_ICD_DIAGNOSES]:
-			return self.df[self.df.icd_version == 10]
 
-		if self.table_name == TableNamesHOSP.POE:
-			return self.df.drop(columns=['discontinue_of_poe_id', 'discontinued_by_poe_id'])
+		elif self.table_name == TableNamesHOSP.DIAGNOSES_ICD:
+			# Filter for rows where icd_version is 10
+			# TODO: why when i add this, I get errors.
+			# self.df = self.df[self.df.icd_version == 10]
 
-		if self.table_name == TableNamesHOSP.ADMISSIONS:
+			# Filter for rows where seq_num is 1, 2, or 3
+			self.df = self.df[self.df.seq_num.astype(int).isin([1, 2, 3])]
+
+			# Filter for rows where the value in the column icd_code starts with "E11"
+			self.df = self.df[self.df.icd_code.str.startswith('E11')]
+
+
+		elif self.table_name == TableNamesHOSP.D_ICD_DIAGNOSES:
+			self.df = self.df[self.df.icd_version == 10]
+
+
+		elif self.table_name == TableNamesHOSP.POE:
+			self.df = self.df.drop(columns=['discontinue_of_poe_id', 'discontinued_by_poe_id'])
+
+
+		elif self.table_name == TableNamesHOSP.ADMISSIONS:
 
 			# Get admission IDs where patient is alive
-			self.df = self.df[self.df.deathtime.isnull()]
+			self.df = self.df[(self.df.deathtime.isnull()) | (self.df.hospital_expire_flag == 0)]
 
 			# Get admission IDs with valid admission and discharge times
 			self.df = self.df.dropna(subset=['admittime', 'dischtime'])
@@ -66,7 +81,10 @@ class Filtering:
 			# Additional validation: dischtime should be after admittime
 			self.df = self.df[self.df['dischtime'] > self.df['admittime']]
 
-			return self.df
+			# Exclude admission types like "EW EMER.", "URGENT", or "ELECTIVE"
+			self.df = self.df[~self.df.admission_type.isin(['EW EMER.', 'URGENT', 'ELECTIVE'])]
 
 
+
+		self.df = self.df.reset_index(drop=True)
 		return self.df

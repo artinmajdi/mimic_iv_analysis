@@ -16,8 +16,8 @@ import streamlit.web.cli as stcli # For programmatic Sreamlit launch
 
 # Local application imports
 from mimic_iv_analysis.core import FeatureEngineerUtils
-from mimic_iv_analysis.io import DataLoader, ParquetConverter, ExampleDataLoader, TableNamesHOSP, TableNamesICU
-from mimic_iv_analysis.io.data_loader import table_names_enum_converter, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS
+from mimic_iv_analysis.io import DataLoader, ParquetConverter, TableNamesHOSP
+from mimic_iv_analysis.io.data_loader import convert_table_names_to_enum_class, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS
 from mimic_iv_analysis.visualization.app_components import FilteringTab, FeatureEngineeringTab, AnalysisVisualizationTab, ClusteringAnalysisTab
 
 from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtils
@@ -308,7 +308,7 @@ class MIMICDashboardApp:
 
 				logging.info(f"Displaying table info for {module}.{table}")
 
-				table_info = table_names_enum_converter(name=table, module=module).description
+				table_info = convert_table_names_to_enum_class(name=table, module=module).description
 
 				if table_info:
 					st.sidebar.markdown( f"**Description:** {table_info}", help="Table description from MIMIC-IV documentation." )
@@ -529,7 +529,7 @@ class MIMICDashboardApp:
 
 				return True
 
-			table_name = table_names_enum_converter(name=st.session_state.selected_table, module=st.session_state.selected_module)
+			table_name = convert_table_names_to_enum_class(name=st.session_state.selected_table, module=st.session_state.selected_module)
 
 			file_path = st.session_state.file_paths.get((st.session_state.selected_module, st.session_state.selected_table))
 
