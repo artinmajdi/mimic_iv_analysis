@@ -6,11 +6,12 @@ import dask.dataframe as dd
 from pathlib import Path
 import tempfile
 import shutil
+import numpy as np
 from unittest.mock import patch, MagicMock, PropertyMock
 
 from mimic_iv_analysis.io.data_loader import DataLoader, ParquetConverter, ExampleDataLoader
 
-from mimic_iv_analysis.core.params import TableNamesHOSP, TableNamesICU, DEFAULT_MIMIC_PATH, convert_table_names_to_enum_class
+from mimic_iv_analysis.core.params import TableNamesHOSP, TableNamesICU, DEFAULT_MIMIC_PATH, convert_table_names_to_enum_class, DEFAULT_STUDY_TABLES_LIST
 
 # Path to the core.filtering module to mock for testing
 FILTERING_PATH = 'mimic_iv_analysis.core.filtering.Filtering'
@@ -25,76 +26,79 @@ class TestDataLoader:
 
         # Create module directories
         hosp_dir = Path(temp_dir) / "hosp"
-        icu_dir = Path(temp_dir) / "icu"
+        icu_dir  = Path(temp_dir) / "icu"
         hosp_dir.mkdir()
         icu_dir.mkdir()
 
         # Create sample CSV files
-        patients_file = hosp_dir / "patients.csv"
-        admissions_file = hosp_dir / "admissions.csv"
-        diagnoses_icd_file = hosp_dir / "diagnoses_icd.csv"
+        patients_file        = hosp_dir / "patients.csv"
+        admissions_file      = hosp_dir / "admissions.csv"
+        diagnoses_icd_file   = hosp_dir / "diagnoses_icd.csv"
         d_icd_diagnoses_file = hosp_dir / "d_icd_diagnoses.csv"
-        poe_file = hosp_dir / "poe.csv"
-        poe_detail_file = hosp_dir / "poe_detail.csv"
-        icustays_file = icu_dir / "icustays.csv"
+        poe_file             = hosp_dir / "poe.csv"
+        poe_detail_file      = hosp_dir / "poe_detail.csv"
+        icustays_file        = icu_dir / "icustays.csv"
+        transfers_file       = hosp_dir / "transfers.csv"
 
         # Sample patients data
         patients_data = pd.DataFrame({
-            'subject_id': [1, 2, 3],
-            'gender': ['M', 'F', 'M'],
-            'anchor_age': [45, 32, 67],
-            'anchor_year': [2120, 2130, 2125]
+            'subject_id' : [1, 2, 3],
+            'gender'     : ['M', 'F', 'M'],
+            'anchor_age' : [45, 32, 67],
+            'anchor_year': [2120, 2130, 2125],
+            'anchor_year_group': ['2017 - 2019', '2017 - 2019', '2017 - 2019']
         })
         patients_data.to_csv(patients_file, index=False)
 
         # Sample admissions data
         admissions_data = pd.DataFrame({
-            'subject_id': [1, 1, 2, 3],
-            'hadm_id': [100, 101, 102, 103],
-            'admittime': ['2100-01-01', '2101-02-15', '2110-03-22', '2115-05-10'],
-            'dischtime': ['2100-01-10', '2101-02-25', '2110-04-01', '2115-05-20'],
+            'subject_id'    : [1, 1, 2, 3],
+            'hadm_id'       : [100, 101, 102, 103],
+            'admittime'     : ['2100-01-01', '2101-02-15', '2110-03-22', '2115-05-10'],
+            'dischtime'     : ['2100-01-10', '2101-02-25', '2110-04-01', '2115-05-20'],
             'admission_type': ['emergency', 'elective', 'urgent', 'emergency'],
-            'deathtime': [None, None, None, None]  # Add deathtime column
+            'deathtime'     : [None, None, None, None],  # Add deathtime column
+            'hospital_expire_flag': [0, 0, 0, 0]  # Add hospital_expire_flag
         })
         admissions_data.to_csv(admissions_file, index=False)
 
         # Sample diagnoses_icd data
         diagnoses_icd_data = pd.DataFrame({
-            'subject_id': [1, 2, 3],
-            'hadm_id': [100, 102, 103],
-            'seq_num': [1, 1, 1],
-            'icd_code': ['A01', 'B02', 'C03'],
+            'subject_id' : [1, 2, 3],
+            'hadm_id'    : [100, 102, 103],
+            'seq_num'    : [1, 1, 1],
+            'icd_code'   : ['A01', 'B02', 'C03'],
             'icd_version': [9, 9, 9]
         })
         diagnoses_icd_data.to_csv(diagnoses_icd_file, index=False)
 
         # Sample d_icd_diagnoses data
         d_icd_diagnoses_data = pd.DataFrame({
-            'icd_code': ['A01', 'B02', 'C03'],
+            'icd_code'   : ['A01', 'B02', 'C03'],
             'icd_version': [9, 9, 9],
-            'long_title': ['Disease A', 'Disease B', 'Disease C']
+            'long_title' : ['Disease A', 'Disease B', 'Disease C']
         })
         d_icd_diagnoses_data.to_csv(d_icd_diagnoses_file, index=False)
 
         # Sample poe data
         poe_data = pd.DataFrame({
-            'subject_id': [1, 2, 3],
-            'hadm_id': [100, 102, 103],
-            'poe_id': ['P100', 'P102', 'P103'],
-            'poe_seq': [1, 1, 1],
-            'order_type': ['Type A', 'Type B', 'Type C'],
-            'discontinue_of_poe_id': [None, None, None],
+            'subject_id'            : [1, 2, 3],
+            'hadm_id'               : [100, 102, 103],
+            'poe_id'                : ['P100', 'P102', 'P103'],
+            'poe_seq'               : [1, 1, 1],
+            'order_type'            : ['Type A', 'Type B', 'Type C'],
+            'discontinue_of_poe_id' : [None, None, None],
             'discontinued_by_poe_id': [None, None, None]
         })
         poe_data.to_csv(poe_file, index=False)
 
         # Sample poe_detail data
         poe_detail_data = pd.DataFrame({
-            'subject_id': [1, 2], # Missing subject 3 to test left join
-            'hadm_id': [100, 102],
-            'poe_id': ['P100', 'P102'],
-            'poe_seq': [1, 1],
-            'field_name': ['Field A', 'Field B'],
+            'subject_id' : [1, 2],                 # Missing subject 3 to test left join
+            'hadm_id'    : [100, 102],
+            'poe_id'     : ['P100', 'P102'],
+            'poe_seq'    : [1, 1],
+            'field_name' : ['Field A', 'Field B'],
             'field_value': ['Value A', 'Value B']
         })
         poe_detail_data.to_csv(poe_detail_file, index=False)
@@ -102,10 +106,10 @@ class TestDataLoader:
         # Sample ICU stays data
         icustays_data = pd.DataFrame({
             'subject_id': [1, 2, 3],
-            'hadm_id': [100, 102, 103],
-            'stay_id': [1000, 1001, 1002],
-            'intime': ['2100-01-02', '2110-03-23', '2115-05-11'],
-            'outtime': ['2100-01-08', '2110-03-30', '2115-05-18']
+            'hadm_id'   : [100, 102, 103],
+            'stay_id'   : [1000, 1001, 1002],
+            'intime'    : ['2100-01-02', '2110-03-23', '2115-05-11'],
+            'outtime'   : ['2100-01-08', '2110-03-30', '2115-05-18']
         })
         icustays_data.to_csv(icustays_file, index=False)
 
@@ -118,7 +122,7 @@ class TestDataLoader:
         """Test the initialization of DataLoader."""
         loader = DataLoader()
         assert loader.mimic_path == DEFAULT_MIMIC_PATH
-        assert loader.study_table_list == DataLoader.DEFAULT_STUDY_TABLES_LIST
+        assert loader.study_table_list == DEFAULT_STUDY_TABLES_LIST
         assert loader._all_subject_ids == []
         assert loader.tables_info_df is None
         assert loader.tables_info_dict is None
@@ -219,49 +223,60 @@ class TestDataLoader:
     @patch(FILTERING_PATH)
     def test_load_unique_subject_ids_for_table(self, mock_filtering, mock_mimic_dir):
         """Test loading unique subject IDs from a table."""
-        # Setup mock Filtering class
-        mock_filter_instance = MagicMock()
-        mock_filter_instance.render.return_value = dd.from_pandas(
-            pd.DataFrame({'subject_id': [1, 2, 3]}), npartitions=1
-        )
-        mock_filtering.return_value = mock_filter_instance
-
         loader = DataLoader(mimic_path=mock_mimic_dir)
         loader.scan_mimic_directory()
 
-        # Test with patients table
-        result = loader._load_unique_subject_ids_for_table(TableNamesHOSP.PATIENTS)
-        assert result == [1, 2, 3]
+        # Mock load_table instead since that's what's being called
+        with patch.object(loader, 'load_table') as mock_load_table:
+            # Create mock dataframe
+            mock_df = MagicMock()
+            mock_df.__getitem__.return_value.unique.return_value.compute.return_value.tolist.return_value = [1, 2, 3]
+            mock_load_table.return_value = mock_df
 
-        # Test with default table (admissions)
-        result = loader._load_unique_subject_ids_for_table()
-        assert result == [1, 2, 3]
+            # Test with patients table
+            result = loader._load_unique_subject_ids_for_table(TableNamesHOSP.PATIENTS)
+            assert result == [1, 2, 3]
+            mock_load_table.assert_called_with(table_name=TableNamesHOSP.PATIENTS, partial_loading=False)
+
+            # Test with default table (admissions)
+            result = loader._load_unique_subject_ids_for_table()
+            assert result == [1, 2, 3]
+            mock_load_table.assert_called_with(table_name=TableNamesHOSP.ADMISSIONS, partial_loading=False)
 
     @patch(FILTERING_PATH)
-    def test_all_subject_ids(self, mock_filtering, mock_mimic_dir):
+    def test_all_subject_ids(self, mock_mimic_dir):
         """Test all_subject_ids property."""
-        # Setup mock Filtering class
-        mock_filter_instance = MagicMock()
-        mock_filter_instance.render.return_value = dd.from_pandas(
-            pd.DataFrame({'subject_id': [1, 2, 3]}), npartitions=1
-        )
-        mock_filtering.return_value = mock_filter_instance
-
         loader = DataLoader(mimic_path=mock_mimic_dir)
         loader.scan_mimic_directory()
 
-        # Test that the property loads IDs
-        assert loader.all_subject_ids == [1, 2, 3]
+        # Delete the cached property to force it to recalculate
+        # This is needed because cached_property caches the result
+        try:
+            del loader.__dict__['all_subject_ids']
+        except KeyError:
+            pass  # Property hasn't been accessed yet
+
+        # Clear the _all_subject_ids list to ensure the property runs
+        loader._all_subject_ids = []
+
+        # Mock the _load_unique_subject_ids_for_table method
+        # According to the implementation, this method should populate the _all_subject_ids list
+        def mock_load_ids_for_table():
+            loader._all_subject_ids = [1, 2, 3]
+            return loader._all_subject_ids
+            
+        with patch.object(loader, '_load_unique_subject_ids_for_table', side_effect=mock_load_ids_for_table) as mock_load_method:
+            # Test that the property loads IDs
+            result = loader.all_subject_ids
+            assert result == [1, 2, 3]
+            mock_load_method.assert_called_once_with()
 
         # Test caching behavior by changing the internal list
-        original_ids = loader.all_subject_ids
         loader._all_subject_ids = [4, 5, 6]
 
-        # Since all_subject_ids uses cached_property, the value should not change
+        # Since all_subject_ids uses cached_property, it should still return the cached value
+        # But we're directly modifying the internal list, so we test the internal list
         assert loader._all_subject_ids == [4, 5, 6]
-
-        # We cannot directly clear the cache on cached_property, so we'll need to create a new instance
-        # or manipulate the _all_subject_ids directly in other tests
 
     def test_get_partial_subject_id_list(self):
         """Test getting partial subject ID list."""
@@ -349,41 +364,46 @@ class TestDataLoader:
                 use_dask=True
             )
 
-    @patch(FILTERING_PATH)
+    @patch('mimic_iv_analysis.io.data_loader.Filtering')
     def test_load_table(self, mock_filtering, mock_mimic_dir):
         """Test loading a table."""
-        # Setup mock Filtering class
-        mock_filter_instance = MagicMock()
-        mock_filter_instance.render.return_value = dd.from_pandas(
-            pd.DataFrame({'subject_id': [1, 2, 3], 'data': ['a', 'b', 'c']}),
-            npartitions=1
-        )
-        mock_filtering.return_value = mock_filter_instance
-
         # Create loader with mock mimic dir
         loader = DataLoader(mimic_path=mock_mimic_dir)
         loader.scan_mimic_directory()  # Need to scan directory first
 
         # Mock _get_file_path to return an actual file
         with patch.object(loader, '_get_file_path') as mock_get_path, \
-             patch.object(loader, 'load_csv_table_with_correct_column_datatypes') as mock_load_csv:
+            patch.object(loader, 'load_csv_table_with_correct_column_datatypes') as mock_load_csv:
 
             # Setup mock for file path
             file_path = mock_mimic_dir / "hosp" / "patients.csv"
             mock_get_path.return_value = file_path
 
-            # Create test DataFrame
+            # Create test DataFrame with required columns for PATIENTS table
             test_df = dd.from_pandas(
-                pd.DataFrame({'subject_id': [1, 2, 3, 4, 5], 'column': ['a', 'b', 'c', 'd', 'e']}),
+                pd.DataFrame({'subject_id': [1, 2, 3, 4, 5], 'column': ['a', 'b', 'c', 'd', 'e'], 'anchor_age': [20, 30, 40, 50, 60], 'anchor_year_group': ['2017 - 2019'] * 5}),
                 npartitions=1
             )
             mock_load_csv.return_value = test_df
+
+            # Setup mock Filtering that will be created within load_table
+            mock_filter_instance = MagicMock()
+            filtered_df = dd.from_pandas(
+                pd.DataFrame({'subject_id': [1, 3, 5], 'column': ['a', 'c', 'e'], 'anchor_age': [20, 40, 60], 'anchor_year_group': ['2017 - 2019'] * 3}),
+                npartitions=1
+            )
+            mock_filter_instance.render.return_value = filtered_df
+            mock_filtering.return_value = mock_filter_instance
 
             # Test full loading
             result = loader.load_table(TableNamesHOSP.PATIENTS, partial_loading=False)
             mock_get_path.assert_called_with(table_name=TableNamesHOSP.PATIENTS)
             mock_load_csv.assert_called_with(file_path, use_dask=True)
-            mock_filtering.assert_called_with(df=test_df, table_name=TableNamesHOSP.PATIENTS)
+            # Check that Filtering was created with the right parameters
+            mock_filtering.assert_called_once()
+            call_kwargs = mock_filtering.call_args.kwargs
+            assert call_kwargs['df'] is test_df
+            assert call_kwargs['table_name'] == TableNamesHOSP.PATIENTS
             assert isinstance(result, dd.DataFrame)
 
             # Test partial loading with subject_ids
@@ -573,7 +593,8 @@ class TestParquetConverter:
             'subject_id': [1, 2, 3],
             'gender': ['M', 'F', 'M'],
             'anchor_age': [45, 32, 67],
-            'anchor_year': [2120, 2130, 2125]
+            'anchor_year': [2120, 2130, 2125],
+            'anchor_year_group': ['2017 - 2019', '2017 - 2019', '2017 - 2019']
         })
         patients_data.to_csv(patients_file, index=False)
 

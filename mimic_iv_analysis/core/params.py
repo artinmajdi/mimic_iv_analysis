@@ -10,6 +10,7 @@ RANDOM_STATE            = 42
 SUBJECT_ID_COL          = 'subject_id'
 
 
+
 class TableNamesHOSP(enum.Enum):
 	ADMISSIONS         = 'admissions'
 	D_HCPCS            = 'd_hcpcs'
@@ -107,6 +108,15 @@ class TableNamesICU(enum.Enum):
 	@property
 	def module(self):
 		return 'icu'
+
+
+DEFAULT_STUDY_TABLES_LIST = [   TableNamesHOSP.PATIENTS,
+								TableNamesHOSP.ADMISSIONS,
+								TableNamesHOSP.DIAGNOSES_ICD,
+								TableNamesHOSP.TRANSFERS,
+								TableNamesHOSP.D_ICD_DIAGNOSES,
+								TableNamesHOSP.POE,
+								TableNamesHOSP.POE_DETAIL]
 
 
 def convert_table_names_to_enum_class(name: str, module: Literal['hosp', 'icu']='hosp') -> TableNamesHOSP | TableNamesICU:

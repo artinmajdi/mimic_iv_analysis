@@ -26,7 +26,8 @@ from mimic_iv_analysis.core.params import ( TableNamesHOSP,
                                             convert_table_names_to_enum_class,
                                             DEFAULT_MIMIC_PATH,
                                             DEFAULT_NUM_SUBJECTS,
-                                            SUBJECT_ID_COL)
+                                            SUBJECT_ID_COL,
+                                            DEFAULT_STUDY_TABLES_LIST)
 
 from mimic_iv_analysis.core.filtering import Filtering
 
@@ -37,13 +38,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 class DataLoader:
 	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
 
-	DEFAULT_STUDY_TABLES_LIST = [   TableNamesHOSP.PATIENTS,
-									TableNamesHOSP.ADMISSIONS,
-									TableNamesHOSP.DIAGNOSES_ICD,
-									TableNamesHOSP.D_ICD_DIAGNOSES,
-									TableNamesHOSP.POE,
-									TableNamesHOSP.POE_DETAIL,
-									TableNamesHOSP.TRANSFERS]
+
 
 
 	def __init__(self,mimic_path: Path = DEFAULT_MIMIC_PATH,
@@ -53,7 +48,7 @@ class DataLoader:
 		self.mimic_path = mimic_path
 
 		# Tables to load. Use list provided by user or default list
-		self.study_table_list = study_tables_list or self.DEFAULT_STUDY_TABLES_LIST
+		self.study_table_list = study_tables_list or DEFAULT_STUDY_TABLES_LIST
 
 		# Class variables
 		self._all_subject_ids : List[dtypes_all['subject_id']] = []
@@ -449,12 +444,12 @@ class DataLoader:
 
 		# Load table
 		df = _load_table_full()
-		logging.info(f"Loading full table: {_get_n_rows(df)} rows.")
+		logging.info(f"Loading full table: {humanize.intcomma(_get_n_rows(df))} rows.")
 
 		df = Filtering(df=df, table_name=table_name).render()
 
 
-		logging.info(f"Applied filters: {_get_n_rows(df)} rows.")
+		logging.info(f"Applied filters: {humanize.intcomma(_get_n_rows(df))} rows.")
 
 		if partial_loading:
 			df = _partial_loading(df)
@@ -540,12 +535,12 @@ class DataLoader:
 
 
 		# Merge tables
-		df12             = patients_df.merge(admissions_df, on='subject_id', how='inner')
+		df12 = patients_df.merge(admissions_df, on='subject_id', how='inner')
 
 		if TableNamesHOSP.TRANSFERS.value in tables_dict:
-			df123            = df12.merge(transfers_df, on=('subject_id', 'hadm_id'), how='inner')
+			df123 = df12.merge(transfers_df, on=('subject_id', 'hadm_id'), how='inner')
 		else:
-			df123            = df12
+			df123 = df12
 
 		diagnoses_merged = diagnoses_icd_df.merge(d_icd_diagnoses_df, on=('icd_code', 'icd_version'), how='inner')
 		merged_wo_poe    = df123.merge(diagnoses_merged, on=('subject_id', 'hadm_id'), how='inner')
@@ -723,6 +718,7 @@ if __name__ == '__main__':
 
 	examples_partial = ExampleDataLoader(partial_loading=False, num_subjects=10, random_selection=False)
 
+	examples_partial.load_merged_tables()
 	# pc = ParquetConverter(data_loader=DataLoader(mimic_path=DEFAULT_MIMIC_PATH))
 	# pc.save_as_parquet(table_name=TableNamesHOSP.ADMISSIONS)
 

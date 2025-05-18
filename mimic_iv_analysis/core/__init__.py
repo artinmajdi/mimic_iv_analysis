@@ -19,7 +19,8 @@ from .params import (   TableNamesHOSP,
                         DEFAULT_MIMIC_PATH,
                         DEFAULT_NUM_SUBJECTS,
                         RANDOM_STATE,
-                        SUBJECT_ID_COL)
+                        SUBJECT_ID_COL,
+                        DEFAULT_STUDY_TABLES_LIST)
 
 
 __all__ = [ 'ClusteringAnalyzer',
@@ -33,4 +34,5 @@ __all__ = [ 'ClusteringAnalyzer',
             'DEFAULT_MIMIC_PATH',
             'DEFAULT_NUM_SUBJECTS',
             'RANDOM_STATE',
-            'SUBJECT_ID_COL']
+            'SUBJECT_ID_COL',
+            'DEFAULT_STUDY_TABLES_LIST']

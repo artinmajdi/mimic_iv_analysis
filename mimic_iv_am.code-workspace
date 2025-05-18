@@ -12,6 +12,8 @@
 	"settings": {
 		"hide-files.files": [],
 		"explorer.excludeGitIgnore": false,
-		"python.languageServer": "None"
+		"python.languageServer": "None",
+		"editor.fontFamily": "Fira Code",
+		"editor.fontLigatures": true
 	}
 }
