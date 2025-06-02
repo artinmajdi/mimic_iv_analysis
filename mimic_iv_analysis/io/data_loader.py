@@ -17,16 +17,17 @@ from tqdm import tqdm
 
 from mimic_iv_analysis import logger
 from mimic_iv_analysis.core.filtering import Filtering
-from mimic_iv_analysis.core.params import ( TableNamesHOSP,
-											TableNamesICU,
-											pyarrow_dtypes_map,
-											COLUMN_TYPES,
-											DATETIME_COLUMNS,
-											convert_table_names_to_enum_class,
-											DEFAULT_MIMIC_PATH,
-											DEFAULT_NUM_SUBJECTS,
-											SUBJECT_ID_COL,
-											DEFAULT_STUDY_TABLES_LIST)
+from mimic_iv_analysis.configurations import (  TableNamesHOSP,
+												TableNamesICU,
+												pyarrow_dtypes_map,
+												COLUMN_TYPES,
+												DATETIME_COLUMNS,
+												convert_table_names_to_enum_class,
+												DEFAULT_MIMIC_PATH,
+												DEFAULT_NUM_SUBJECTS,
+												SUBJECT_ID_COL,
+												DEFAULT_STUDY_TABLES_LIST,
+												DataFrameType)
 
 
 class DataLoader:
@@ -235,7 +236,8 @@ class DataLoader:
 		return [convert_table_names_to_enum_class(name=table_name, module='hosp')
 				for table_name in tables_list]
 
-	def _get_column_dtype(self, file_path: Optional[Path] = None, columns_list: Optional[List[str]] = None) -> Tuple[Dict[str, str], List[str]]:
+	@staticmethod
+	def _get_column_dtype(file_path: Optional[Path] = None, columns_list: Optional[List[str]] = None) -> Tuple[Dict[str, str], List[str]]:
 		"""Determine the best dtype for a column based on its name and table."""
 
 		if file_path is None and columns_list is None:
@@ -282,13 +284,16 @@ class DataLoader:
 
 	def _get_file_path(self, table_name: TableNamesHOSP | TableNamesICU) -> Path:
 		"""Get the file path for a table."""
+
+		if self.tables_info_df is None:
+			self.scan_mimic_directory()
+
 		return Path(self.tables_info_df[
 			(self.tables_info_df.table_name == table_name.value) &
 			(self.tables_info_df.module == table_name.module)
 		]['file_path'].iloc[0])
 
-	@lru_cache(maxsize=None)
-	def _load_unique_subject_ids_for_table(self, table_name: TableNamesHOSP | TableNamesICU = TableNamesHOSP.ADMISSIONS ) -> List[int]:
+	def _load_unique_subject_ids_for_table(self, table_name: TableNamesHOSP | TableNamesICU):
 		"""
 		Load unique subject IDs from the table_name.
 
@@ -296,21 +301,42 @@ class DataLoader:
 		in the _subject_ids_list attribute. If the table_name cannot be found,
 		an empty list will be stored instead.
 		"""
-		logger.info(f"Loading subject IDs from {table_name.value} table (this will be cached)")
+
+		logger.info(f"Loading subject IDs from {table_name.value} table")
 
 		# Scan directory if not already done
 		if self.tables_info_df is None:
 			self.scan_mimic_directory()
 
-		self._all_subject_ids = self.load_table( table_name=table_name, partial_loading=False )['subject_id'].unique().compute().tolist()
+		# Get csv file path
+		csv_file_path = self._get_file_path(table_name)
 
-		return self._all_subject_ids
+		subject_ids_path = csv_file_path.parent / f'{table_name.value}_subject_ids.csv'
 
-	@cached_property
-	def all_subject_ids(self) -> List[int]:
+		if subject_ids_path.exists():
+
+			subject_ids = pd.read_csv(subject_ids_path)
+			self._all_subject_ids = subject_ids['subject_id'].values.tolist()
+
+		else:
+
+			df = self._load_table_full(table_name=table_name, use_dask=True)
+			subject_ids = df['subject_id'].unique().compute()
+
+			# Save subject IDs
+			subject_ids.to_csv(subject_ids_path, index=False)
+
+			self._all_subject_ids = subject_ids.values.tolist()
+
+
+	@lru_cache()
+	def all_subject_ids(self, table_name: TableNamesHOSP | TableNamesICU) -> List[int]:
 		"""Returns a list of unique subject_ids found in the admission table."""
-		# TODO: I changed this to get the intersection of all subject IDs found in the tables that have subject_id column. but now, it returns empty. why? (could i do the filtering after I merged all the tables?)
+
 		def _load_unique_subject_id_common_between_all_tables():
+
+			# TODO: I changed this to get the intersection of all subject IDs found in the tables that have subject_id column. but now, it returns empty. why? (could i do the filtering after I merged all the tables?)
+
 			subject_ids = []
 			for table_name in self._list_of_tables_w_subject_id_column:
 				subject_ids.append(set(self.load_table(table_name=table_name, partial_loading=False)['subject_id'].unique().compute().tolist()))
@@ -318,13 +344,9 @@ class DataLoader:
 			# get the intersection of all subject IDs
 			self._all_subject_ids = list(set.intersection(*subject_ids))
 
-
-		# Load subject IDs if not already loaded or if the list is empty
 		if not self._all_subject_ids:
-			_ = self._load_unique_subject_ids_for_table()
-
+			self._load_unique_subject_ids_for_table(table_name)
 			# self._load_unique_subject_id_common_between_all_tables()
-
 
 		return self._all_subject_ids
 
@@ -339,24 +361,27 @@ class DataLoader:
 		Returns:
 			List of subject IDs for sampling, or empty list if appropriate.
 		"""
+
+		subject_ids = self.all_subject_ids(table_name=TableNamesHOSP.ADMISSIONS)
+
 		# If no subject IDs or num_subjects is non-positive, return an empty list
-		if not self.all_subject_ids or num_subjects <= 0:
+		if not subject_ids or num_subjects <= 0:
 			return []
 
 		# If num_subjects is greater than the number of available subject IDs, return all subject IDs
-		if num_subjects > len(self.all_subject_ids):
-			return self.all_subject_ids
+		if num_subjects > len(subject_ids):
+			return subject_ids
 
 		# Randomly select subject IDs if random_selection is True
 		if random_selection:
 			self.partial_subject_id_list = np.random.choice(
-				a       = self.all_subject_ids,
+				a       = subject_ids,
 				size    = num_subjects,
 				replace = False
 			).tolist()
 		else:
 			# Otherwise, return the first N subject IDs
-			self.partial_subject_id_list = self.all_subject_ids[:num_subjects]
+			self.partial_subject_id_list = subject_ids[:num_subjects]
 
 		return self.partial_subject_id_list
 
@@ -382,23 +407,32 @@ class DataLoader:
 		"""
 		# Get subject IDs for partial loading
 		if partial_loading and (subject_ids is None):
-			subject_ids = self.get_partial_subject_id_list_for_partial_loading(
-				num_subjects=num_subjects,
-				random_selection=random_selection
-			)
+
+			subject_ids = self.get_partial_subject_id_list_for_partial_loading( num_subjects=num_subjects, random_selection=random_selection )
 
 		tables_dict = {}
 		for _, row in self.study_tables_info.iterrows():
 			table_name = convert_table_names_to_enum_class(name=row.table_name, module=row.module)
 
-			tables_dict[table_name.value] = self.load_table(
-				table_name=table_name,
-				partial_loading=partial_loading,
-				subject_ids=subject_ids,
-				use_dask=use_dask
-			)
+			tables_dict[table_name.value] = self.load_table(table_name=table_name, partial_loading=partial_loading, subject_ids=subject_ids, use_dask=use_dask)
 
 		return tables_dict
+
+	def _load_table_full(self, table_name: TableNamesHOSP | TableNamesICU, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
+
+		if self.tables_info_df is None:
+			self.scan_mimic_directory()
+
+		file_path = self._get_file_path(table_name=table_name)
+
+		# For parquet files, respect the use_dask flag
+		if file_path.suffix == '.parquet':
+			if use_dask:
+				return dd.read_parquet(file_path)
+			else:
+				return pd.read_parquet(file_path)
+
+		return self.load_csv_table_with_correct_column_datatypes(file_path, use_dask=use_dask)
 
 	def load_table(self,
 				table_name     : TableNamesHOSP | TableNamesICU,
@@ -418,19 +452,9 @@ class DataLoader:
 		Returns:
 			The loaded DataFrame
 		"""
-		def _load_table_full() -> pd.DataFrame | dd.DataFrame:
-			file_path = self._get_file_path(table_name=table_name)
 
-			# For parquet files, respect the use_dask flag
-			if file_path.suffix == '.parquet':
-				if use_dask:
-					return dd.read_parquet(file_path)
-				else:
-					return pd.read_parquet(file_path)
+		def _partial_loading(df: pd.DataFrame | dd.DataFrame) -> pd.DataFrame | dd.DataFrame:
 
-			return self.load_csv_table_with_correct_column_datatypes(file_path, use_dask=use_dask)
-
-		def _partial_loading(df):
 			if subject_ids is None:
 				raise ValueError("partial_loading is True but subject_ids is None")
 
@@ -450,14 +474,13 @@ class DataLoader:
 
 			return df[df['subject_id'].isin(subject_ids_set)]
 
-		def _get_n_rows(df):
+		def _get_n_rows(df: pd.DataFrame | dd.DataFrame) -> str:
 			n_rows = df.shape[0].compute() if isinstance(df, dd.DataFrame) else df.shape[0]
 			return humanize.intcomma(int(n_rows))
 
-		logger.info(f"Loading ----- {table_name.value} ----- table.")
 
 		# Load table
-		df = _load_table_full()
+		df = self._load_table_full(table_name=table_name)
 		logger.info(f"Loading full table: {_get_n_rows(df)} rows.")
 
 		# Apply filtering
@@ -466,6 +489,7 @@ class DataLoader:
 
 		# Apply partial loading if requested
 		if partial_loading:
+			self._load_unique_subject_ids_for_table(table_name=table_name)
 			df = _partial_loading(df)
 			logger.info(f"Applied partial loading: {_get_n_rows(df)} rows.")
 
@@ -567,9 +591,9 @@ class DataLoader:
 			)
 
 		# Get tables
-		patients_df      = tables_dict[TableNamesHOSP.PATIENTS.value]
-		admissions_df    = tables_dict[TableNamesHOSP.ADMISSIONS.value]
-		diagnoses_icd_df = tables_dict[TableNamesHOSP.DIAGNOSES_ICD.value]
+		patients_df        = tables_dict[TableNamesHOSP.PATIENTS.value]
+		admissions_df      = tables_dict[TableNamesHOSP.ADMISSIONS.value]
+		diagnoses_icd_df   = tables_dict[TableNamesHOSP.DIAGNOSES_ICD.value]
 		d_icd_diagnoses_df = tables_dict[TableNamesHOSP.D_ICD_DIAGNOSES.value]
 		poe_df             = tables_dict[TableNamesHOSP.POE.value]
 		poe_detail_df      = tables_dict[TableNamesHOSP.POE_DETAIL.value]
@@ -772,10 +796,12 @@ class ParquetConverter:
 
 		column_names = df.columns.tolist()
 
-		dtypes, _ = self._get_column_dtype(columns_list=column_names)
+		dtypes, parse_dates = DataLoader._get_column_dtype(columns_list=column_names)
 
 		# Create fields
-		fields = [pa.field(col, pyarrow_dtypes_map.get(dtypes[col])) for col in column_names]
+		fields = [pa.field(col, pyarrow_dtypes_map[dtype]) for col, dtype in dtypes.items()]
+
+		fields += [pa.field(col, pa.timestamp('ns')) for col in parse_dates]
 
 		# Create and return schema
 		return pa.schema(fields)
@@ -832,19 +858,18 @@ class ParquetConverter:
 
 if __name__ == '__main__':
 
-	# TODO: check that everything works after all the changes.
-	# Load partial data
-	# examples_partial = ExampleDataLoader(partial_loading=True, num_subjects=10, random_selection=False)
+	loader = DataLoader(mimic_path=DEFAULT_MIMIC_PATH)
+	loader.scan_mimic_directory()
 
 	# Convert admissions table to Parquet
-	converter = ParquetConverter(data_loader=DataLoader(mimic_path=DEFAULT_MIMIC_PATH))
-	converter.save_as_parquet(table_name=TableNamesHOSP.ADMISSIONS, use_dask=True)
-
-	# Convert all study tables to Parquet
+	# converter = ParquetConverter(data_loader=loader)
+	# converter.save_as_parquet(table_name=TableNamesHOSP.ADMISSIONS, use_dask=True)
 	# converter.save_all_tables_as_parquet()
 
-	# Load from Parquet and merge
-	# data_loader = DataLoader()
+
+	# 1. Load a table fully
+	logger.info("Loading 'patients' table fully...")
+	patients_df = loader.load_table(TableNamesHOSP.PATIENTS, partial_loading=False, use_dask=True)
 	# merged_tables = data_loader.load_merged_tables(partial_loading=True, num_subjects=10)
 
 	print('done')

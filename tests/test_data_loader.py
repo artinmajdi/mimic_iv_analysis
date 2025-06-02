@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock, PropertyMock
 
 from mimic_iv_analysis.io.data_loader import DataLoader, ParquetConverter, ExampleDataLoader
 
-from mimic_iv_analysis.core.params import TableNamesHOSP, TableNamesICU, DEFAULT_MIMIC_PATH, convert_table_names_to_enum_class, DEFAULT_STUDY_TABLES_LIST
+from mimic_iv_analysis.configurations.params import TableNamesHOSP, TableNamesICU, DEFAULT_MIMIC_PATH, convert_table_names_to_enum_class, DEFAULT_STUDY_TABLES_LIST
 
 # Path to the core.filtering module to mock for testing
 FILTERING_PATH = 'mimic_iv_analysis.core.filtering.Filtering'
@@ -264,7 +264,7 @@ class TestDataLoader:
         def mock_load_ids_for_table():
             loader._all_subject_ids = [1, 2, 3]
             return loader._all_subject_ids
-            
+
         with patch.object(loader, '_load_unique_subject_ids_for_table', side_effect=mock_load_ids_for_table) as mock_load_method:
             # Test that the property loads IDs
             result = loader.all_subject_ids

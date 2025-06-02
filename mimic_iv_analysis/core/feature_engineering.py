@@ -78,8 +78,12 @@ class FeatureEngineerUtils:
 		if id_columns:
 			# Choose the one that looks most like a patient ID based on cardinality and naming
 			for col in id_columns:
-				if df[col].nunique() > len(df) * 0.1:  # High cardinality
-					return col
+				if isinstance(df, dd.DataFrame):
+					if (df[col].nunique().compute() > df.shape[0].compute() * 0.1):  # High cardinality
+						return col
+				else:
+					if (df[col].nunique() > len(df) * 0.1):  # High cardinality
+						return col
 
 		return None
 

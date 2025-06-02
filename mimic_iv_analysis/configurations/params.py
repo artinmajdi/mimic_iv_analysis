@@ -2,6 +2,8 @@ import enum
 from pathlib import Path
 from typing import Literal
 import pyarrow as pa
+import pandas as pd
+import dask.dataframe as dd
 
 
 class TableNamesHOSP(enum.Enum):
@@ -124,6 +126,8 @@ DEFAULT_NUM_SUBJECTS = 10
 RANDOM_STATE         = 42
 SUBJECT_ID_COL       = 'subject_id'
 
+
+DataFrameType = pd.DataFrame | dd.DataFrame
 
 # Updated dictionary for better Parquet compatibility
 COLUMN_TYPES = {
@@ -293,5 +297,6 @@ pyarrow_dtypes_map = {
 	'bool'          : pa.bool_(),
 	'datetime64[ns]': pa.timestamp('ns'),
 	'category'      : pa.dictionary(pa.int32(), pa.string()),
-	'object'        : pa.string()
+	'object'        : pa.string(),
+	'string'        : pa.string()
 }

@@ -10,16 +10,25 @@ import dask.dataframe as dd
 
 # Streamlit import
 import streamlit as st
+import humanize
+import pdb
 
 # Local application imports
 from mimic_iv_analysis import logger
 from mimic_iv_analysis.core import FeatureEngineerUtils
-from mimic_iv_analysis.io import DataLoader, ParquetConverter, TableNamesHOSP
-from mimic_iv_analysis.io.data_loader import convert_table_names_to_enum_class, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS
+from mimic_iv_analysis.io import DataLoader, ParquetConverter
+from mimic_iv_analysis.configurations import (  TableNamesHOSP,
+												TableNamesICU,
+												convert_table_names_to_enum_class,
+												DEFAULT_MIMIC_PATH,
+												DEFAULT_NUM_SUBJECTS,
+												DataFrameType)
+
 from mimic_iv_analysis.visualization.app_components import FilteringTab, FeatureEngineeringTab, AnalysisVisualizationTab, ClusteringAnalysisTab
 
 from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtils
 
+# TODO: when partiallyloading a table who doesn't have subject_id column, it should show a message that the table is not supported for partial loading
 
 
 class MIMICDashboardApp:
@@ -358,7 +367,8 @@ class MIMICDashboardApp:
 		def _select_sampling_parameters():
 
 			# Get total unique subjects to display
-			total_unique_subjects = len(self.data_handler.all_subject_ids)
+			# TODO: change this to the table that is being loaded except for the merged table
+			total_unique_subjects = len(self.data_handler.all_subject_ids(table_name=TableNamesHOSP.ADMISSIONS))
 
 			help_text_num_subjects = f"Number of subjects to load. Max: {total_unique_subjects}."
 
@@ -533,6 +543,10 @@ class MIMICDashboardApp:
 
 			with st.spinner(loading_message):
 
+				logger.info(f"Loading table {table_name} with partial loading: {not load_full} and use_dask: {st.session_state.use_dask}")
+				logger.info(f"target_subject_ids: {target_subject_ids}")
+				# pdb.set_trace()
+
 				df = self.data_handler.load_table(
 					table_name      = table_name,
 					partial_loading = not load_full,
@@ -690,10 +704,10 @@ class MIMICDashboardApp:
 			with col2:
 				# Format file size
 				file_size_mb = st.session_state.file_sizes.get((st.session_state.selected_module, st.session_state.selected_table), 0)
-				if file_size_mb < 0.1: size_str = f"{file_size_mb*1024:.0f} KB"
-				elif file_size_mb < 1024: size_str = f"{file_size_mb:.1f} MB"
-				else: size_str = f"{file_size_mb/1024:.1f} GB"
-				st.metric("File Size (Full)", size_str)
+				# if file_size_mb < 0.1: size_str = f"{file_size_mb*1024:.0f} KB"
+				# elif file_size_mb < 1024: size_str = f"{file_size_mb:.1f} MB"
+				# else: size_str = f"{file_size_mb/1024:.1f} GB"
+				st.metric("File Size (Full)", humanize.naturalsize(file_size_mb))
 				st.metric("Total Rows (Full)", f"{st.session_state.total_row_count:,}")
 
 			with col3:
