@@ -1,20 +1,18 @@
 # Standard library imports
 import os
-import logging
 from io import BytesIO
 from pathlib import Path
-from typing import Tuple, Optional, List, Literal
+from typing import Tuple, Optional, List
 
 # Data processing imports
 import pandas as pd
 import dask.dataframe as dd
-import enum
 
 # Streamlit import
 import streamlit as st
-import streamlit.web.cli as stcli # For programmatic Sreamlit launch
 
 # Local application imports
+from mimic_iv_analysis import logger
 from mimic_iv_analysis.core import FeatureEngineerUtils
 from mimic_iv_analysis.io import DataLoader, ParquetConverter, TableNamesHOSP
 from mimic_iv_analysis.io.data_loader import convert_table_names_to_enum_class, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS
@@ -23,22 +21,20 @@ from mimic_iv_analysis.visualization.app_components import FilteringTab, Feature
 from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtils
 
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class MIMICDashboardApp:
 
 	def __init__(self):
-		logging.info("Initializing MIMICDashboardApp...")
+		logger.info("Initializing MIMICDashboardApp...")
 
 		# Initialize core components
-		logging.info(f"Initializing DataLoader with path: {DEFAULT_MIMIC_PATH}")
+		logger.info(f"Initializing DataLoader with path: {DEFAULT_MIMIC_PATH}")
 		self.data_handler      = DataLoader(mimic_path=Path(DEFAULT_MIMIC_PATH))
 
-		logging.info("Initializing ParquetConverter...")
+		logger.info("Initializing ParquetConverter...")
 		self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
 
-		logging.info("Initializing FeatureEngineerUtils...")
+		logger.info("Initializing FeatureEngineerUtils...")
 		self.feature_engineer  = FeatureEngineerUtils()
 
 		# Initialize UI components for tabs
@@ -50,7 +46,7 @@ class MIMICDashboardApp:
 		self.current_file_path = None
 
 		self.init_session_state()
-		logging.info("MIMICDashboardApp initialized.")
+		logger.info("MIMICDashboardApp initialized.")
 
 	@staticmethod
 	def init_session_state():
@@ -59,7 +55,7 @@ class MIMICDashboardApp:
 		if 'app_initialized' in st.session_state:
 			return
 
-		logging.info("Initializing session state...")
+		logger.info("Initializing session state...")
 		# Basic App State
 		st.session_state.loader = None
 		st.session_state.datasets = {}
@@ -112,13 +108,13 @@ class MIMICDashboardApp:
 		}
 
 		st.session_state.app_initialized = True # Mark as initialized
-		logging.info("Session state initialized.")
+		logger.info("Session state initialized.")
 
 
 	def run(self):
 		"""Run the main application loop."""
 
-		logging.info("Starting MIMICDashboardApp run...")
+		logger.info("Starting MIMICDashboardApp run...")
 
 		# Set page config (do this only once at the start)
 		st.set_page_config( page_title="MIMIC-IV Explorer", page_icon="🏥", layout="wide", initial_sidebar_state="expanded" )
@@ -180,7 +176,7 @@ class MIMICDashboardApp:
 			# Ensure necessary components are passed if FilteringTab needs them
 			FilteringTab(current_file_path=self.current_file_path).render(data_handler=self.data_handler, feature_engineer=self.feature_engineer)
 
-		logging.info("MIMICDashboardApp run finished.")
+		logger.info("MIMICDashboardApp run finished.")
 
 
 	def _scan_dataset(self):
@@ -252,7 +248,7 @@ class MIMICDashboardApp:
 						st.sidebar.error("Data Handler is not initialized or does not have a 'scan_mimic_directory' method.")
 					except Exception as e:
 						st.sidebar.error(f"Error scanning directory: {e}")
-						logging.exception("Error during directory scan")
+						logger.exception("Error during directory scan")
 
 
 	def _display_sidebar(self):
@@ -306,7 +302,7 @@ class MIMICDashboardApp:
 			def _display_table_info(table: str) -> None:
 				"""Display table description information in sidebar."""
 
-				logging.info(f"Displaying table info for {module}.{table}")
+				logger.info(f"Displaying table info for {module}.{table}")
 
 				table_info = convert_table_names_to_enum_class(name=table, module=module).description
 
@@ -584,7 +580,7 @@ class MIMICDashboardApp:
 
 	def _clear_analysis_states(self):
 		"""Clears session state related to previous analysis when new data is loaded."""
-		logging.info("Clearing previous analysis states...")
+		logger.info("Clearing previous analysis states...")
 		# Feature engineering
 		st.session_state.freq_matrix = None
 		st.session_state.order_sequences = None

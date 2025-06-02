@@ -9,12 +9,11 @@ Features:
 - Configuration validation
 """
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import os
 import yaml
+
+from .settings import logger
+
 
 def load_config(config_path=None):
     """Load configuration from a YAML file.
@@ -40,4 +39,5 @@ def load_config(config_path=None):
 
 __all__ = [
     'load_config',
+    'logger',
 ]

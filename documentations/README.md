@@ -1,22 +1,17 @@
 # MIMIC-IV Analysis Documentation
 
-## Project Overview
-This project provides analytical tools for exploring and modeling data from the MIMIC-IV clinical database.
+This directory contains detailed technical documentation related to the MIMIC-IV Analysis project.
 
-## Features
-- Exploratory Data Analysis
-- Patient Trajectory Visualization
-- Order Pattern Analysis
-- Predictive Modeling
+For a general project overview, features, installation instructions, and usage guidelines, please refer to the main [README.md](../README.md) in the root directory of this project.
 
-## Installation
-See the main [README](../README.md) for installation instructions.
+## Contents
 
-## Usage
-Run the Streamlit app with:
-```bash
-streamlit run app.py
-```
+This `documentations` folder includes:
 
-## API Reference
-Detailed module documentation coming soon.
+*   [`DATA_STRUCTURE.md`](./DATA_STRUCTURE.md): Describes the expected structure of the MIMIC-IV data used by this project.
+*   [`mimic_iv_data_structure.md`](./mimic_iv_data_structure.md): Provides an overview of MIMIC-IV tables and identifiers relevant to this toolkit.
+*   [`MEMORY_OPTIMIZATION.md`](./MEMORY_OPTIMIZATION.md): Guide on memory optimization techniques implemented and recommended for the Streamlit dashboard.
+*   [`DASK_DASHBOARD_TROUBLESHOOTING.md`](./DASK_DASHBOARD_TROUBLESHOOTING.md): Troubleshooting guide for issues related to the Dask dashboard.
+*   [`pyhealth/`](./pyhealth/): Contains documentation related to the PyHealth library, if used or relevant to the project.
+
+Refer to the specific files for detailed information on each topic.

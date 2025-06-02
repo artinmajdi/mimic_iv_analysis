@@ -38,9 +38,9 @@ class Filtering:
 	def render(self) -> pd.DataFrame | dd.DataFrame:
 
 		# TODO: apply this filter too
-		# if self.table_name == TableNamesHOSP.PATIENTS:
-		# 	self.df = self.df[(self.df.anchor_age >= 18.0) & (self.df.anchor_age <= 75.0)]
-		# 	self.df = self.df[self.df.anchor_year_group == '2017 - 2019']
+		if self.table_name == TableNamesHOSP.PATIENTS:
+			self.df = self.df[(self.df.anchor_age >= 18.0) & (self.df.anchor_age <= 75.0)]
+			self.df = self.df[self.df.anchor_year_group == '2017 - 2019']
 
 
 		# elif self.table_name == TableNamesHOSP.DIAGNOSES_ICD:
@@ -59,23 +59,23 @@ class Filtering:
 		# 	self.df = self.df[self.df.icd_version == 10]
 
 
-		# elif self.table_name == TableNamesHOSP.POE:
-		# 	self.df = self.df.drop(columns=['discontinue_of_poe_id', 'discontinued_by_poe_id'])
+		elif self.table_name == TableNamesHOSP.POE:
+			self.df = self.df.drop(columns=['discontinue_of_poe_id', 'discontinued_by_poe_id'])
 
 
-		# elif self.table_name == TableNamesHOSP.ADMISSIONS:
+		elif self.table_name == TableNamesHOSP.ADMISSIONS:
 
-		# 	# Get admission IDs where patient is alive
-		# 	self.df = self.df[(self.df.deathtime.isnull()) | (self.df.hospital_expire_flag == 0)]
+			# Get admission IDs where patient is alive
+			self.df = self.df[(self.df.deathtime.isnull()) | (self.df.hospital_expire_flag == 0)]
 
-		# 	# Get admission IDs with valid admission and discharge times
-		# 	self.df = self.df.dropna(subset=['admittime', 'dischtime'])
+			# Get admission IDs with valid admission and discharge times
+			# self.df = self.df.dropna(subset=['admittime', 'dischtime'])
 
-		# 	# Additional validation: dischtime should be after admittime
-		# 	self.df = self.df[self.df['dischtime'] > self.df['admittime']]
+			# Additional validation: dischtime should be after admittime
+			self.df = self.df[self.df['dischtime'] > self.df['admittime']]
 
-		# 	# Exclude admission types like "EW EMER.", "URGENT", or "ELECTIVE"
-		# 	self.df = self.df[~self.df.admission_type.isin(['EW EMER.', 'URGENT', 'ELECTIVE'])]
+			# Exclude admission types like "EW EMER.", "URGENT", or "ELECTIVE"
+			self.df = self.df[~self.df.admission_type.isin(['EW EMER.', 'URGENT', 'ELECTIVE'])]
 
 
 

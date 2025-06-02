@@ -1,13 +1,10 @@
 # Standard library imports
 import os
 import glob
-import logging
-import traceback
 from pathlib import Path
 from functools import lru_cache, cached_property
-from typing import Dict, Optional, Tuple, List, Any, Union, Literal, Set
+from typing import Dict, Optional, Tuple, List, Any, Literal
 import warnings
-import enum
 
 # Data processing imports
 import numpy as np
@@ -17,26 +14,20 @@ import pyarrow.parquet as pq
 import dask.dataframe as dd
 import humanize
 from tqdm import tqdm
-# Our modules
+
+from mimic_iv_analysis import logger
+from mimic_iv_analysis.core.filtering import Filtering
 from mimic_iv_analysis.core.params import ( TableNamesHOSP,
 											TableNamesICU,
-											dtypes_all,
-											parse_dates_all,
 											pyarrow_dtypes_map,
 											COLUMN_TYPES,
 											DATETIME_COLUMNS,
-											TABLE_CATEGORICAL_COLUMNS,
 											convert_table_names_to_enum_class,
 											DEFAULT_MIMIC_PATH,
 											DEFAULT_NUM_SUBJECTS,
 											SUBJECT_ID_COL,
 											DEFAULT_STUDY_TABLES_LIST)
 
-
-from mimic_iv_analysis.core.filtering import Filtering
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class DataLoader:
 	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
@@ -265,7 +256,7 @@ class DataLoader:
 			raise FileNotFoundError(f"CSV file not found: {file_path}")
 
 		if file_path.suffix not in ['.csv', '.gz', '.csv.gz']:
-			logging.warning(f"File {file_path} is not a CSV file. Skipping.")
+			logger.warning(f"File {file_path} is not a CSV file. Skipping.")
 			return pd.DataFrame()
 
 		# First read a small sample to get column names without type conversion
@@ -305,7 +296,7 @@ class DataLoader:
 		in the _subject_ids_list attribute. If the table_name cannot be found,
 		an empty list will be stored instead.
 		"""
-		logging.info(f"Loading subject IDs from {table_name.value} table (this will be cached)")
+		logger.info(f"Loading subject IDs from {table_name.value} table (this will be cached)")
 
 		# Scan directory if not already done
 		if self.tables_info_df is None:
@@ -444,11 +435,11 @@ class DataLoader:
 				raise ValueError("partial_loading is True but subject_ids is None")
 
 			if 'subject_id' not in df.columns:
-				logging.info(f"Table {table_name.value} does not have a subject_id column. "
+				logger.info(f"Table {table_name.value} does not have a subject_id column. "
 							f"Partial loading is not possible. Skipping partial loading.")
 				return df
 
-			logging.info(f"Filtering {table_name.value} by subject_id for {len(subject_ids)} subjects.")
+			logger.info(f"Filtering {table_name.value} by subject_id for {len(subject_ids)} subjects.")
 
 			# Convert subject_ids to a set for faster lookups
 			subject_ids_set = set(subject_ids)
@@ -460,23 +451,23 @@ class DataLoader:
 			return df[df['subject_id'].isin(subject_ids_set)]
 
 		def _get_n_rows(df):
-			n_rows = df.size.compute() / len(df.columns) if isinstance(df, dd.DataFrame) else df.shape[0]
+			n_rows = df.shape[0].compute() if isinstance(df, dd.DataFrame) else df.shape[0]
 			return humanize.intcomma(int(n_rows))
 
-		logging.info(f"Loading ----- {table_name.value} ----- table.")
+		logger.info(f"Loading ----- {table_name.value} ----- table.")
 
 		# Load table
 		df = _load_table_full()
-		logging.info(f"Loading full table: {_get_n_rows(df)} rows.")
+		logger.info(f"Loading full table: {_get_n_rows(df)} rows.")
 
 		# Apply filtering
 		df = Filtering(df=df, table_name=table_name).render()
-		logging.info(f"Applied filters: {_get_n_rows(df)} rows.")
+		logger.info(f"Applied filters: {_get_n_rows(df)} rows.")
 
 		# Apply partial loading if requested
 		if partial_loading:
 			df = _partial_loading(df)
-			logging.info(f"Applied partial loading: {_get_n_rows(df)} rows.")
+			logger.info(f"Applied partial loading: {_get_n_rows(df)} rows.")
 
 		return df
 
@@ -498,7 +489,7 @@ class DataLoader:
 		Returns:
 			Tuple of (filtered DataFrame, number of rows loaded)
 		"""
-		logging.info(f"Using Pandas chunking to filter by subject_id for {os.path.basename(file_path)}.")
+		logger.info(f"Using Pandas chunking to filter by subject_id for {os.path.basename(file_path)}.")
 
 		# Initialize variables
 		chunks_for_target_ids = []
@@ -529,7 +520,7 @@ class DataLoader:
 
 				# Check if we've reached max chunks
 				if max_chunks is not None and max_chunks != -1 and processed_chunks >= max_chunks:
-					logging.info(f"Reached max_chunks ({max_chunks}) during subject_id filtering for {os.path.basename(file_path)}.")
+					logger.info(f"Reached max_chunks ({max_chunks}) during subject_id filtering for {os.path.basename(file_path)}.")
 					break
 
 			# Combine filtered chunks into final DataFrame
@@ -543,7 +534,7 @@ class DataLoader:
 			total_rows_loaded = len(df_result)
 
 			# Log the result
-			logging.info(f"Loaded {total_rows_loaded} rows for {len(target_subject_ids)} subjects from {os.path.basename(file_path)} using Pandas chunking.")
+			logger.info(f"Loaded {total_rows_loaded} rows for {len(target_subject_ids)} subjects from {os.path.basename(file_path)} using Pandas chunking.")
 
 		return df_result, total_rows_loaded
 

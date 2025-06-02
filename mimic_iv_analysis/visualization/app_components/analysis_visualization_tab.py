@@ -303,6 +303,7 @@ class AnalysisVisualizationTab:
 
 			# 4. LOS / Outcome Analysis Tab
 			with analysis_tabs[3]:
+
 				st.markdown("<h3>Length of Stay (LOS) or Outcome Analysis by Cluster</h3>", unsafe_allow_html=True)
 				st.info("Compare clinical outcomes like Length of Stay across the identified clusters. Requires appropriate columns in the *original* loaded table.")
 
@@ -310,8 +311,10 @@ class AnalysisVisualizationTab:
 					st.warning("Original table data not loaded. Cannot perform outcome analysis.")
 				else:
 					original_df = st.session_state.df
+
 					# Ensure original_df index aligns with cluster_labels index
 					common_index_outcome = original_df.index.intersection(cluster_labels.index)
+
 					if len(common_index_outcome) == 0:
 						st.error("Index mismatch between original data and cluster labels. Cannot perform outcome analysis.")
 					else:

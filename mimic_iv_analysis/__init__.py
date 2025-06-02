@@ -11,4 +11,12 @@ This module provides:
 - Visualization components
 """
 
+from .configurations.settings import setup_logging, logger
+
+# Set up default logging when the package is imported
+setup_logging()
+
+
+__all__ = ["logger"]
+
 __author__ = "Artin Majdi"
