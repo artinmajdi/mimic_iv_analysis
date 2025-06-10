@@ -252,7 +252,7 @@ class DataLoader:
 
 		return dtypes, parse_dates
 
-	def load_csv_table_with_correct_column_datatypes(self, file_path: Path, use_dask: bool = True):
+	def _load_unfiltered_csv_table(self, file_path: Path, use_dask: bool = True):
 		# Check if file exists
 		if not os.path.exists(file_path):
 			raise FileNotFoundError(f"CSV file not found: {file_path}")
@@ -432,13 +432,14 @@ class DataLoader:
 			else:
 				return pd.read_parquet(file_path)
 
-		return self.load_csv_table_with_correct_column_datatypes(file_path, use_dask=use_dask)
+		return self._load_unfiltered_csv_table(file_path, use_dask=use_dask)
 
 	def load_table(self,
 				table_name     : TableNamesHOSP | TableNamesICU,
 				partial_loading: bool = False,
 				subject_ids    : Optional[List[int]] = None,
-				use_dask       : bool = True
+				use_dask       : bool = True,
+				apply_filtering: bool = True
 				) -> pd.DataFrame | dd.DataFrame:
 		"""
 		Load a single table.
@@ -448,11 +449,11 @@ class DataLoader:
 			partial_loading: Whether to load only a subset of subjects
 			subject_ids    : Optional list of subject IDs to load
 			use_dask       : Whether to use Dask for loading
+			apply_filtering: Whether to apply the filtering logic from the Filtering class
 
 		Returns:
 			The loaded DataFrame
 		"""
-
 		def _partial_loading(df: pd.DataFrame | dd.DataFrame) -> pd.DataFrame | dd.DataFrame:
 
 			if subject_ids is None:
@@ -480,12 +481,13 @@ class DataLoader:
 
 
 		# Load table
-		df = self._load_table_full(table_name=table_name)
+		df = self._load_table_full(table_name=table_name, use_dask=use_dask)
 		logger.info(f"Loading full table: {_get_n_rows(df)} rows.")
 
 		# Apply filtering
-		df = Filtering(df=df, table_name=table_name).render()
-		logger.info(f"Applied filters: {_get_n_rows(df)} rows.")
+		if apply_filtering:
+			df = Filtering(df=df, table_name=table_name).render()
+			logger.info(f"Applied filters: {_get_n_rows(df)} rows.")
 
 		# Apply partial loading if requested
 		if partial_loading:
@@ -587,8 +589,7 @@ class DataLoader:
 				partial_loading  = partial_loading,
 				num_subjects     = num_subjects,
 				random_selection = random_selection,
-				use_dask         = use_dask
-			)
+				use_dask         = use_dask )
 
 		# Get tables
 		patients_df        = tables_dict[TableNamesHOSP.PATIENTS.value]
@@ -618,8 +619,7 @@ class DataLoader:
 		return {
 			'merged_wo_poe'    : merged_wo_poe,
 			'merged_full_study': merged_full_study,
-			'poe_and_details'  : poe_and_details
-		}
+			'poe_and_details'  : poe_and_details }
 
 	@property
 	def tables_w_subject_id_column(self) -> List[TableNamesHOSP | TableNamesICU]:
@@ -630,7 +630,8 @@ class DataLoader:
 					TableNamesHOSP.DIAGNOSES_ICD, 
 					TableNamesHOSP.POE, 
 					TableNamesHOSP.POE_DETAIL]
-  
+
+
 class ExampleDataLoader:
 	"""ExampleDataLoader class for loading example data."""
 
@@ -801,18 +802,58 @@ class ParquetConverter:
 		return _fix_source_csv_path(source_path)
 
 	def _create_table_schema(self, df: pd.DataFrame | dd.DataFrame) -> pa.Schema:
-		""" Create a PyArrow schema for a table based on column types. """
+		"""
+		Create a PyArrow schema for a table, inferring types for unspecified columns.
+		It prioritizes manually defined types from COLUMN_TYPES and DATETIME_COLUMNS.
+		"""
+		# # For Dask, use the metadata for schema inference; for pandas, a small sample is enough
+		# meta_df = df._meta if isinstance(df, dd.DataFrame) else df.head(1)
 
-		column_names = df.columns.tolist()
+		# # Infer a base schema from the DataFrame's structure to include all columns
+		# try:
+		# 	base_schema = pa.Schema.from_pandas(meta_df, preserve_index=False)
+		# except Exception:
+		# 	# Fallback for complex types that might cause issues with from_pandas
+		# 	base_schema = pa.Table.from_pandas(meta_df, preserve_index=False).schema
 
-		dtypes, parse_dates = DataLoader._get_column_dtype(columns_list=column_names)
+		# # Get custom types from configurations
+		# custom_dtypes, parse_dates = DataLoader._get_column_dtype(columns_list=df.columns.tolist())
 
-		# Create fields
-		fields = [pa.field(col, pyarrow_dtypes_map[dtype]) for col, dtype in dtypes.items()]
+		# # Create a dictionary for quick lookup of custom pyarrow types
+		# custom_pyarrow_types = {col: pyarrow_dtypes_map[dtype] for col, dtype in custom_dtypes.items()}
+		# custom_pyarrow_types.update({col: pa.timestamp('ns') for col in parse_dates})
 
-		fields += [pa.field(col, pa.timestamp('ns')) for col in parse_dates]
+		# # Rebuild the schema, replacing inferred types with our custom ones where specified
+		# fields = []
+		# for field in base_schema:
+		# 	if field.name in custom_pyarrow_types:
+		# 		# Use the custom type if available
+		# 		fields.append(pa.field(field.name, custom_pyarrow_types[field.name]))
+		# 	else:
+		# 		# Otherwise, use the automatically inferred type
+		# 		fields.append(field)
 
-		# Create and return schema
+
+		# Get all columns from the DataFrame
+		all_columns = df.columns.tolist()
+		
+		# Get custom types from configurations
+		dtypes, parse_dates = DataLoader._get_column_dtype(columns_list=all_columns)
+		
+		# Create a dictionary for quick lookup of custom pyarrow types
+		custom_pyarrow_types = {col: pyarrow_dtypes_map[dtype] for col, dtype in dtypes.items()}
+		custom_pyarrow_types.update({col: pa.timestamp('ns') for col in parse_dates})
+		
+		# Create fields for all columns
+		fields = []
+		for col in all_columns:
+			if col in custom_pyarrow_types:
+				# Use the custom type if available
+				fields.append(pa.field(col, custom_pyarrow_types[col]))
+			else:
+				# Default to string type for columns not explicitly defined
+				fields.append(pa.field(col, pa.string()))
+    
 		return pa.schema(fields)
 
 	def save_as_parquet(self, table_name: TableNamesHOSP | TableNamesICU, df: Optional[pd.DataFrame | dd.DataFrame] = None, target_parquet_path: Optional[Path] = None, use_dask: bool = True) -> None:
@@ -832,7 +873,7 @@ class ParquetConverter:
 
 			# Load the CSV file
 			if df is None:
-				df = self.data_loader.load_csv_table_with_correct_column_datatypes(file_path=csv_file_path, use_dask=use_dask)
+				df = self.data_loader._load_unfiltered_csv_table(file_path=csv_file_path, use_dask=use_dask)
 
 			# Get parquet directory
 			if target_parquet_path is None:
@@ -848,6 +889,8 @@ class ParquetConverter:
 			# For pandas DataFrame
 			table = pa.Table.from_pandas(df, schema=schema)
 			pq.write_table(table, target_parquet_path, compression='snappy')
+
+
 
 	def save_all_tables_as_parquet(self, tables_list: Optional[List[TableNamesHOSP | TableNamesICU]] = None) -> None:
 		"""

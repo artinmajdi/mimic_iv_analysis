@@ -5,13 +5,8 @@ This module provides functionality for filtering MIMIC-IV data based on
 inclusion and exclusion criteria from the MIMIC-IV dataset tables.
 """
 
-# Standard library imports
-from typing import Dict, List, Any, Optional, Tuple, Set
-
-# Data processing imports
 import pandas as pd
 import dask.dataframe as dd
-import numpy as np
 
 from mimic_iv_analysis import logger
 from mimic_iv_analysis.configurations.params import TableNamesHOSP, TableNamesICU

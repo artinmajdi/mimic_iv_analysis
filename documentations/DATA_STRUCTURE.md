@@ -1,7 +1,8 @@
 # MIMIC-IV Database Structure (v3.1)
 
 ## Directory Structure
-```
+
+```bash
 mimic-iv-3.1/
 ├── hosp/                   # Hospital-wide data
 │   ├── admissions.csv(.gz)         # Patient hospital admissions
@@ -44,6 +45,7 @@ mimic-iv-3.1/
 ## Overview
 
 MIMIC-IV is organized into two main components:
+
 1. Hospital (hosp)
 2. Intensive Care Unit (icu)
 
@@ -52,7 +54,9 @@ MIMIC-IV is organized into two main components:
 ### Core Tables
 
 #### admissions.csv
+
 Patient hospital admissions information
+
 - `subject_id`: Unique patient identifier
 - `hadm_id`: Unique hospital admission identifier
 - `admittime`: Admission time
@@ -71,7 +75,9 @@ Patient hospital admissions information
 - `hospital_expire_flag`: Death flag
 
 #### patients.csv
+
 Patient demographic data
+
 - `subject_id`: Unique patient identifier
 - `gender`: Patient's gender
 - `anchor_age`: Patient's age
@@ -81,19 +87,19 @@ Patient demographic data
 
 ### Clinical Event Tables
 
-- `labevents.csv` (17GB): Laboratory measurements
-- `microbiologyevents.csv` (867MB): Microbiology test results
-- `pharmacy.csv` (3.7GB): Pharmacy orders
-- `prescriptions.csv` (3.2GB): Medication prescriptions
-- `procedures_icd.csv` (33MB): Patient procedures
-- `diagnoses_icd.csv` (173MB): Patient diagnoses
+- `labevents.csv` (17 GB): Laboratory measurements
+- `microbiologyevents.csv` (867 MB): Microbiology test results
+- `pharmacy.csv` (3.7 GB): Pharmacy orders
+- `prescriptions.csv` (3.2 GB): Medication prescriptions
+- `procedures_icd.csv` (33 MB): Patient procedures
+- `diagnoses_icd.csv` (173 MB): Patient diagnoses
 
 ### Medication-related Tables
 
-- `emar.csv` (5.8GB): Electronic medication administration records
-- `emar_detail.csv` (8.1GB): Detailed medication administration data
-- `poe.csv` (4.8GB): Provider order entries
-- `poe_detail.csv` (405MB): Detailed order information
+- `emar.csv` (5.8 GB): Electronic medication administration records
+- `emar_detail.csv` (8.1 GB): Detailed medication administration data
+- `poe.csv` (4.8 GB): Provider order entries
+- `poe_detail.csv` (405 MB): Detailed order information
 
 ### Dictionary Tables
 
@@ -104,19 +110,21 @@ Patient demographic data
 
 ### Other Tables
 
-- `hcpcsevents.csv` (11MB): Healthcare Common Procedure Coding System events
-- `drgcodes.csv` (52MB): Diagnosis-related group codes
-- `services.csv` (25MB): Hospital services
-- `transfers.csv` (196MB): Patient transfers
-- `provider.csv` (289KB): Provider information
-- `omr.csv` (306MB): Order monitoring results
+- `hcpcsevents.csv` (11 MB): Healthcare Common Procedure Coding System events
+- `drgcodes.csv` (52 MB): Diagnosis-related group codes
+- `services.csv` (25 MB): Hospital services
+- `transfers.csv` (196 MB): Patient transfers
+- `provider.csv` (289 KB): Provider information
+- `omr.csv` (306 MB): Order monitoring results
 
 ## Intensive Care Unit (icu) Module
 
 ### Core Tables
 
 #### chartevents.csv
+
 Patient charting data (vital signs, etc.)
+
 - `subject_id`: Unique patient identifier
 - `hadm_id`: Hospital admission identifier
 - `stay_id`: ICU stay identifier
@@ -131,24 +139,25 @@ Patient charting data (vital signs, etc.)
 
 ### Event Tables
 
-- `datetimeevents.csv.gz` (61MB): Date/time-based events
-- `inputevents.csv.gz` (383MB): Patient intake data
-- `outputevents.csv.gz` (47MB): Patient output data
-- `procedureevents.csv.gz` (23MB): ICU procedures
-- `ingredientevents.csv.gz` (297MB): Detailed medication ingredients
+- `datetimeevents.csv.gz` (61 MB): Date/time-based events
+- `inputevents.csv.gz` (383 MB): Patient intake data
+- `outputevents.csv.gz` (47 MB): Patient output data
+- `procedureevents.csv.gz` (23 MB): ICU procedures
+- `ingredientevents.csv.gz` (297 MB): Detailed medication ingredients
 
 ### Dictionary and Reference Tables
 
-- `d_items.csv.gz` (57KB): Dictionary of ICU items
-- `icustays.csv.gz` (3.2MB): ICU stay information
-- `caregiver.csv.gz` (41KB): Caregiver information
+- `d_items.csv.gz` (57 KB): Dictionary of ICU items
+- `icustays.csv.gz` (3.2 MB): ICU stay information
+- `caregiver.csv.gz` (41 KB): Caregiver information
 
 ## File Sizes and Formats
 
-Most files are available in both CSV and compressed CSV.GZ format. The compressed versions are significantly smaller but require decompression before use. For example:
-- `labevents.csv` (17GB) → `labevents.csv.gz` (2.4GB)
-- `emar_detail.csv` (8.1GB) → `emar_detail.csv.gz` (713MB)
-- `poe.csv` (4.8GB) → `poe.csv.gz` (636MB)
+Most files are available in both csv and compressed csv.gz format. The compressed versions are significantly smaller but require decompression before use. For example:
+
+- `labevents.csv` (17 GB) → `labevents.csv.gz` (2.4 GB)
+- `emar_detail.csv` (8.1 GB) → `emar_detail.csv.gz` (713 MB)
+- `poe.csv` (4.8 GB) → `poe.csv.gz` (636 MB)
 
 ## Notes
 

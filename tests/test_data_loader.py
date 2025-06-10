@@ -194,22 +194,22 @@ class TestDataLoader:
         assert path.name == 'icustays.csv'
         assert 'icu' in str(path)
 
-    def test_load_csv_table_with_correct_column_datatypes(self, mock_mimic_dir):
+    def test__load_unfiltered_csv_table(self, mock_mimic_dir):
         """Test loading CSV with correct datatypes."""
         loader = DataLoader(mimic_path=mock_mimic_dir)
         file_path = mock_mimic_dir / "hosp" / "patients.csv"
 
         # Test with use_dask=True (default)
-        result = loader.load_csv_table_with_correct_column_datatypes(file_path)
+        result = loader._load_unfiltered_csv_table(file_path)
         assert isinstance(result, dd.DataFrame)
 
         # Test with use_dask=False
-        result = loader.load_csv_table_with_correct_column_datatypes(file_path, use_dask=False)
+        result = loader._load_unfiltered_csv_table(file_path, use_dask=False)
         assert isinstance(result, pd.DataFrame)
 
         # Test file not found
         with pytest.raises(FileNotFoundError):
-            loader.load_csv_table_with_correct_column_datatypes(Path("/nonexistent/file.csv"))
+            loader._load_unfiltered_csv_table(Path("/nonexistent/file.csv"))
 
         # Test non-CSV file
         non_csv = mock_mimic_dir / "not_a_csv.txt"
@@ -217,7 +217,7 @@ class TestDataLoader:
             f.write("not a csv")
 
         # Using logger.warning instead of warnings.warn
-        result = loader.load_csv_table_with_correct_column_datatypes(non_csv)
+        result = loader._load_unfiltered_csv_table(non_csv)
         assert result.empty
 
     @patch(FILTERING_PATH)
@@ -373,7 +373,7 @@ class TestDataLoader:
 
         # Mock _get_file_path to return an actual file
         with patch.object(loader, '_get_file_path') as mock_get_path, \
-            patch.object(loader, 'load_csv_table_with_correct_column_datatypes') as mock_load_csv:
+            patch.object(loader, '_load_unfiltered_csv_table') as mock_load_csv:
 
             # Setup mock for file path
             file_path = mock_mimic_dir / "hosp" / "patients.csv"
@@ -651,7 +651,7 @@ class TestParquetConverter:
         # Mock the to_parquet method
         with patch.object(dd.DataFrame, 'to_parquet') as mock_to_parquet, \
              patch.object(converter, '_get_csv_file_path') as mock_get_path, \
-             patch.object(data_loader, 'load_csv_table_with_correct_column_datatypes') as mock_load:
+             patch.object(data_loader, '_load_unfiltered_csv_table') as mock_load:
 
             # Set up mocks
             mock_get_path.return_value = (mock_mimic_dir / "hosp" / "patients.csv", ".csv")

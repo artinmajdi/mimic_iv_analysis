@@ -51,6 +51,50 @@ class MIMICDashboardApp:
 		self.init_session_state()
 		logger.info("MIMICDashboardApp initialized.")
 
+	@property
+	def _source_csv_exists(self) -> bool:
+		"""Check if a source CSV/GZ file exists for the selected table."""
+		if not st.session_state.get('selected_table') or st.session_state.selected_table == "merged_table":
+			return False
+		try:
+			table_name_enum = convert_table_names_to_enum_class(
+				name=st.session_state.selected_table,
+				module=st.session_state.selected_module
+			)
+			# This method will raise an error if the source is not found
+			self.parquet_converter._get_csv_file_path(table_name=table_name_enum)
+			return True
+		except (ValueError, IndexError): # _get_csv_file_path might cause IndexError or ValueError
+			return False
+
+	@property
+	def is_selected_table_parquet(self) -> bool:
+		"""Check if the selected table is in Parquet format."""
+		if not st.session_state.get('selected_table') or st.session_state.selected_table == "merged_table":
+			return False
+
+		file_path = st.session_state.file_paths.get((st.session_state.selected_module, st.session_state.selected_table))
+		if file_path and isinstance(file_path, Path) and file_path.suffix == '.parquet':
+			return True
+		return False
+
+	def _rescan_and_update_state(self):
+		"""Rescans the directory and updates session state with table info."""
+		logger.info("Re-scanning directory and updating state...")
+		self.data_handler.scan_mimic_directory()
+		dataset_info_df = self.data_handler.tables_info_df
+		dataset_info = self.data_handler.tables_info_dict
+
+		if dataset_info_df is not None and not dataset_info_df.empty:
+			st.session_state.available_tables    = dataset_info['available_tables']
+			st.session_state.file_paths          = dataset_info['file_paths']
+			st.session_state.file_sizes          = dataset_info['file_sizes']
+			st.session_state.table_display_names = dataset_info['table_display_names']
+			return True
+		else:
+			st.session_state.available_tables = {} # Clear previous results
+			return False
+
 	@staticmethod
 	def init_session_state():
 		""" Function to initialize session state """
@@ -222,29 +266,17 @@ class MIMICDashboardApp:
 							self.data_handler = DataLoader(mimic_path=Path(mimic_path))
 							self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
 
-						# Scan the directory structure using the data handler
-						self.data_handler.scan_mimic_directory()
-
-						# Get the results from the data handler's attributes
-						dataset_info_df = self.data_handler.tables_info_df
-						dataset_info = self.data_handler.tables_info_dict
-
-						if dataset_info_df is not None and not dataset_info_df.empty:
-							st.session_state.available_tables    = dataset_info['available_tables']
-							st.session_state.file_paths          = dataset_info['file_paths']
-							st.session_state.file_sizes          = dataset_info['file_sizes']
-							st.session_state.table_display_names = dataset_info['table_display_names']
-
-							st.sidebar.success(f"Found {sum(len(tables) for tables in dataset_info['available_tables'].values())} tables in {len(dataset_info['available_tables'])} modules")
+						if self._rescan_and_update_state():
+							st.sidebar.success(f"Found {sum(len(tables) for tables in st.session_state.available_tables.values())} tables in {len(st.session_state.available_tables)} modules")
 
 							# Reset selections if scan is successful
-							st.session_state.selected_module = list(dataset_info['available_tables'].keys())[0] if dataset_info['available_tables'] else None
+							if st.session_state.available_tables:
+								st.session_state.selected_module = list(st.session_state.available_tables.keys())[0]
 
 							st.session_state.selected_table = None # Force user to select table after scan
 
 						else:
 							st.sidebar.error("No MIMIC-IV tables (.csv, .csv.gz, .parquet) found in the specified path or its subdirectories (hosp, icu).")
-							st.session_state.available_tables = {} # Clear previous results
 
 					except AttributeError:
 						st.sidebar.error("Data Handler is not initialized or does not have a 'scan_mimic_directory' method.")
@@ -400,22 +432,61 @@ class MIMICDashboardApp:
 				# Select Table
 				selected_display = _select_table(module=module)
 
-				# Load Table(s)
 				st.sidebar.markdown("---")
 
-				# Sampling options
-				st.sidebar.checkbox(
-					label   = "Load Full Table", 
-					value   = st.session_state.get('load_full', False) if not self.has_no_subject_id_column else True, 
-					key     = "load_full", 
-					disabled=self.has_no_subject_id_column
-				)
+				is_parquet = self.is_selected_table_parquet
+				source_exists = self._source_csv_exists
 
-				if not st.session_state.load_full:
-					_select_sampling_parameters()
+				# --- Conversion/Update Button Logic ---
+				button_text = None
+				if st.session_state.selected_table and st.session_state.selected_table != "merged_table" and source_exists:
+					if not is_parquet:
+						st.sidebar.warning("This table is not in Parquet format. Convert it for better performance.")
+						button_text = "Convert to Parquet"
+					else:
+						button_text = "Update Parquet from CSV/GZ"
 
-				# Dask option
-				st.session_state.use_dask = st.sidebar.checkbox("Use Dask", value=st.session_state.get('use_dask', True), help="Enable Dask for distributed computing and memory-efficient processing")
+				if button_text:
+					if st.sidebar.button(button_text, key="convert_or_update_parquet"):
+						spinner_text = f"Saving {st.session_state.selected_table} as Parquet... This may take a moment."
+						with st.spinner(spinner_text):
+							try:
+								table_name_enum = convert_table_names_to_enum_class(
+									name=st.session_state.selected_table,
+									module=st.session_state.selected_module
+								)
+								self.parquet_converter.save_as_parquet(table_name=table_name_enum)
+								st.sidebar.success(f"{button_text.split(' ')[0]} successful!") # "Convert successful!" or "Update successful!"
+
+								# Rescan and refresh the app to reflect changes
+								self._rescan_and_update_state()
+								# st.experimental_rerun()
+							except Exception as e:
+								st.sidebar.error(f"Action failed: {e}")
+								logger.exception("Parquet conversion/update failed")
+				
+				# --- Data Loading UI Logic ---
+				if st.session_state.selected_table and not is_parquet and st.session_state.selected_table != "merged_table":
+					# Disable loading options since conversion is required
+					st.sidebar.markdown("---")
+					st.sidebar.caption("Loading is disabled until the table is converted to Parquet.")
+					st.sidebar.checkbox("Load Full Table", value=True, disabled=True, key="load_full_disabled")
+					st.sidebar.number_input("Number of Subjects to Load", value=1, disabled=True, key="num_subjects_disabled")
+					st.sidebar.checkbox("Use Dask", value=True, disabled=True, key="use_dask_disabled")
+				else: # This handles merged_table and existing parquet files
+					# Sampling options
+					st.sidebar.checkbox(
+						label   = "Load Full Table",
+						value   = st.session_state.get('load_full', False) if not self.has_no_subject_id_column else True,
+						key     = "load_full",
+						disabled=self.has_no_subject_id_column
+					)
+
+					if not st.session_state.load_full:
+						_select_sampling_parameters()
+
+					# Dask option
+					st.session_state.use_dask = st.sidebar.checkbox("Use Dask", value=st.session_state.get('use_dask', True), help="Enable Dask for distributed computing and memory-efficient processing")
 
 				return selected_display
 
@@ -429,8 +500,9 @@ class MIMICDashboardApp:
 		# Module and table selection
 		if st.session_state.available_tables:
 			selected_display = _select_table_module()
-			self._load_table(selected_display=selected_display)
-
+			# Only show load button if table is Parquet or it is the merged view
+			if st.session_state.get('selected_table') == 'merged_table' or self.is_selected_table_parquet:
+				self._load_table(selected_display=selected_display)
 		else:
 			st.sidebar.info("Scan a MIMIC-IV directory to select and load tables.")
 
@@ -551,7 +623,8 @@ class MIMICDashboardApp:
 					table_name      = table_name,
 					partial_loading = not st.session_state.load_full,
 					subject_ids     = target_subject_ids,
-					use_dask        = st.session_state.use_dask
+					use_dask        = st.session_state.use_dask,
+					apply_filtering = True
 				)
 
 				total_rows = _get_total_rows(df)
