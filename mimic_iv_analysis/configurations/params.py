@@ -212,6 +212,7 @@ COLUMN_TYPES = {
 
 # List of datetime columns for parsing
 DATETIME_COLUMNS = [
+    'ordertime',
     'admittime',
     'dischtime',
     'deathtime',

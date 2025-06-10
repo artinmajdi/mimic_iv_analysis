@@ -193,7 +193,14 @@ class FeatureEngineerUtils:
 		return sequences
 
 	@staticmethod
-	def create_order_timing_features(df: Union[pd.DataFrame, dd.DataFrame], patient_id_col: str, order_col: str, order_time_col: str, admission_time_col: str = None, discharge_time_col: str = None, use_dask: bool = False) -> pd.DataFrame:
+	def create_order_timing_features(
+				df                : Union[pd.DataFrame, dd.DataFrame],
+				patient_id_col    : str,
+				order_col         : str,
+				order_time_col    : str,
+				admission_time_col: str = None,
+				discharge_time_col: str = None,
+				use_dask          : bool = False) -> pd.DataFrame    : 
 		"""
 		Creates features related to order timing.
 
@@ -233,6 +240,7 @@ class FeatureEngineerUtils:
 		for col in time_cols:
 			if col in df.columns and df[col].dtype != 'datetime64[ns]':
 				try:
+					df2=df[col].compute()
 					df[col] = pd.to_datetime(df[col])
 				except:
 					raise ValueError(f"Could not convert {col} to datetime format")
@@ -343,46 +351,48 @@ class FeatureEngineerUtils:
 	@staticmethod
 	def get_order_type_distributions(df: pd.DataFrame, patient_id_col: str='subject_id', order_col: str='order_type') -> Tuple[pd.DataFrame, pd.DataFrame]:
 		"""
-		Calculate order type distributions overall and by patient.
+		Calculates the distribution of order types.
 
 		Args:
-			df: DataFrame with order data
-			patient_id_col: Column containing patient IDs
-			order_col: Column containing order types
+			df: DataFrame with patient data.
+			patient_id_col: Column name for patient ID.
+			order_col: Column name for the order type.
 
 		Returns:
-			Tuple of (overall distribution, patient-level distribution)
+			A tuple containing:
+				- Overall distribution of order types.
+				- Distribution of order types per patient.
 		"""
-		# Validate columns exist
-		if not all(col in df.columns for col in [patient_id_col, order_col]):
-			missing = [col for col in [patient_id_col, order_col] if col not in df.columns]
-			raise ValueError(f"Columns {missing} not found in DataFrame")
-
 		# Calculate overall distribution
-		overall_dist = df[order_col].value_counts(normalize=True).reset_index()
-		overall_dist.columns = [order_col, 'frequency']
+		if isinstance(df, dd.DataFrame):
+			overall_dist = df[order_col].value_counts(normalize=True).compute()
+		else:
+			overall_dist = df[order_col].value_counts(normalize=True)
 
 		# Calculate patient-level distribution
-		patient_dists = []
+		if isinstance(df, dd.DataFrame):
+      
+			# Dask-compatible way to get patient-level distributions
+			def calculate_patient_dist_df(patient_data):
+				"""Calculates value counts and returns a DataFrame."""
+				return patient_data[order_col].value_counts(normalize=True).to_frame().reset_index()
 
-		for patient_id, patient_data in df.groupby(patient_id_col):
-			# Get this patient's distribution
-			patient_dist = patient_data[order_col].value_counts(normalize=True)
+			# Define the output metadata for the apply function
+			meta = pd.DataFrame({order_col: pd.Series([], dtype='object'), 'proportion': pd.Series([], dtype='float64')})
 
-			# Convert to DataFrame and add patient ID
-			patient_dist_df = patient_dist.reset_index()
-			patient_dist_df.columns = [order_col, 'frequency']
-			patient_dist_df['patient_id'] = patient_id
+			# Apply the function with the specified metadata
+			patient_dist_dd = df.groupby(patient_id_col).apply(calculate_patient_dist_df, meta=meta)
 
-			patient_dists.append(patient_dist_df)
+			# Compute the result
+			patient_dist = patient_dist_dd.compute()
 
-		# Combine all patient distributions
-		if patient_dists:
-			patient_level_dist = pd.concat(patient_dists, ignore_index=True)
+			patient_dist = patient_dist.reset_index(level=1, drop=True).pivot(columns='order_type', values='proportion').fillna(0)
+
 		else:
-			patient_level_dist = pd.DataFrame(columns=[order_col, 'frequency', 'patient_id'])
+			# Pandas-native way
+			patient_dist = df.groupby(patient_id_col)[order_col].value_counts(normalize=True).unstack(fill_value=0)
 
-		return overall_dist, patient_level_dist
+		return overall_dist, patient_dist
 
 	@staticmethod
 	def calculate_order_transition_matrix(sequences: Dict[Any, List[str]], top_n: int = 20) -> pd.DataFrame:

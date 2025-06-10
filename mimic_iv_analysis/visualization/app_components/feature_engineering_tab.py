@@ -18,6 +18,7 @@ import streamlit as st
 
 # Local application imports
 from mimic_iv_analysis.core.feature_engineering import FeatureEngineerUtils
+from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtils
 
 
 class FeatureEngineeringTab:
@@ -253,18 +254,13 @@ class FeatureEngineeringTab:
 			# Show sample sequences
 			st.markdown("<h4>Sample Order Sequences</h4>", unsafe_allow_html=True)
 
-			# Get a few sample patients
-			sample_patients = list(st.session_state.order_sequences.keys())[:5]
+			patient_id = st.selectbox(label="Select Patient ID", options=st.session_state.order_sequences.keys(), index=0, key="seq_patient_id_col2")
 
-			if sample_patients:
-				for patient in sample_patients:
-					sequence = st.session_state.order_sequences[patient]
-					sequence_str = " → ".join([str(order) for order in sequence])
-
-					st.markdown(f"<strong>Patient {patient}:</strong> {sequence_str}", unsafe_allow_html=True)
-					st.markdown("<hr>", unsafe_allow_html=True)
-			else:
-				st.info("No sequences generated to display samples.")
+			sequence = st.session_state.order_sequences[patient_id]
+			sequence_str = " → ".join([str(order) for order in sequence])
+	
+			st.markdown(f"<strong>Patient {patient_id}:</strong> {sequence_str}", unsafe_allow_html=True)
+			st.markdown("<hr>", unsafe_allow_html=True)
 
 
 			# Transition matrix visualization
@@ -290,7 +286,6 @@ class FeatureEngineeringTab:
 			self._display_export_options(data=st.session_state.order_sequences, feature_type='temporal_order_sequences')
 
 	def _order_type_distributions(self):
-
 
 		# Get available columns
 		all_columns = st.session_state.df.columns.tolist()
@@ -323,107 +318,55 @@ class FeatureEngineeringTab:
 		if st.button("Analyze Order Distributions"):
 			with st.spinner("Analyzing order type distributions..."):
 				overall_dist, patient_dist = FeatureEngineerUtils.get_order_type_distributions( df=st.session_state.df, patient_id_col=dist_patient_id_col, order_col=dist_order_col)
-				st.session_state.order_dist = overall_dist
+				st.session_state.order_dist         = overall_dist
 				st.session_state.patient_order_dist = patient_dist
 				st.success("Order distributions analyzed.")
 
 		# Display results if available
 		if 'order_dist' in st.session_state and st.session_state.order_dist is not None:
-			# Show overall distribution
+
 			st.markdown("<h4>Overall Order Type Distribution</h4>", unsafe_allow_html=True)
-			try:
-				# Create pie chart for overall distribution
-				top_n_orders = 15  # Show top 15 for pie chart
-				if not st.session_state.order_dist.empty:
-					top_orders = st.session_state.order_dist.head(top_n_orders)
+			
+			# Create pie chart for overall distribution
+			top_n_orders = 15  # Show top 15 for pie chart
+			if not st.session_state.order_dist.empty:
+				top_orders = st.session_state.order_dist.head(top_n_orders)
 
-					# Create "Other" category for remaining orders
-					if len(st.session_state.order_dist) > top_n_orders:
-						others_sum = st.session_state.order_dist.iloc[top_n_orders:]['frequency'].sum()
-						other_row = pd.DataFrame({ dist_order_col: ['Other'], 'frequency': [others_sum] })
-						pie_data = pd.concat([top_orders, other_row], ignore_index=True)
-					else:
-						pie_data = top_orders
+				fig_pie = px.pie(
+					data_frame = top_orders.to_frame('frequency'),
+					values     = 'frequency',
+					title      = f"Overall Distribution of {dist_order_col} (Top {top_n_orders})"
+				)
+				st.plotly_chart(fig_pie, use_container_width=True)
 
-					fig_pie = px.pie(
-						pie_data,
-						values='frequency',
-						names=dist_order_col,
-						title=f"Overall Distribution of {dist_order_col} (Top {top_n_orders})"
-					)
-					st.plotly_chart(fig_pie, use_container_width=True)
-
-					# Show bar chart of top 20
-					top_20 = st.session_state.order_dist.head(20)
-					fig_bar = px.bar(
-						top_20,
-						x=dist_order_col,
-						y='frequency',
-						title=f"Top 20 {dist_order_col} by Frequency"
-					)
-					st.plotly_chart(fig_bar, use_container_width=True)
-				else:
-					st.info("Overall distribution data is empty.")
-
-			except Exception as e:
-				st.error(f"Error visualizing overall distribution: {e}")
-
-
-			# Patient-level distribution (sample)
-			if 'patient_order_dist' in st.session_state and st.session_state.patient_order_dist is not None and not st.session_state.patient_order_dist.empty:
-				st.markdown("<h4>Patient-Level Order Type Distribution (Sample)</h4>", unsafe_allow_html=True)
-				try:
-					# Get unique patients
-					patients = st.session_state.patient_order_dist[dist_patient_id_col].unique() # Use selected patient ID col
-
-					# Sample patients for visualization if there are too many
-					num_samples = min(len(patients), 5)
-					if num_samples > 0:
-						sample_patients = np.random.choice(patients, num_samples, replace=False)
-
-						# Create subplots for each patient
-						fig_patient = make_subplots(
-							rows=len(sample_patients),
-							cols=1,
-							subplot_titles=[f"Patient {patient}" for patient in sample_patients]
-						)
-
-						# Add traces for each patient
-						for i, patient in enumerate(sample_patients):
-							patient_data = st.session_state.patient_order_dist[
-								st.session_state.patient_order_dist[dist_patient_id_col] == patient
-							].head(10)  # Top 10 orders for this patient
-
-							fig_patient.add_trace(
-								go.Bar(
-									x=patient_data[dist_order_col],
-									y=patient_data['frequency'],
-									name=f"Patient {patient}"
-								),
-								row=i+1, col=1
-							)
-
-						fig_patient.update_layout(height=200*len(sample_patients), showlegend=False)
-						st.plotly_chart(fig_patient, use_container_width=True)
-					else:
-						st.info("No patient-level distribution data available.")
-				except Exception as e:
-					st.error(f"Error visualizing patient-level distribution: {e}")
+				fig_bar = px.bar( data_frame = top_orders.to_frame('frequency'), title = f"Top 20 {dist_order_col} by Frequency" )
+				st.plotly_chart(fig_bar, use_container_width=True)
 			else:
-				st.info("Patient-level distribution data not generated or is empty.")
+				st.info("Overall distribution data is empty.")
 
-
-			# Save options for both distributions
 			self._display_export_options(data=st.session_state.order_dist, feature_type='overall_order_distribution')
+   
+   
+			# Patient-level distribution
+			if 'patient_order_dist' in st.session_state and st.session_state.patient_order_dist is not None and not st.session_state.patient_order_dist.empty:
+				st.markdown("<h4>Patient-Level Order Type Distribution</h4>", unsafe_allow_html=True)
 
-			if 'patient_order_dist' in st.session_state and st.session_state.patient_order_dist is not None:
+				patients_df = st.session_state.patient_order_dist
+
+				subject_id = st.selectbox(label="Select Patient ID", options=patients_df.index, index=0)
+
+				patient_data = patients_df.loc[subject_id].to_frame('proportion')
+
+				fig_patient = px.bar(data_frame=patient_data, title=f"Patient {subject_id} Order Type Distribution", x=patient_data.index, y='proportion')
+				st.plotly_chart(fig_patient, use_container_width=True)
+
+
 				self._display_export_options(data=st.session_state.patient_order_dist, feature_type='patient_order_distribution')
 
 	def _order_timing_analysis(self):
 
 		# Get available columns
 		all_columns = st.session_state.df.columns.tolist()
-
 
 		st.markdown("<h3>Analyze Order Timing</h3>", unsafe_allow_html=True)
 		st.markdown("""
@@ -466,48 +409,39 @@ class FeatureEngineeringTab:
 		with col2:
 			admission_time_col = st.selectbox(
 				label   = "Select Admission Time Column (Optional)",
-				options = ["None"] + all_columns,
+				options = [None] + all_columns,
 				index   = all_columns.index('admittime') if 'admittime' in all_columns else 0,
 				key     = "admission_time_col",
 				help    = "Column containing admission timestamps (for relative timing features)",
 			)
-			admission_time_col = None if admission_time_col == "None" else admission_time_col
+			# admission_time_col = None if admission_time_col == "None" else admission_time_col
 
 
 		# Optional discharge time column - try to find 'dischtime' or similar
 		discharge_time_col = st.selectbox(
 			label   = "Select Discharge Time Column (Optional)",
-			options = ["None"] + all_columns,
+			options = [None] + all_columns,
 			index   = all_columns.index('dischtime') if 'dischtime' in all_columns else 0,
 			key     = "discharge_time_col",
 			help    = "Column containing discharge timestamps (for relative timing features)",
 		)
-		discharge_time_col = None if discharge_time_col == "None" else discharge_time_col
+		# discharge_time_col = None if discharge_time_col == "None" else discharge_time_col
 
 
 		# Generate button
 		if st.button("Generate Timing Features"):
-			try:
-				with st.spinner("Generating order timing features..."):
-					timing_features = FeatureEngineerUtils.create_order_timing_features(
-						df                    = st.session_state.df,
-						patient_id_col        = timing_patient_id_col,
-						order_col             = timing_order_col,
-						order_time_col        = order_time_col,
-						admission_time_col    = admission_time_col,
-						discharge_time_col    = discharge_time_col
-					)
-					st.session_state.timing_features = timing_features
-					st.success("Order timing features generated.")
-			except AttributeError:
-				st.error("Feature Engineer is not properly initialized or does not have a 'create_order_timing_features' method.")
-			except KeyError as e:
-				st.error(f"Column '{e}' not found in the DataFrame. Please check your selections.")
-			except ValueError as e:
-				st.error(f"Data type error: {e}. Ensure time columns are in a recognizable format.")
-			except Exception as e:
-				st.error(f"Error generating timing features: {str(e)}")
-				logging.exception("Error in Generate Timing Features")
+			with st.spinner("Generating order timing features..."):
+				timing_features = FeatureEngineerUtils.create_order_timing_features(
+					df                 = st.session_state.df,
+					patient_id_col     = timing_patient_id_col,
+					order_col          = timing_order_col,
+					order_time_col     = order_time_col,
+					admission_time_col = admission_time_col,
+					discharge_time_col = discharge_time_col
+				)
+				st.session_state.timing_features = timing_features
+				st.success("Order timing features generated.")
+
 
 
 		# Display results if available
