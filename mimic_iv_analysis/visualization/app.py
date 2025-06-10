@@ -23,7 +23,8 @@ from mimic_iv_analysis.visualization.app_components import FilteringTab, Feature
 
 from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtils
 
-# TODO: when a table is selected and doesn't have parquet file, it should ask user if they want to convert it to parquet. and if so, do it.
+
+# TODO: run convert to parquet and load them, for all tables and fix the errors.
 
 class MIMICDashboardApp:
 
