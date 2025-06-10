@@ -132,13 +132,14 @@ COLUMN_TYPES = {
 
     # ID columns
     'subject_id'            : 'int64',
-    'hadm_id'               : 'int64',
+    # 'hadm_id'               : 'int64',
     'stay_id'               : 'int64',
     'icustay_id'            : 'int64',
     'itemid'                : 'int64',
     'labevent_id'           : 'int64',
     'specimen_id'           : 'int64',
     'poe_seq'               : 'int64',
+    'anchor_age'            : 'string',
     'pharmacy_id'           : 'string',
     'poe_id'                : 'string',
     'order_provider_id'     : 'string',

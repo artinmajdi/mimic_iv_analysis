@@ -250,6 +250,12 @@ class DataLoader:
 		dtypes      = {col: dtype for col, dtype in COLUMN_TYPES.items() if col in columns_list}
 		parse_dates = [col for col in DATETIME_COLUMNS if col in columns_list]
 
+		# Check if the file being loaded is the transfers table
+		# if file_path is not None and TableNamesHOSP.TRANSFERS.value in file_path.name:
+		# 	# If so, remove hadm_id from the dtypes to avoid type error on load
+		# 	if 'hadm_id' in dtypes:
+		# 		del dtypes['hadm_id']
+
 		return dtypes, parse_dates
 
 	def _load_unfiltered_csv_table(self, file_path: Path, use_dask: bool = True):
@@ -488,6 +494,11 @@ class DataLoader:
 		if apply_filtering:
 			df = Filtering(df=df, table_name=table_name).render()
 			logger.info(f"Applied filters: {_get_n_rows(df)} rows.")
+
+		# Special handling for transfers table to clean hadm_id
+		# if table_name == TableNamesHOSP.TRANSFERS and 'hadm_id' in df.columns:
+		# 	df = df.dropna(subset=['hadm_id'])
+		# 	df['hadm_id'] = df['hadm_id'].astype('int64')
 
 		# Apply partial loading if requested
 		if partial_loading:
@@ -807,52 +818,52 @@ class ParquetConverter:
 		It prioritizes manually defined types from COLUMN_TYPES and DATETIME_COLUMNS.
 		"""
 
-		# # For Dask, use the metadata for schema inference; for pandas, a small sample is enough
-		# meta_df = df._meta if isinstance(df, dd.DataFrame) else df.head(1)
+		# For Dask, use the metadata for schema inference; for pandas, a small sample is enough
+		meta_df = df._meta if isinstance(df, dd.DataFrame) else df.head(1)
 
-		# # Infer a base schema from the DataFrame's structure to include all columns
-		# try:
-		# 	base_schema = pa.Schema.from_pandas(meta_df, preserve_index=False)
-		# except Exception:
-		# 	# Fallback for complex types that might cause issues with from_pandas
-		# 	base_schema = pa.Table.from_pandas(meta_df, preserve_index=False).schema
+		# Infer a base schema from the DataFrame's structure to include all columns
+		try:
+			base_schema = pa.Schema.from_pandas(meta_df, preserve_index=False)
+		except Exception:
+			# Fallback for complex types that might cause issues with from_pandas
+			base_schema = pa.Table.from_pandas(meta_df, preserve_index=False).schema
 
-		# # Get custom types from configurations
-		# custom_dtypes, parse_dates = DataLoader._get_column_dtype(columns_list=df.columns.tolist())
-
-		# # Create a dictionary for quick lookup of custom pyarrow types
-		# custom_pyarrow_types = {col: pyarrow_dtypes_map[dtype] for col, dtype in custom_dtypes.items()}
-		# custom_pyarrow_types.update({col: pa.timestamp('ns') for col in parse_dates})
-
-		# # Rebuild the schema, replacing inferred types with our custom ones where specified
-		# fields = []
-		# for field in base_schema:
-		# 	if field.name in custom_pyarrow_types:
-		# 		# Use the custom type if available
-		# 		fields.append(pa.field(field.name, custom_pyarrow_types[field.name]))
-		# 	else:
-		# 		# Otherwise, use the automatically inferred type
-		# 		fields.append(field)
-
-		# Get all columns from the DataFrame
-		all_columns = df.columns.tolist()
-		
 		# Get custom types from configurations
-		dtypes, parse_dates = DataLoader._get_column_dtype(columns_list=all_columns)
-		
+		custom_dtypes, parse_dates = DataLoader._get_column_dtype(columns_list=df.columns.tolist())
+
 		# Create a dictionary for quick lookup of custom pyarrow types
-		custom_pyarrow_types = {col: pyarrow_dtypes_map[dtype] for col, dtype in dtypes.items()}
+		custom_pyarrow_types = {col: pyarrow_dtypes_map[dtype] for col, dtype in custom_dtypes.items()}
 		custom_pyarrow_types.update({col: pa.timestamp('ns') for col in parse_dates})
-		
-		# Create fields for all columns
+
+		# Rebuild the schema, replacing inferred types with our custom ones where specified
 		fields = []
-		for col in all_columns:
-			if col in custom_pyarrow_types:
+		for field in base_schema:
+			if field.name in custom_pyarrow_types:
 				# Use the custom type if available
-				fields.append(pa.field(col, custom_pyarrow_types[col]))
+				fields.append(pa.field(field.name, custom_pyarrow_types[field.name]))
 			else:
-				# Default to string type for columns not explicitly defined
-				fields.append(pa.field(col, pa.string()))
+				# Otherwise, use the automatically inferred type
+				fields.append(field)
+
+		# # Get all columns from the DataFrame
+		# all_columns = df.columns.tolist()
+		
+		# # Get custom types from configurations
+		# dtypes, parse_dates = DataLoader._get_column_dtype(columns_list=all_columns)
+		
+		# # Create a dictionary for quick lookup of custom pyarrow types
+		# custom_pyarrow_types = {col: pyarrow_dtypes_map[dtype] for col, dtype in dtypes.items()}
+		# custom_pyarrow_types.update({col: pa.timestamp('ns') for col in parse_dates})
+		
+		# # Create fields for all columns
+		# fields = []
+		# for col in all_columns:
+		# 	if col in custom_pyarrow_types:
+		# 		# Use the custom type if available
+		# 		fields.append(pa.field(col, custom_pyarrow_types[col]))
+		# 	else:
+		# 		# Default to string type for columns not explicitly defined
+		# 		fields.append(pa.field(col, pa.string()))
 
 		return pa.schema(fields)
 
@@ -882,11 +893,15 @@ class ParquetConverter:
 		# Create schema
 		schema = self._create_table_schema(df)
 
+		# if table_name == TableNamesHOSP.TRANSFERS:
+		# 	df = df.dropna(subset=['hadm_id'])
+		# 	if 'hadm_id' in df.columns:
+		# 		df['hadm_id'] = df['hadm_id'].astype('int64')
+
 		# Save to parquet
 		if isinstance(df, dd.DataFrame):
 			df.to_parquet(target_parquet_path, schema=schema, engine='pyarrow', compression='snappy')
 		else:
-			# For pandas DataFrame
 			table = pa.Table.from_pandas(df, schema=schema)
 			pq.write_table(table, target_parquet_path, compression='snappy')
 
