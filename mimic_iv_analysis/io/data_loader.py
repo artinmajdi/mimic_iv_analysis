@@ -806,6 +806,7 @@ class ParquetConverter:
 		Create a PyArrow schema for a table, inferring types for unspecified columns.
 		It prioritizes manually defined types from COLUMN_TYPES and DATETIME_COLUMNS.
 		"""
+
 		# # For Dask, use the metadata for schema inference; for pandas, a small sample is enough
 		# meta_df = df._meta if isinstance(df, dd.DataFrame) else df.head(1)
 
@@ -833,7 +834,6 @@ class ParquetConverter:
 		# 		# Otherwise, use the automatically inferred type
 		# 		fields.append(field)
 
-
 		# Get all columns from the DataFrame
 		all_columns = df.columns.tolist()
 		
@@ -853,7 +853,7 @@ class ParquetConverter:
 			else:
 				# Default to string type for columns not explicitly defined
 				fields.append(pa.field(col, pa.string()))
-    
+
 		return pa.schema(fields)
 
 	def save_as_parquet(self, table_name: TableNamesHOSP | TableNamesICU, df: Optional[pd.DataFrame | dd.DataFrame] = None, target_parquet_path: Optional[Path] = None, use_dask: bool = True) -> None:
