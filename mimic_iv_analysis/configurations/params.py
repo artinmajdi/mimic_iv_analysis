@@ -132,7 +132,7 @@ COLUMN_TYPES = {
 
     # ID columns
     'subject_id'            : 'int64',
-    # 'hadm_id'               : 'int64',
+    'hadm_id'               : 'int64',
     'stay_id'               : 'int64',
     'icustay_id'            : 'int64',
     'itemid'                : 'int64',

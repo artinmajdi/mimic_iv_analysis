@@ -17,7 +17,7 @@ import pdb
 from mimic_iv_analysis import logger
 from mimic_iv_analysis.core import FeatureEngineerUtils
 from mimic_iv_analysis.io import DataLoader, ParquetConverter
-from mimic_iv_analysis.configurations import TableNamesHOSP, convert_table_names_to_enum_class, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS
+from mimic_iv_analysis.configurations import TableNamesHOSP, TableNamesICU, convert_table_names_to_enum_class, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS
 
 from mimic_iv_analysis.visualization.app_components import FilteringTab, FeatureEngineeringTab, AnalysisVisualizationTab, ClusteringAnalysisTab
 
@@ -77,6 +77,33 @@ class MIMICDashboardApp:
 		if file_path and isinstance(file_path, Path) and file_path.suffix == '.parquet':
 			return True
 		return False
+
+	def _get_merged_table_components_to_convert(self, force_update: bool = False) -> List[TableNamesHOSP | TableNamesICU]:
+		"""
+		Checks which component tables of the merged table need to be converted to Parquet.
+
+		Args:
+			force_update: If True, returns all component tables for a full update.
+
+		Returns:
+			A list of table enums that need to be converted.
+		"""
+		tables_to_convert = []
+		component_tables = self.data_handler.merged_table_components
+
+		if force_update:
+			return component_tables
+
+		for table_enum in component_tables:
+			try:
+				file_path = self.data_handler._get_file_path(table_name=table_enum)
+				if file_path.suffix != '.parquet':
+					tables_to_convert.append(table_enum)
+			except (ValueError, IndexError):
+				# This can happen if a component table (e.g., transfers) is not present
+				logger.warning(f"Component table {table_enum.value} not found, skipping for conversion check.")
+				continue
+		return tables_to_convert
 
 	def _rescan_and_update_state(self):
 		"""Rescans the directory and updates session state with table info."""
@@ -156,6 +183,63 @@ class MIMICDashboardApp:
 		st.session_state.app_initialized = True # Mark as initialized
 		logger.info("Session state initialized.")
 
+	def _run_parquet_conversion(self, tables_to_process: Optional[List[TableNamesHOSP | TableNamesICU]], process_type: str):
+		"""Generic handler for converting or updating tables to Parquet."""
+		if process_type == 'convert':
+			verb_ing = "Converting"
+			verb_ed = "converted"
+		else:  # update
+			verb_ing = "Updating"
+			verb_ed = "updated"
+
+		if not tables_to_process:
+			st.sidebar.warning("No tables to process.")
+			return
+
+		progress_bar = st.sidebar.progress(0)
+		status_text = st.sidebar.empty()
+		total_tables = len(tables_to_process)
+
+		try:
+			for i, table_enum in enumerate(tables_to_process):
+				progress = (i + 1) / total_tables
+				status_text.info(f"{verb_ing} table: **{table_enum.value}** ({i+1} of {total_tables})...")
+				self.parquet_converter.save_as_parquet(table_name=table_enum)
+				progress_bar.progress(progress)
+
+			status_text.empty()
+			progress_bar.empty()
+
+			if self._rescan_and_update_state():
+				st.sidebar.success(f"Successfully {verb_ed} {total_tables} table(s)!")
+			else:
+				st.sidebar.error(f"{process_type.title()} might have failed. Could not find updated tables.")
+
+		except Exception as e:
+			status_text.error(f"Error during {process_type} job: {e}")
+			logger.error(f"Parquet {process_type} job failed: {e}", exc_info=True)
+			progress_bar.empty()
+
+	def _convert_table_to_parquet(self, tables_to_convert: Optional[List[TableNamesHOSP | TableNamesICU]] = None):
+		"""Callback to convert the selected table to Parquet format."""
+		if tables_to_convert is None:
+			# This is for a single table conversion
+			table_name_enum = convert_table_names_to_enum_class(
+				name   = st.session_state.selected_table,
+				module = st.session_state.selected_module )
+    
+			tables_to_convert = [table_name_enum]
+		self._run_parquet_conversion(tables_to_convert, "convert")
+
+	def _update_table_to_parquet(self, tables_to_update: Optional[List[TableNamesHOSP | TableNamesICU]] = None):
+		"""Callback to re-convert a table to update its Parquet file."""
+		if tables_to_update is None:
+			table_name_enum = convert_table_names_to_enum_class(
+				name   = st.session_state.selected_table,
+				module = st.session_state.selected_module )
+    
+			tables_to_update = [table_name_enum]
+		self._run_parquet_conversion(tables_to_update, "update")
 
 	def run(self):
 		"""Run the main application loop."""
@@ -432,41 +516,53 @@ class MIMICDashboardApp:
 				# Select Table
 				selected_display = _select_table(module=module)
 
-				st.sidebar.markdown("---")
+				# --- Conversion/Update Buttons ---
+				if st.session_state.selected_table: # Ensure a table is selected
+					st.sidebar.markdown("---")
+					st.sidebar.markdown("#### Parquet Conversion")
 
-				is_parquet = self.is_selected_table_parquet
-				source_exists = self._source_csv_exists
+					# --- Logic for single table selection ---
+					if st.session_state.selected_table != "merged_table":
+						# Display "Convert" button if the selected table is not already in Parquet but a source CSV exists
+						if not self.is_selected_table_parquet and self._source_csv_exists:
+							st.sidebar.button(
+								label    = "Convert to Parquet",
+								key      = "convert_to_parquet_button",
+								on_click = self._convert_table_to_parquet,
+								help     = f"Convert {st.session_state.selected_table} from CSV to Parquet for faster loading." )
 
-				# --- Conversion/Update Button Logic ---
-				button_text = None
-				if st.session_state.selected_table and st.session_state.selected_table != "merged_table" and source_exists:
-					if not is_parquet:
-						st.sidebar.warning("This table is not in Parquet format. Convert it for better performance.")
-						button_text = "Convert to Parquet"
-					else:
-						button_text = "Update Parquet from CSV/GZ"
+						# Display "Update" button if the selected table is already in Parquet and a source CSV exists
+						if self.is_selected_table_parquet and self._source_csv_exists:
+							st.sidebar.button(
+								label    = "Update Parquet",
+								key      = "update_parquet_button",
+								on_click = self._update_table_to_parquet,
+								help     = f"Re-convert {st.session_state.selected_table} from CSV to update the Parquet file." )
 
-				if button_text:
-					if st.sidebar.button(button_text, key="convert_or_update_parquet"):
-						spinner_text = f"Saving {st.session_state.selected_table} as Parquet... This may take a moment."
-						with st.spinner(spinner_text):
-							try:
-								table_name_enum = convert_table_names_to_enum_class(
-									name=st.session_state.selected_table,
-									module=st.session_state.selected_module
-								)
-								self.parquet_converter.save_as_parquet(table_name=table_name_enum)
-								st.sidebar.success(f"{button_text.split(' ')[0]} successful!") # "Convert successful!" or "Update successful!"
+					# --- Special handling for "merged_table" selection ---
+					else: # This means st.session_state.selected_table == "merged_table"
+						# Check which component tables need to be converted
+						tables_to_convert = self._get_merged_table_components_to_convert(force_update=False)
+						if tables_to_convert:
+							st.sidebar.warning(f"{len(tables_to_convert)} base table(s) are not in Parquet format.")
+							st.sidebar.button(
+								label    = "Convert Missing Tables to Parquet",
+								key      = "convert_merged_to_parquet",
+								on_click = self._convert_table_to_parquet,
+								args     = (tables_to_convert,),
+								help     = "Convert all required CSV tables to Parquet for the merged view." )
 
-								# Rescan and refresh the app to reflect changes
-								self._rescan_and_update_state()
-								# st.experimental_rerun()
-							except Exception as e:
-								st.sidebar.error(f"Action failed: {e}")
-								logger.exception("Parquet conversion/update failed")
-				
+						# Button to update all component tables of the merged view
+						st.sidebar.button(
+							label    = "Update All Base Parquet Tables",
+							key      = "update_merged_parquet",
+							on_click = self._update_table_to_parquet,
+							args     = (self.data_handler.merged_table_components,),
+							help     = "Re-convert all base tables from CSV to update their Parquet files."
+						)
+
 				# --- Data Loading UI Logic ---
-				if st.session_state.selected_table and not is_parquet and st.session_state.selected_table != "merged_table":
+				if st.session_state.selected_table and not self.is_selected_table_parquet and st.session_state.selected_table != "merged_table":
 					# Disable loading options since conversion is required
 					st.sidebar.markdown("---")
 					st.sidebar.caption("Loading is disabled until the table is converted to Parquet.")
@@ -518,21 +614,31 @@ class MIMICDashboardApp:
 
 		def _get_subject_ids_list_and_loading_message() -> Tuple[Optional[List[int]], str]:
 
-			num_subjects_to_load = st.session_state.get('num_subjects_to_load', 0)
+			target_subject_ids = None
+			loading_message = "Loading full table..."
+			num_subjects_to_load = st.session_state.get('num_subjects_to_load')
 
 			if num_subjects_to_load and num_subjects_to_load > 0:
+				
+				# For merged table, we need a base table to get subject IDs from
+				if st.session_state.selected_table == 'merged_table':
+					table_for_ids = TableNamesHOSP.ADMISSIONS
+				else:
+					table_for_ids = convert_table_names_to_enum_class(
+						name=st.session_state.selected_table,
+						module=st.session_state.selected_module
+					)
 
-				table_name = convert_table_names_to_enum_class(name=st.session_state.selected_table, module=st.session_state.selected_module) if not self.has_no_subject_id_column else TableNamesHOSP.ADMISSIONS
-		
-				target_subject_ids = self.data_handler.get_partial_subject_id_list_for_partial_loading(num_subjects=num_subjects_to_load, table_name=table_name)
-
-				lm = f" for {len(target_subject_ids)} subjects" if target_subject_ids else " (subject ID list empty or not found)"
-
-				return target_subject_ids, f"Loading table{lm} using {"Dask" if st.session_state.use_dask else "Pandas"}..."
-
-			return None, "Cannot perform subject-based sampling - subject IDs not found"
+				target_subject_ids = self.data_handler.get_partial_subject_id_list_for_partial_loading(
+					num_subjects=num_subjects_to_load,
+					table_name=table_for_ids
+				)
+				loading_message = f"Loading table for {len(target_subject_ids)} subjects..."
+			return target_subject_ids, loading_message
 
 		def _get_total_rows(df):
+			if df is None:
+				return 0
 			if isinstance(df, dd.DataFrame):
 				st.session_state.total_row_count = df.shape[0].compute()
 			else:

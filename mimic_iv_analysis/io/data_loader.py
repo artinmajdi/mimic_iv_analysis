@@ -317,7 +317,9 @@ class DataLoader:
 		# Get csv file path
 		csv_file_path = self._get_file_path(table_name)
 
-		subject_ids_path = csv_file_path.parent / f'{table_name.value}_subject_ids.csv'
+		subject_ids_path = csv_file_path.parent / 'subject_ids' / f'{table_name.value}_subject_ids.csv'
+
+		subject_ids_path.parent.mkdir(parents=True, exist_ok=True)
 
 		if subject_ids_path.exists():
 
@@ -641,6 +643,19 @@ class DataLoader:
 					TableNamesHOSP.DIAGNOSES_ICD, 
 					TableNamesHOSP.POE, 
 					TableNamesHOSP.POE_DETAIL]
+
+	@property
+	def merged_table_components(self) -> List[TableNamesHOSP | TableNamesICU]:
+		"""Tables that are components of the merged table."""
+		return [
+			TableNamesHOSP.PATIENTS,
+			TableNamesHOSP.ADMISSIONS,
+			TableNamesHOSP.TRANSFERS,
+			TableNamesHOSP.DIAGNOSES_ICD,
+			TableNamesHOSP.D_ICD_DIAGNOSES,
+			TableNamesHOSP.POE,
+			TableNamesHOSP.POE_DETAIL
+		]
 
 
 class ExampleDataLoader:
