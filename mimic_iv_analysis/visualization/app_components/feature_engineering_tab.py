@@ -457,51 +457,59 @@ class FeatureEngineeringTab:
 			timing_df = st.session_state.timing_features
 			numeric_cols = timing_df.select_dtypes(include=['number']).columns
 
-			try:
-				# Bar chart of total orders and unique orders
-				if 'total_orders' in timing_df.columns and 'unique_order_types' in timing_df.columns:
-					col1, col2 = st.columns(2)
-					with col1:
-						fig_total = px.histogram(
-							timing_df, x='total_orders', nbins=30,
-							title="Distribution of Total Orders per Patient"
-						)
-						st.plotly_chart(fig_total, use_container_width=True)
-					with col2:
-						fig_unique = px.histogram(
-							timing_df, x='unique_order_types', nbins=30,
-							title="Distribution of Unique Order Types per Patient"
-						)
-						st.plotly_chart(fig_unique, use_container_width=True)
+			# try:
+			# Bar chart of total orders and unique orders
+			if 'total_orders' in timing_df.columns and 'unique_order_types' in timing_df.columns:
+				col1, col2 = st.columns(2)
+				with col1:
+					fig_total = px.histogram(
+						data_frame = timing_df['total_orders'],
+						# x          = 'total_orders',
+						nbins      = 30,
+						title      = "Distribution of Total Orders per Patient" )
+					st.plotly_chart(fig_total, use_container_width=True)
+				with col2:
+					fig_unique = px.histogram(
+						data_frame = timing_df['unique_order_types'],
+						# x          = 'unique_order_types',
+						nbins      = 30,
+						title      = "Distribution of Unique Order Types per Patient" )
+					st.plotly_chart(fig_unique, use_container_width=True)
 
-				# Time-based analyses (if admission time was provided)
-				relative_time_cols = ['time_to_first_order_hours', 'orders_in_first_24h', 'orders_in_first_48h', 'orders_in_first_72h']
-				if admission_time_col and any(col in timing_df.columns for col in relative_time_cols):
-					col1, col2 = st.columns(2)
-					with col1:
-						if 'time_to_first_order_hours' in timing_df.columns:
-							fig_first_order = px.histogram(
-								timing_df, x='time_to_first_order_hours', nbins=30,
-								title="Time from Admission to First Order (hours)"
-							)
-							st.plotly_chart(fig_first_order, use_container_width=True)
+			# Time-based analyses (if admission time was provided)
+			relative_time_cols = ['time_to_first_order_hours', 'orders_in_first_24h', 'orders_in_first_48h', 'orders_in_first_72h']
+			if admission_time_col and any(col in timing_df.columns for col in relative_time_cols):
+				col1, col2 = st.columns(2)
+				with col1:
+					if 'time_to_first_order_hours' in timing_df.columns:
+						fig_first_order = px.histogram(
+							data_frame = timing_df['time_to_first_order_hours'],
+							# x          = 'time_to_first_order_hours',
+							nbins      = 30,
+							title      = "Time from Admission to First Order (hours)" )
+						st.plotly_chart(fig_first_order, use_container_width=True)
 
-					with col2:
-						if all(col in timing_df.columns for col in ['orders_in_first_24h', 'orders_in_first_48h', 'orders_in_first_72h']):
-							time_periods = ['First 24h', 'First 48h', 'First 72h']
-							avg_orders = [
-								timing_df['orders_in_first_24h'].mean(),
-								timing_df['orders_in_first_48h'].mean(),
-								timing_df['orders_in_first_72h'].mean()
-							]
-							orders_by_time = pd.DataFrame({'Time Period': time_periods, 'Average Orders': avg_orders})
-							fig_time_orders = px.bar(
-								orders_by_time, x='Time Period', y='Average Orders',
-								title="Average Orders in Time Periods After Admission"
-							)
-							st.plotly_chart(fig_time_orders, use_container_width=True)
-			except Exception as e:
-				st.error(f"Error generating timing visualizations: {e}")
+				with col2:
+					if all(col in timing_df.columns for col in ['orders_in_first_24h', 'orders_in_first_48h', 'orders_in_first_72h']):
+         
+						time_periods = ['First 24h', 'First 48h', 'First 72h']
+      
+						avg_orders = [
+							timing_df['orders_in_first_24h'].mean(),
+							timing_df['orders_in_first_48h'].mean(),
+							timing_df['orders_in_first_72h'].mean()
+						]
+      
+						orders_by_time = pd.DataFrame({'Time Period': time_periods, 'Average Orders': avg_orders})
+
+						fig_time_orders = px.bar(
+							data_frame = orders_by_time,
+							x          = 'Time Period',
+							y          = 'Average Orders',
+							title      = "Average Orders in Time Periods After Admission" )
+						st.plotly_chart(fig_time_orders, use_container_width=True)
+			# except Exception as e:
+			# 	st.error(f"Error generating timing visualizations: {e}")
 
 			# Save options
 			self._display_export_options(data=st.session_state.timing_features, feature_type='order_timing_features')

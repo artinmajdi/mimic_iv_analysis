@@ -194,62 +194,97 @@ class FeatureEngineerUtils:
 
 	@staticmethod
 	def create_order_timing_features(
-				df                : Union[pd.DataFrame, dd.DataFrame],
-				patient_id_col    : str,
-				order_col         : str,
-				order_time_col    : str,
-				admission_time_col: str = None,
-				discharge_time_col: str = None,
-				use_dask          : bool = False) -> pd.DataFrame    : 
+			df: "pd.DataFrame | dd.DataFrame",
+			patient_id_col: str,
+			order_col: str,
+			order_time_col: str,
+			admission_time_col: Optional[str] = None,
+			discharge_time_col: Optional[str] = None
+	) -> "pd.DataFrame | dd.DataFrame":
 		"""
-		Creates features related to order timing.
+		Create timing features from order data for each patient.
 
-		Args:
-			df: DataFrame with order data
-			patient_id_col: Column containing patient IDs
-			order_col: Column containing order types
-			order_time_col: Column containing order timestamps
-			admission_time_col: Column containing admission timestamps (optional)
-			discharge_time_col: Column containing discharge timestamps (optional)
+		This function calculates various timing-related features based on order events,
+		such as total orders, time span of orders, and counts of orders within
+		specific time windows relative to admission and discharge.
 
-		Returns:
-			DataFrame with timing features
+		It supports both pandas and Dask DataFrames.
 		"""
-		# Validate columns exist
-		required_cols = [patient_id_col, order_col, order_time_col]
-		if not all(col in df.columns for col in required_cols):
-			missing = [col for col in required_cols if col not in df.columns]
-			raise ValueError(f"Columns {missing} not found in DataFrame")
 
-		# Convert Dask DataFrame to pandas if necessary
-		if use_dask and hasattr(df, 'compute'):
-			with st.spinner('Computing data for order timing features...'):
-				# For timing features, we need the complete DataFrame
-				df = df.compute()
-		else:
-			# Make a copy of the DataFrame
-			df = df.copy()
+		# Dask-optimized implementation
+		if isinstance(df, dd.DataFrame):
+			
+			# Calculate unique order counts separately, as 'nunique' string is not always supported
+			unique_orders = df.groupby(patient_id_col)[order_col].nunique().to_frame(name='unique_order_types')
 
-		# Ensure time columns are datetime
-		time_cols = [order_time_col]
-		if admission_time_col:
-			time_cols.append(admission_time_col)
-		if discharge_time_col:
-			time_cols.append(discharge_time_col)
+			aggs = {
+				order_time_col: ['min', 'max'],
+				order_col: ['count']
+			}
 
-		for col in time_cols:
-			if col in df.columns and df[col].dtype != 'datetime64[ns]':
-				try:
-					df2=df[col].compute()
-					df[col] = pd.to_datetime(df[col])
-				except:
-					raise ValueError(f"Could not convert {col} to datetime format")
+			# Add admission-related aggregations if admission time is available
+			if admission_time_col and admission_time_col in df.columns:
+				df['orders_in_first_24h'] = (df[order_time_col] <= df[admission_time_col] + pd.Timedelta(hours=24)).astype(int)
+				df['orders_in_first_48h'] = (df[order_time_col] <= df[admission_time_col] + pd.Timedelta(hours=48)).astype(int)
+				df['orders_in_first_72h'] = (df[order_time_col] <= df[admission_time_col] + pd.Timedelta(hours=72)).astype(int)
+				aggs[admission_time_col] = ['first']
+				aggs['orders_in_first_24h'] = ['sum']
+				aggs['orders_in_first_48h'] = ['sum']
+				aggs['orders_in_first_72h'] = ['sum']
 
+			# Add discharge-related aggregations if discharge time is available
+			if discharge_time_col and discharge_time_col in df.columns:
+				df['orders_in_last_24h'] = (df[order_time_col] >= df[discharge_time_col] - pd.Timedelta(hours=24)).astype(int)
+				df['orders_in_last_48h'] = (df[order_time_col] >= df[discharge_time_col] - pd.Timedelta(hours=48)).astype(int)
+				aggs[discharge_time_col] = ['first']
+				aggs['orders_in_last_24h'] = ['sum']
+				aggs['orders_in_last_48h'] = ['sum']
+
+			# Group by patient and aggregate
+			timing_features = df.groupby(patient_id_col).agg(aggs)
+
+			# Flatten multi-index columns
+			timing_features.columns = ['_'.join(col).strip('_') for col in timing_features.columns.values]
+
+			# Join the unique order counts
+			timing_features = timing_features.join(unique_orders)
+			
+			# Rename columns to match expected output
+			rename_map = {
+				f"{order_time_col}_min": "first_order_time",
+				f"{order_time_col}_max": "last_order_time",
+				f"{order_col}_count": "total_orders",
+			}
+			if admission_time_col and admission_time_col in df.columns:
+				rename_map[f"{admission_time_col}_first"] = admission_time_col
+				rename_map[f"orders_in_first_24h_sum"] = "orders_in_first_24h"
+				rename_map[f"orders_in_first_48h_sum"] = "orders_in_first_48h"
+				rename_map[f"orders_in_first_72h_sum"] = "orders_in_first_72h"
+
+			if discharge_time_col and discharge_time_col in df.columns:
+				rename_map[f"{discharge_time_col}_first"] = discharge_time_col
+				rename_map[f"orders_in_last_24h_sum"] = "orders_in_last_24h"
+				rename_map[f"orders_in_last_48h_sum"] = "orders_in_last_48h"
+			
+			timing_features = timing_features.rename(columns=rename_map)
+
+			# --- Post-aggregation calculations ---
+			timing_features['order_span_hours'] = (timing_features['last_order_time'] - timing_features['first_order_time']).dt.total_seconds() / 3600
+
+			if admission_time_col and admission_time_col in df.columns:
+				timing_features['time_to_first_order_hours'] = (timing_features['first_order_time'] - timing_features[admission_time_col]).dt.total_seconds() / 3600
+				timing_features = timing_features.drop(columns=[admission_time_col])
+
+			if discharge_time_col and discharge_time_col in df.columns:
+				timing_features['time_from_last_order_to_discharge_hours'] = (timing_features[discharge_time_col] - timing_features['last_order_time']).dt.total_seconds() / 3600
+				timing_features = timing_features.drop(columns=[discharge_time_col])
+
+			return timing_features.reset_index()
+
+		# --- Original pandas implementation for non-Dask DataFrames ---
+		
 		# Initialize results DataFrame
 		timing_features = pd.DataFrame()
-
-		# Process by patient
-		grouped = df.groupby(patient_id_col)
 
 		# Create base features list
 		features = {
@@ -276,10 +311,10 @@ class FeatureEngineerUtils:
 				'time_from_last_order_to_discharge_hours': [],
 				'orders_in_last_24h': [],
 				'orders_in_last_48h': []
-			})
+				})
 
 		# Calculate features for each patient
-		for patient_id, patient_data in grouped:
+		for patient_id, patient_data in df.groupby(patient_id_col):
 			features['patient_id'].append(patient_id)
 			features['total_orders'].append(len(patient_data))
 			features['unique_order_types'].append(patient_data[order_col].nunique())
