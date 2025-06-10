@@ -10,9 +10,8 @@
 		}
 	],
 	"settings": {
-		"hide-files.files": [],
 		"explorer.excludeGitIgnore": false,
-		"python.languageServer": "None",
+		"python.languageServer": "Default",
 		"editor.fontFamily": "Fira Code",
 		"editor.fontLigatures": true
 	}

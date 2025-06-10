@@ -23,8 +23,6 @@ from mimic_iv_analysis.visualization.app_components import FilteringTab, Feature
 
 from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtils
 
-# TODO: when partiallyloading a table who doesn't have subject_id column, it should show a message that the table is not supported for partial loading.
-
 # TODO: when a table is selected and doesn't have parquet file, it should ask user if they want to convert it to parquet. and if so, do it.
 
 class MIMICDashboardApp:
@@ -67,7 +65,6 @@ class MIMICDashboardApp:
 		st.session_state.selected_module = None
 		st.session_state.selected_table = None
 		st.session_state.df = None
-		st.session_state.num_subjects_to_load = DEFAULT_NUM_SUBJECTS
 		st.session_state.available_tables = {}
 		st.session_state.file_paths = {}
 		st.session_state.file_sizes = {}
@@ -288,7 +285,7 @@ class MIMICDashboardApp:
 				tables_list_w_size_info = ["merged_table"]
 
 				# Create display-to-table mapping for reverse lookup
-				display_to_table_map = {}
+				display_to_table_map = {'merged_table': 'merged_table'}
 
 				# Format each table with size information
 				for table in table_options:
@@ -328,7 +325,7 @@ class MIMICDashboardApp:
 			)
 
 			# Get the actual table name from the selected display
-			table = None if selected_table_w_size_info == "merged_table" else display_to_table_map[selected_table_w_size_info]
+			table = display_to_table_map[selected_table_w_size_info]
 
 			# Update session state if table selection changed
 			if table != st.session_state.selected_table:
@@ -336,7 +333,7 @@ class MIMICDashboardApp:
 				st.session_state.df = None  # Clear dataframe when table changes
 
 			# Show table description if a regular table is selected
-			if st.session_state.selected_table:
+			if st.session_state.selected_table != "merged_table":
 				_display_table_info(st.session_state.selected_table)
 
 			return selected_table_w_size_info
@@ -362,9 +359,12 @@ class MIMICDashboardApp:
 
 		def _select_sampling_parameters():
 
-			# Get total unique subjects to display
-			# TODO: change this to the table that is being loaded except for the merged table
-			total_unique_subjects = len(self.data_handler.all_subject_ids(table_name=TableNamesHOSP.ADMISSIONS))
+			if st.session_state.selected_table == 'merged_table' or self.has_no_subject_id_column:
+				table_name = TableNamesHOSP.ADMISSIONS
+			else:
+				table_name = convert_table_names_to_enum_class(name=st.session_state.selected_table, module=st.session_state.selected_module)
+   
+			total_unique_subjects = len(self.data_handler.all_subject_ids(table_name=table_name))
 
 			help_text_num_subjects = f"Number of subjects to load. Max: {total_unique_subjects}."
 
@@ -376,19 +376,16 @@ class MIMICDashboardApp:
 			elif self.data_handler.tables_info_df is None:
 				st.sidebar.warning("Scan the directory first to see available subjects.")
 
-			# Initialize num_subjects in session state if not present
-			if 'num_subjects_to_load' not in st.session_state:
-				st.session_state.num_subjects_to_load = DEFAULT_NUM_SUBJECTS
 
 			# Number of subjects to load
-			st.session_state.num_subjects_to_load = st.sidebar.number_input(
+			st.sidebar.number_input(
 				"Number of Subjects to Load",
 				min_value = 1,
 				max_value = total_unique_subjects if total_unique_subjects > 0 else 1,
-				disabled  = total_unique_subjects==0,
-				key       = "num_subjects_input",
+				disabled  = self.has_no_subject_id_column,
+				key       = "num_subjects_to_load",
 				step      = 10,
-				value     = st.session_state.get('num_subjects_to_load', 10),
+				value     = st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS),
 				help      = help_text_num_subjects
 			)
 
@@ -407,15 +404,20 @@ class MIMICDashboardApp:
 				st.sidebar.markdown("---")
 
 				# Sampling options
-				load_full = st.sidebar.checkbox("Load Full Table", value=st.session_state.get('load_full', False), key="load_full")
+				st.sidebar.checkbox(
+					label   = "Load Full Table", 
+					value   = st.session_state.get('load_full', False) if not self.has_no_subject_id_column else True, 
+					key     = "load_full", 
+					disabled=self.has_no_subject_id_column
+				)
 
-				if not load_full:
+				if not st.session_state.load_full:
 					_select_sampling_parameters()
 
 				# Dask option
 				st.session_state.use_dask = st.sidebar.checkbox("Use Dask", value=st.session_state.get('use_dask', True), help="Enable Dask for distributed computing and memory-efficient processing")
 
-				return selected_display, load_full
+				return selected_display
 
 
 		st.sidebar.title("MIMIC-IV Navigator")
@@ -426,16 +428,20 @@ class MIMICDashboardApp:
 
 		# Module and table selection
 		if st.session_state.available_tables:
-
-			selected_display, load_full = _select_table_module()
-
-			self._load_table(load_full=load_full, selected_display=selected_display)
+			selected_display = _select_table_module()
+			self._load_table(selected_display=selected_display)
 
 		else:
 			st.sidebar.info("Scan a MIMIC-IV directory to select and load tables.")
 
+	@property
+	def has_no_subject_id_column(self):
+		"""Check if the current table has a subject_id column."""
+		tables_that_can_be_sampled = [	"merged_table" ] + [table.value for table in self.data_handler.tables_w_subject_id_column]
+		return st.session_state.selected_table not in tables_that_can_be_sampled
 
-	def _load_table(self, load_full: bool = False, selected_display: str = None) -> Tuple[Optional[pd.DataFrame], int]:
+
+	def _load_table(self, selected_display: str = None) -> Tuple[Optional[pd.DataFrame], int]:
 		"""Load a specific MIMIC-IV table, handling large files and sampling."""
 
 		def _get_subject_ids_list_and_loading_message() -> Tuple[Optional[List[int]], str]:
@@ -444,7 +450,9 @@ class MIMICDashboardApp:
 
 			if num_subjects_to_load and num_subjects_to_load > 0:
 
-				target_subject_ids = self.data_handler.get_partial_subject_id_list_for_partial_loading(num_subjects_to_load)
+				table_name = convert_table_names_to_enum_class(name=st.session_state.selected_table, module=st.session_state.selected_module) if not self.has_no_subject_id_column else TableNamesHOSP.ADMISSIONS
+		
+				target_subject_ids = self.data_handler.get_partial_subject_id_list_for_partial_loading(num_subjects=num_subjects_to_load, table_name=table_name)
 
 				lm = f" for {len(target_subject_ids)} subjects" if target_subject_ids else " (subject ID list empty or not found)"
 
@@ -516,7 +524,7 @@ class MIMICDashboardApp:
 
 		def _load_single_table(target_subject_ids, loading_message):
 
-			def _df_is_valid(df):
+			def _df_is_valid(df, total_rows):
 				# Check if DataFrame is not None
 				if df is None:
 					st.sidebar.error("Failed to load table. Check logs or file format.")
@@ -539,20 +547,16 @@ class MIMICDashboardApp:
 
 			with st.spinner(loading_message):
 
-				logger.info(f"Loading table {table_name} with partial loading: {not load_full} and use_dask: {st.session_state.use_dask}")
-				logger.info(f"target_subject_ids: {target_subject_ids}")
-				# pdb.set_trace()
-
 				df = self.data_handler.load_table(
 					table_name      = table_name,
-					partial_loading = not load_full,
+					partial_loading = not st.session_state.load_full,
 					subject_ids     = target_subject_ids,
 					use_dask        = st.session_state.use_dask
 				)
 
 				total_rows = _get_total_rows(df)
 
-			if _df_is_valid(df):
+			if _df_is_valid(df, total_rows):
 
 				st.session_state.df = df
 				st.sidebar.success(f"Loaded {total_rows} rows.")
@@ -576,7 +580,7 @@ class MIMICDashboardApp:
 
 		if st.sidebar.button("Load Selected Table", key="load_button") and _check_table_selection():
 
-			if not load_full:
+			if not st.session_state.load_full:
 				target_subject_ids, loading_message = _get_subject_ids_list_and_loading_message()
 			else:
 				target_subject_ids, loading_message = None, "Loading table using " + ("Dask" if st.session_state.use_dask else "Pandas")

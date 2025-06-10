@@ -1,22 +1,16 @@
 # Standard library imports
 import logging
-from typing import Optional, Dict
 
 # Data processing imports
 import numpy as np
 import pandas as pd
 
 # Visualization imports
-import matplotlib.pyplot as plt
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 # Machine learning imports
-from scipy.cluster.hierarchy import dendrogram
 from scipy import stats
-
-from sklearn.metrics import adjusted_rand_score
 from sklearn.preprocessing import MinMaxScaler
 
 # Streamlit import

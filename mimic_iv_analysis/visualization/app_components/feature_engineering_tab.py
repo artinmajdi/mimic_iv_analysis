@@ -169,43 +169,28 @@ class FeatureEngineeringTab:
 		# Column selection
 		col1, col2, col3 = st.columns(3)
 		with col1:
-			# Suggest patient ID column
-			patient_id_col_index = 0
-			if st.session_state.get('detected_patient_id_col') in all_columns:
-				patient_id_col_index = all_columns.index(st.session_state['detected_patient_id_col'])
-
 			seq_patient_id_col = st.selectbox(
 				label   = "Select Patient ID Column",
 				options = all_columns,
-				index   = patient_id_col_index,
+				index   = all_columns.index('subject_id') if 'subject_id' in all_columns else 0,
 				key     = "seq_patient_id_col",
 				help    = "Column containing unique patient identifiers"
 			)
 
 		with col2:
-			# Suggest order column
-			order_col_index = 0
-			if st.session_state.get('detected_order_cols') and st.session_state['detected_order_cols'][0] in all_columns:
-				order_col_index = all_columns.index(st.session_state['detected_order_cols'][0])
-
 			seq_order_col = st.selectbox(
 				label   = "Select Order Type Column",
 				options = all_columns,
-				index   = order_col_index,
+				index   = all_columns.index('order_type') if 'order_type' in all_columns else 0,
 				key     = "seq_order_col",
 				help    = "Column containing order types/names"
 			)
 
 		with col3:
-			# Suggest time column
-			time_col_index = 0
-			if st.session_state.get('detected_time_cols') and st.session_state['detected_time_cols'][0] in all_columns:
-				time_col_index = all_columns.index(st.session_state['detected_time_cols'][0])
-
 			seq_time_col = st.selectbox(
 				label   = "Select Timestamp Column",
 				options = all_columns,
-				index   = time_col_index,
+				index   = all_columns.index('ordertime') if 'ordertime' in all_columns else 0,
 				key     = "seq_time_col",
 				help    = "Column containing order timestamps"
 			)
@@ -317,55 +302,30 @@ class FeatureEngineeringTab:
 		# Column selection
 		col1, col2 = st.columns(2)
 		with col1:
-
-			# Suggest patient ID column
-			patient_id_col_index = 0
-			if st.session_state.get('detected_patient_id_col') in all_columns:
-				patient_id_col_index = all_columns.index(st.session_state['detected_patient_id_col'])
-
 			dist_patient_id_col = st.selectbox(
 				label   = "Select Patient ID Column",
 				options = all_columns,
-				index   = patient_id_col_index,
+				index   = all_columns.index('subject_id') if 'subject_id' in all_columns else 0,
 				key     = "dist_patient_id_col",
 				help    = "Column containing unique patient identifiers"
 			)
 
 		with col2:
-
-			# Suggest order column
-			order_col_index = 0
-			if st.session_state.get('detected_order_cols') and st.session_state['detected_order_cols'][0] in all_columns:
-				order_col_index = all_columns.index(st.session_state['detected_order_cols'][0])
-
 			dist_order_col = st.selectbox(
 				label   = "Select Order Type Column",
 				options = all_columns,
-				index   = order_col_index,
+				index   = all_columns.index('order_type') if 'order_type' in all_columns else 0,
 				key     = "dist_order_col",
 				help    = "Column containing order types/names"
 			)
 
 		# Generate button
 		if st.button("Analyze Order Distributions"):
-			try:
-				with st.spinner("Analyzing order type distributions..."):
-					overall_dist, patient_dist = FeatureEngineerUtils.get_order_type_distributions(
-						st.session_state.df,
-						dist_patient_id_col,
-						dist_order_col
-					)
-					st.session_state.order_dist = overall_dist
-					st.session_state.patient_order_dist = patient_dist
-					st.success("Order distributions analyzed.")
-			except AttributeError:
-				st.error("Feature Engineer is not properly initialized or does not have a 'get_order_type_distributions' method.")
-			except KeyError as e:
-				st.error(f"Column '{e}' not found in the DataFrame. Please check your selections.")
-			except Exception as e:
-				st.error(f"Error analyzing order distributions: {str(e)}")
-				logging.exception("Error in Analyze Order Distributions")
-
+			with st.spinner("Analyzing order type distributions..."):
+				overall_dist, patient_dist = FeatureEngineerUtils.get_order_type_distributions( df=st.session_state.df, patient_id_col=dist_patient_id_col, order_col=dist_order_col)
+				st.session_state.order_dist = overall_dist
+				st.session_state.patient_order_dist = patient_dist
+				st.success("Order distributions analyzed.")
 
 		# Display results if available
 		if 'order_dist' in st.session_state and st.session_state.order_dist is not None:
@@ -380,10 +340,7 @@ class FeatureEngineeringTab:
 					# Create "Other" category for remaining orders
 					if len(st.session_state.order_dist) > top_n_orders:
 						others_sum = st.session_state.order_dist.iloc[top_n_orders:]['frequency'].sum()
-						other_row = pd.DataFrame({
-							dist_order_col: ['Other'],
-							'frequency': [others_sum]
-						})
+						other_row = pd.DataFrame({ dist_order_col: ['Other'], 'frequency': [others_sum] })
 						pie_data = pd.concat([top_orders, other_row], ignore_index=True)
 					else:
 						pie_data = top_orders
@@ -478,27 +435,19 @@ class FeatureEngineeringTab:
 		# Column selection
 		col1, col2 = st.columns(2)
 		with col1:
-			# Suggest patient ID column
-			patient_id_col_index = 0
-			if st.session_state.get('detected_patient_id_col') in all_columns:
-				patient_id_col_index = all_columns.index(st.session_state['detected_patient_id_col'])
 			timing_patient_id_col = st.selectbox(
-				"Select Patient ID Column   ", # Added spaces to differentiate key
+				"Select Patient ID Column",
 				all_columns,
-				index=patient_id_col_index,
+				index=all_columns.index('subject_id') if 'subject_id' in all_columns else 0,
 				key="timing_patient_id_col",
 				help="Column containing unique patient identifiers"
 			)
 
 		with col2:
-			# Suggest order column
-			order_col_index = 0
-			if st.session_state.get('detected_order_cols') and st.session_state['detected_order_cols'][0] in all_columns:
-				order_col_index = all_columns.index(st.session_state['detected_order_cols'][0])
 			timing_order_col = st.selectbox(
-				"Select Order Type Column   ",
+				"Select Order Type Column",
 				all_columns,
-				index=order_col_index,
+				index=all_columns.index('order_type') if 'order_type' in all_columns else 0,
 				key="timing_order_col",
 				help="Column containing order types/names"
 			)
@@ -506,48 +455,32 @@ class FeatureEngineeringTab:
 		# Time columns
 		col1, col2 = st.columns(2)
 		with col1:
-			# Suggest time column
-			time_col_index = 0
-			if st.session_state.get('detected_time_cols') and st.session_state['detected_time_cols'][0] in all_columns:
-				time_col_index = all_columns.index(st.session_state['detected_time_cols'][0])
-
 			order_time_col = st.selectbox(
 				"Select Order Time Column",
 				all_columns,
-				index=time_col_index,
+				index=all_columns.index('ordertime') if 'ordertime' in all_columns else 0,
 				key="order_time_col",
 				help="Column containing order timestamps"
 			)
 
 		with col2:
-			# Optional admission time column - try to find 'admittime' or similar
-			admission_time_index = 0
-			potential_admission_cols = [c for c in all_columns if 'admit' in c.lower()]
-			if potential_admission_cols:
-				admission_time_index = all_columns.index(potential_admission_cols[0]) + 1 # +1 for "None" option
-
 			admission_time_col = st.selectbox(
-				"Select Admission Time Column (Optional)",
-				["None"] + all_columns,
-				index=admission_time_index,
-				key="admission_time_col",
-				help="Column containing admission timestamps (for relative timing features)"
+				label   = "Select Admission Time Column (Optional)",
+				options = ["None"] + all_columns,
+				index   = all_columns.index('admittime') if 'admittime' in all_columns else 0,
+				key     = "admission_time_col",
+				help    = "Column containing admission timestamps (for relative timing features)",
 			)
 			admission_time_col = None if admission_time_col == "None" else admission_time_col
 
 
 		# Optional discharge time column - try to find 'dischtime' or similar
-		discharge_time_index = 0
-		potential_discharge_cols = [c for c in all_columns if 'disch' in c.lower()]
-		if potential_discharge_cols:
-			discharge_time_index = all_columns.index(potential_discharge_cols[0]) + 1 # +1 for "None" option
-
 		discharge_time_col = st.selectbox(
-			"Select Discharge Time Column (Optional)",
-			["None"] + all_columns,
-			index=discharge_time_index,
-			key="discharge_time_col",
-			help="Column containing discharge timestamps (for relative timing features)"
+			label   = "Select Discharge Time Column (Optional)",
+			options = ["None"] + all_columns,
+			index   = all_columns.index('dischtime') if 'dischtime' in all_columns else 0,
+			key     = "discharge_time_col",
+			help    = "Column containing discharge timestamps (for relative timing features)",
 		)
 		discharge_time_col = None if discharge_time_col == "None" else discharge_time_col
 

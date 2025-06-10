@@ -75,9 +75,7 @@ class MIMICVisualizerUtils:
 		if use_dask and isinstance(df, dd.DataFrame):
 
 			with st.spinner('Computing preview from Dask DataFrame...'):
-
-				preview_df = df.head(20, compute=True) if isinstance(df, dd.DataFrame) else df.head(20)
-
+				preview_df = df.head(20, compute=True) if isinstance(df, dd.DataFrame) else df
 				st.dataframe(preview_df, use_container_width=True)
 
 		else:

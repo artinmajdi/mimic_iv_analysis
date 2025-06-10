@@ -114,7 +114,7 @@ class DataLoaderExamples:
 
         # 2. Load with partial loading by subject IDs
         logger.info("\nLoading 'patients' table with partial loading by subject IDs...")
-        partial_subject_ids = loader.get_partial_subject_id_list_for_partial_loading(num_subjects=5, random_selection=False)
+        partial_subject_ids = loader.get_partial_subject_id_list_for_partial_loading(num_subjects=5, random_selection=False, table_name=TableNamesHOSP.PATIENTS)
         logger.info(f"Selected subject IDs for partial loading: {partial_subject_ids}")
 
         partial_df = loader.load_table(

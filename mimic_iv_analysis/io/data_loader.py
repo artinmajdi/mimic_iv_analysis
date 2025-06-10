@@ -350,7 +350,7 @@ class DataLoader:
 
 		return self._all_subject_ids
 
-	def get_partial_subject_id_list_for_partial_loading(self, num_subjects: int = DEFAULT_NUM_SUBJECTS, random_selection: bool = False ) -> List[int]:
+	def get_partial_subject_id_list_for_partial_loading(self, num_subjects: int = DEFAULT_NUM_SUBJECTS, table_name: TableNamesHOSP | TableNamesICU = TableNamesHOSP.ADMISSIONS, random_selection: bool = False ) -> List[int]:
 		"""
 		Returns a subset of subject IDs for sampling.
 
@@ -362,7 +362,7 @@ class DataLoader:
 			List of subject IDs for sampling, or empty list if appropriate.
 		"""
 
-		subject_ids = self.all_subject_ids(table_name=TableNamesHOSP.ADMISSIONS)
+		subject_ids = self.all_subject_ids(table_name=table_name)
 
 		# If no subject IDs or num_subjects is non-positive, return an empty list
 		if not subject_ids or num_subjects <= 0:
@@ -408,7 +408,7 @@ class DataLoader:
 		# Get subject IDs for partial loading
 		if partial_loading and (subject_ids is None):
 
-			subject_ids = self.get_partial_subject_id_list_for_partial_loading( num_subjects=num_subjects, random_selection=random_selection )
+			subject_ids = self.get_partial_subject_id_list_for_partial_loading( num_subjects=num_subjects, random_selection=random_selection, table_name=TableNamesHOSP.PATIENTS)
 
 		tables_dict = {}
 		for _, row in self.study_tables_info.iterrows():
@@ -621,7 +621,16 @@ class DataLoader:
 			'poe_and_details'  : poe_and_details
 		}
 
-
+	@property
+	def tables_w_subject_id_column(self) -> List[TableNamesHOSP | TableNamesICU]:
+		"""Tables that have a subject_id column."""
+		return  [	TableNamesHOSP.PATIENTS, 
+					TableNamesHOSP.ADMISSIONS, 
+					TableNamesHOSP.TRANSFERS, 
+					TableNamesHOSP.DIAGNOSES_ICD, 
+					TableNamesHOSP.POE, 
+					TableNamesHOSP.POE_DETAIL]
+  
 class ExampleDataLoader:
 	"""ExampleDataLoader class for loading example data."""
 

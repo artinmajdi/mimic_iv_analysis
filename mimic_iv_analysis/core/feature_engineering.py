@@ -341,7 +341,7 @@ class FeatureEngineerUtils:
 		return timing_features
 
 	@staticmethod
-	def get_order_type_distributions(df: pd.DataFrame, patient_id_col: str, order_col: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+	def get_order_type_distributions(df: pd.DataFrame, patient_id_col: str='subject_id', order_col: str='order_type') -> Tuple[pd.DataFrame, pd.DataFrame]:
 		"""
 		Calculate order type distributions overall and by patient.
 

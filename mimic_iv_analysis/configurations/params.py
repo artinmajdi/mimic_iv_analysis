@@ -102,6 +102,7 @@ class TableNamesICU(enum.Enum):
         return 'icu'
 
 
+
 DEFAULT_STUDY_TABLES_LIST = [
 				TableNamesHOSP.PATIENTS,
 				TableNamesHOSP.ADMISSIONS,
@@ -114,10 +115,7 @@ DEFAULT_STUDY_TABLES_LIST = [
 
 
 def convert_table_names_to_enum_class(name: str, module: Literal['hosp', 'icu']='hosp') -> TableNamesHOSP | TableNamesICU:
-    if module == 'hosp':
-        return TableNamesHOSP(name)
-    else:
-        return TableNamesICU(name)
+    return TableNamesHOSP(name) if module == 'hosp' else TableNamesICU(name)
 
 
 # Constants
