@@ -17,19 +17,15 @@ import pdb
 from mimic_iv_analysis import logger
 from mimic_iv_analysis.core import FeatureEngineerUtils
 from mimic_iv_analysis.io import DataLoader, ParquetConverter
-from mimic_iv_analysis.configurations import (  TableNamesHOSP,
-												TableNamesICU,
-												convert_table_names_to_enum_class,
-												DEFAULT_MIMIC_PATH,
-												DEFAULT_NUM_SUBJECTS,
-												DataFrameType)
+from mimic_iv_analysis.configurations import TableNamesHOSP, convert_table_names_to_enum_class, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS
 
 from mimic_iv_analysis.visualization.app_components import FilteringTab, FeatureEngineeringTab, AnalysisVisualizationTab, ClusteringAnalysisTab
 
 from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtils
 
-# TODO: when partiallyloading a table who doesn't have subject_id column, it should show a message that the table is not supported for partial loading
+# TODO: when partiallyloading a table who doesn't have subject_id column, it should show a message that the table is not supported for partial loading.
 
+# TODO: when a table is selected and doesn't have parquet file, it should ask user if they want to convert it to parquet. and if so, do it.
 
 class MIMICDashboardApp:
 
