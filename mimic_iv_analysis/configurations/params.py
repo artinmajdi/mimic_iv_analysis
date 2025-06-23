@@ -139,13 +139,15 @@ COLUMN_TYPES = {
     'labevent_id'           : 'int64',
     'specimen_id'           : 'int64',
     'poe_seq'               : 'int64',
-    'anchor_age'            : 'string',
+    'anchor_year'           : 'int64',
+    'anchor_age'            : 'int64',
     'pharmacy_id'           : 'string',
     'poe_id'                : 'string',
     'order_provider_id'     : 'string',
     'enter_provider_id'     : 'string',
     'leave_provider_id'     : 'string',
     'discontinued_by_poe_id': 'string',
+    'dod'                   : 'string',
 
     # Categorical columns
 	'gender'              : 'category',
@@ -168,6 +170,7 @@ COLUMN_TYPES = {
 	'drg_type'            : 'category',
 	'icd_version'         : 'category',
 	'hospital_expire_flag': 'category',
+    'anchor_year_group'   : 'category',
 
     # Text/String columns
     'icd_code'   : 'string',
@@ -225,8 +228,7 @@ DATETIME_COLUMNS = [
     'storedate',
     'starttime',
     'endtime',
-    'transfertime',
-    'dod'
+    'transfertime'
 ]
 
 # Mapping of tables to their categorical columns
