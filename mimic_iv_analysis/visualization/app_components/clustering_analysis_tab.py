@@ -23,6 +23,7 @@ import streamlit as st
 from mimic_iv_analysis.core.clustering import ClusteringAnalyzer
 from mimic_iv_analysis.core.feature_engineering import FeatureEngineerUtils
 
+RANDOM_STATE = 42
 
 class ClusteringAnalysisTab:
 	""" Handles the UI and logic for the Clustering Analysis tab. """

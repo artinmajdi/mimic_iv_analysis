@@ -24,8 +24,6 @@ from mimic_iv_analysis.visualization.app_components import FilteringTab, Feature
 from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtils
 
 
-# TODO: run convert to parquet and load them, for all tables and fix the errors.
-
 class MIMICDashboardApp:
 
 	def __init__(self):
@@ -52,32 +50,6 @@ class MIMICDashboardApp:
 		self.init_session_state()
 		logger.info("MIMICDashboardApp initialized.")
 
-	@property
-	def _source_csv_exists(self) -> bool:
-		"""Check if a source CSV/GZ file exists for the selected table."""
-		if not st.session_state.get('selected_table') or st.session_state.selected_table == "merged_table":
-			return False
-		try:
-			table_name_enum = convert_table_names_to_enum_class(
-				name=st.session_state.selected_table,
-				module=st.session_state.selected_module
-			)
-			# This method will raise an error if the source is not found
-			self.parquet_converter._get_csv_file_path(table_name=table_name_enum)
-			return True
-		except (ValueError, IndexError): # _get_csv_file_path might cause IndexError or ValueError
-			return False
-
-	@property
-	def is_selected_table_parquet(self) -> bool:
-		"""Check if the selected table is in Parquet format."""
-		if not st.session_state.get('selected_table') or st.session_state.selected_table == "merged_table":
-			return False
-
-		file_path = st.session_state.file_paths.get((st.session_state.selected_module, st.session_state.selected_table))
-		if file_path and isinstance(file_path, Path) and file_path.suffix == '.parquet':
-			return True
-		return False
 
 	def _get_merged_table_components_to_convert(self, force_update: bool = False) -> List[TableNamesHOSP | TableNamesICU]:
 		"""
@@ -111,7 +83,7 @@ class MIMICDashboardApp:
 		logger.info("Re-scanning directory and updating state...")
 		self.data_handler.scan_mimic_directory()
 		dataset_info_df = self.data_handler.tables_info_df
-		dataset_info = self.data_handler.tables_info_dict
+		dataset_info    = self.data_handler.tables_info_dict
 
 		if dataset_info_df is not None and not dataset_info_df.empty:
 			st.session_state.available_tables    = dataset_info['available_tables']
@@ -122,193 +94,6 @@ class MIMICDashboardApp:
 		else:
 			st.session_state.available_tables = {} # Clear previous results
 			return False
-
-	@staticmethod
-	def init_session_state():
-		""" Function to initialize session state """
-		# Check if already initialized (e.g., during Streamlit rerun)
-		if 'app_initialized' in st.session_state:
-			return
-
-		logger.info("Initializing session state...")
-		# Basic App State
-		st.session_state.loader = None
-		st.session_state.datasets = {}
-		st.session_state.selected_module = None
-		st.session_state.selected_table = None
-		st.session_state.df = None
-		st.session_state.available_tables = {}
-		st.session_state.file_paths = {}
-		st.session_state.file_sizes = {}
-		st.session_state.table_display_names = {}
-		st.session_state.mimic_path = DEFAULT_MIMIC_PATH
-		st.session_state.total_row_count = 0
-		st.session_state.use_dask = True
-		st.session_state.current_view = 'data_explorer'
-
-		# Feature engineering states
-		st.session_state.detected_order_cols = []
-		st.session_state.detected_time_cols = []
-		st.session_state.detected_patient_id_col = None
-		st.session_state.freq_matrix = None
-		st.session_state.order_sequences = None
-		st.session_state.timing_features = None
-		st.session_state.order_dist = None
-		st.session_state.patient_order_dist = None
-		st.session_state.transition_matrix = None
-
-		# Clustering states
-		st.session_state.clustering_input_data = None # Holds the final data used for clustering (post-preprocessing)
-		st.session_state.reduced_data = None         # Holds dimensionality-reduced data
-		st.session_state.kmeans_labels = None
-		st.session_state.hierarchical_labels = None
-		st.session_state.dbscan_labels = None
-		st.session_state.lda_results = None          # Dictionary to hold LDA outputs
-		st.session_state.cluster_metrics = {}        # Store metrics like {'kmeans': {...}, 'dbscan': {...}}
-		st.session_state.optimal_k = None
-		st.session_state.optimal_eps = None
-
-		# Analysis states (Post-clustering)
-		st.session_state.length_of_stay = None
-
-		# Filtering states
-		st.session_state.filter_params = {
-			'apply_encounter_timeframe' : False, 'encounter_timeframe'            : [],    # Default to off
-			'apply_age_range'           : False, 'min_age'                        : 18,    'max_age': 90, # Default to off
-			'apply_t2dm_diagnosis'      : False, 'apply_valid_admission_discharge': False,
-			'apply_inpatient_stay'      : False, 'admission_types'                : [],
-			'require_inpatient_transfer': False, 'required_inpatient_units'       : [],
-			'exclude_in_hospital_death' : False
-		}
-
-		st.session_state.app_initialized = True # Mark as initialized
-		logger.info("Session state initialized.")
-
-	def _run_parquet_conversion(self, tables_to_process: Optional[List[TableNamesHOSP | TableNamesICU]], process_type: str):
-		"""Generic handler for converting or updating tables to Parquet."""
-		if process_type == 'convert':
-			verb_ing = "Converting"
-			verb_ed = "converted"
-		else:  # update
-			verb_ing = "Updating"
-			verb_ed = "updated"
-
-		if not tables_to_process:
-			st.sidebar.warning("No tables to process.")
-			return
-
-		progress_bar = st.sidebar.progress(0)
-		status_text = st.sidebar.empty()
-		total_tables = len(tables_to_process)
-
-		try:
-			for i, table_enum in enumerate(tables_to_process):
-				progress = (i + 1) / total_tables
-				status_text.info(f"{verb_ing} table: **{table_enum.value}** ({i+1} of {total_tables})...")
-				self.parquet_converter.save_as_parquet(table_name=table_enum)
-				progress_bar.progress(progress)
-
-			status_text.empty()
-			progress_bar.empty()
-
-			if self._rescan_and_update_state():
-				st.sidebar.success(f"Successfully {verb_ed} {total_tables} table(s)!")
-			else:
-				st.sidebar.error(f"{process_type.title()} might have failed. Could not find updated tables.")
-
-		except Exception as e:
-			status_text.error(f"Error during {process_type} job: {e}")
-			logger.error(f"Parquet {process_type} job failed: {e}", exc_info=True)
-			progress_bar.empty()
-
-	def _convert_table_to_parquet(self, tables_to_convert: Optional[List[TableNamesHOSP | TableNamesICU]] = None):
-		"""Callback to convert the selected table to Parquet format."""
-		if tables_to_convert is None:
-			# This is for a single table conversion
-			table_name_enum = convert_table_names_to_enum_class(
-				name   = st.session_state.selected_table,
-				module = st.session_state.selected_module )
-    
-			tables_to_convert = [table_name_enum]
-		self._run_parquet_conversion(tables_to_convert, "convert")
-
-	def _update_table_to_parquet(self, tables_to_update: Optional[List[TableNamesHOSP | TableNamesICU]] = None):
-		"""Callback to re-convert a table to update its Parquet file."""
-		if tables_to_update is None:
-			table_name_enum = convert_table_names_to_enum_class(
-				name   = st.session_state.selected_table,
-				module = st.session_state.selected_module )
-    
-			tables_to_update = [table_name_enum]
-		self._run_parquet_conversion(tables_to_update, "update")
-
-	def run(self):
-		"""Run the main application loop."""
-
-		logger.info("Starting MIMICDashboardApp run...")
-
-		# Set page config (do this only once at the start)
-		st.set_page_config( page_title="MIMIC-IV Explorer", page_icon="🏥", layout="wide", initial_sidebar_state="expanded" )
-
-		# Custom CSS for better styling
-		st.markdown("""
-			<style>
-			.main .block-container {padding-top: 2rem; padding-bottom: 2rem; padding-left: 5rem; padding-right: 5rem;}
-			.sub-header {margin-top: 20px; margin-bottom: 10px; color: #1E88E5; border-bottom: 1px solid #ddd; padding-bottom: 5px;}
-			h3 {margin-top: 15px; margin-bottom: 10px; color: #333;}
-			h4 {margin-top: 10px; margin-bottom: 5px; color: #555;}
-			.info-box {
-				background-color: #eef2f7; /* Lighter blue */
-				border-radius: 5px;
-				padding: 15px;
-				margin-bottom: 15px;
-				border-left: 5px solid #1E88E5; /* Blue left border */
-				font-size: 0.95em;
-			}
-			.stTabs [data-baseweb="tab-list"] {
-				gap: 12px; /* Smaller gap between tabs */
-			}
-			.stTabs [data-baseweb="tab"] {
-				height: 45px;
-				white-space: pre-wrap;
-				background-color: #f0f2f6;
-				border-radius: 4px 4px 0px 0px;
-				gap: 1px;
-				padding: 10px 15px; /* Adjust padding */
-				font-size: 0.9em; /* Slightly smaller font */
-			}
-			.stTabs [aria-selected="true"] {
-				background-color: #ffffff; /* White background for selected tab */
-				font-weight: bold;
-			}
-			.stButton>button {
-				border-radius: 4px;
-				padding: 8px 16px;
-			}
-			.stMultiSelect > div > div {
-				border-radius: 4px;
-			}
-			.stDataFrame {
-				border: 1px solid #eee;
-				border-radius: 4px;
-			}
-			</style>
-			""", unsafe_allow_html=True)
-
-		# Display the sidebar
-		self._display_sidebar()
-
-		# Display the selected view (Data Explorer or Filtering)
-		if st.session_state.current_view == 'data_explorer':
-			self._show_data_explorer_view()
-
-		else:
-			st.title("Cohort Filtering Configuration")
-			# Ensure necessary components are passed if FilteringTab needs them
-			FilteringTab(current_file_path=self.current_file_path).render(data_handler=self.data_handler, feature_engineer=self.feature_engineer)
-
-		logger.info("MIMICDashboardApp run finished.")
-
 
 	def _scan_dataset(self):
 
@@ -368,7 +153,6 @@ class MIMICDashboardApp:
 					except Exception as e:
 						st.sidebar.error(f"Error scanning directory: {e}")
 						logger.exception("Error during directory scan")
-
 
 	def _display_sidebar(self):
 		"""Handles the display and logic of the sidebar components."""
@@ -480,7 +264,7 @@ class MIMICDashboardApp:
 				table_name = TableNamesHOSP.ADMISSIONS
 			else:
 				table_name = convert_table_names_to_enum_class(name=st.session_state.selected_table, module=st.session_state.selected_module)
-   
+
 			total_unique_subjects = len(self.data_handler.all_subject_ids(table_name=table_name))
 
 			help_text_num_subjects = f"Number of subjects to load. Max: {total_unique_subjects}."
@@ -603,13 +387,6 @@ class MIMICDashboardApp:
 		else:
 			st.sidebar.info("Scan a MIMIC-IV directory to select and load tables.")
 
-	@property
-	def has_no_subject_id_column(self):
-		"""Check if the current table has a subject_id column."""
-		tables_that_can_be_sampled = [	"merged_table" ] + [table.value for table in self.data_handler.tables_w_subject_id_column]
-		return st.session_state.selected_table not in tables_that_can_be_sampled
-
-
 	def _load_table(self, selected_display: str = None) -> Tuple[Optional[pd.DataFrame], int]:
 		"""Load a specific MIMIC-IV table, handling large files and sampling."""
 
@@ -620,7 +397,7 @@ class MIMICDashboardApp:
 			num_subjects_to_load = st.session_state.get('num_subjects_to_load')
 
 			if num_subjects_to_load and num_subjects_to_load > 0:
-				
+
 				# For merged table, we need a base table to get subject IDs from
 				if st.session_state.selected_table == 'merged_table':
 					table_for_ids = TableNamesHOSP.ADMISSIONS
@@ -771,7 +548,6 @@ class MIMICDashboardApp:
 			else:
 				_load_single_table(target_subject_ids, loading_message)
 
-
 	def _clear_analysis_states(self):
 		"""Clears session state related to previous analysis when new data is loaded."""
 		logger.info("Clearing previous analysis states...")
@@ -794,7 +570,6 @@ class MIMICDashboardApp:
 		st.session_state.optimal_eps = None
 		# Analysis
 		st.session_state.length_of_stay = None
-
 
 	def _export_options(self):
 		st.markdown("<h2 class='sub-header'>Export Loaded Data</h2>", unsafe_allow_html=True)
@@ -865,7 +640,6 @@ class MIMICDashboardApp:
 
 				except Exception as e:
 					st.error(f"Error preparing Parquet for download: {e}")
-
 
 	def _show_data_explorer_view(self):
 		"""Handles the display of the main content area with tabs for data exploration and analysis."""
@@ -978,6 +752,228 @@ class MIMICDashboardApp:
 			# Tab 5: Export Options
 			with tab5:
 				self._export_options()
+
+
+	def run(self):
+		"""Run the main application loop."""
+
+		logger.info("Starting MIMICDashboardApp run...")
+
+		# Set page config (do this only once at the start)
+		st.set_page_config( page_title="MIMIC-IV Explorer", page_icon="🏥", layout="wide", initial_sidebar_state="expanded" )
+
+		# Custom CSS for better styling
+		st.markdown("""
+			<style>
+			.main .block-container {padding-top: 2rem; padding-bottom: 2rem; padding-left: 5rem; padding-right: 5rem;}
+			.sub-header {margin-top: 20px; margin-bottom: 10px; color: #1E88E5; border-bottom: 1px solid #ddd; padding-bottom: 5px;}
+			h3 {margin-top: 15px; margin-bottom: 10px; color: #333;}
+			h4 {margin-top: 10px; margin-bottom: 5px; color: #555;}
+			.info-box {
+				background-color: #eef2f7; /* Lighter blue */
+				border-radius: 5px;
+				padding: 15px;
+				margin-bottom: 15px;
+				border-left: 5px solid #1E88E5; /* Blue left border */
+				font-size: 0.95em;
+			}
+			.stTabs [data-baseweb="tab-list"] {
+				gap: 12px; /* Smaller gap between tabs */
+			}
+			.stTabs [data-baseweb="tab"] {
+				height: 45px;
+				white-space: pre-wrap;
+				background-color: #f0f2f6;
+				border-radius: 4px 4px 0px 0px;
+				gap: 1px;
+				padding: 10px 15px; /* Adjust padding */
+				font-size: 0.9em; /* Slightly smaller font */
+			}
+			.stTabs [aria-selected="true"] {
+				background-color: #ffffff; /* White background for selected tab */
+				font-weight: bold;
+			}
+			.stButton>button {
+				border-radius: 4px;
+				padding: 8px 16px;
+			}
+			.stMultiSelect > div > div {
+				border-radius: 4px;
+			}
+			.stDataFrame {
+				border: 1px solid #eee;
+				border-radius: 4px;
+			}
+			</style>
+			""", unsafe_allow_html=True)
+
+		# Display the sidebar
+		self._display_sidebar()
+
+		# Display the selected view (Data Explorer or Filtering)
+		if st.session_state.current_view == 'data_explorer':
+			self._show_data_explorer_view()
+
+		else:
+			st.title("Cohort Filtering Configuration")
+			# Ensure necessary components are passed if FilteringTab needs them
+			FilteringTab(current_file_path=self.current_file_path).render(data_handler=self.data_handler, feature_engineer=self.feature_engineer)
+
+		logger.info("MIMICDashboardApp run finished.")
+
+
+	@staticmethod
+	def init_session_state():
+		""" Function to initialize session state """
+		# Check if already initialized (e.g., during Streamlit rerun)
+		if 'app_initialized' in st.session_state:
+			return
+
+		logger.info("Initializing session state...")
+		# Basic App State
+		st.session_state.loader = None
+		st.session_state.datasets = {}
+		st.session_state.selected_module = None
+		st.session_state.selected_table = None
+		st.session_state.df = None
+		st.session_state.available_tables = {}
+		st.session_state.file_paths = {}
+		st.session_state.file_sizes = {}
+		st.session_state.table_display_names = {}
+		st.session_state.mimic_path = DEFAULT_MIMIC_PATH
+		st.session_state.total_row_count = 0
+		st.session_state.use_dask = True
+		st.session_state.current_view = 'data_explorer'
+
+		# Feature engineering states
+		st.session_state.detected_order_cols = []
+		st.session_state.detected_time_cols = []
+		st.session_state.detected_patient_id_col = None
+		st.session_state.freq_matrix = None
+		st.session_state.order_sequences = None
+		st.session_state.timing_features = None
+		st.session_state.order_dist = None
+		st.session_state.patient_order_dist = None
+		st.session_state.transition_matrix = None
+
+		# Clustering states
+		st.session_state.clustering_input_data = None # Holds the final data used for clustering (post-preprocessing)
+		st.session_state.reduced_data = None         # Holds dimensionality-reduced data
+		st.session_state.kmeans_labels = None
+		st.session_state.hierarchical_labels = None
+		st.session_state.dbscan_labels = None
+		st.session_state.lda_results = None          # Dictionary to hold LDA outputs
+		st.session_state.cluster_metrics = {}        # Store metrics like {'kmeans': {...}, 'dbscan': {...}}
+		st.session_state.optimal_k = None
+		st.session_state.optimal_eps = None
+
+		# Analysis states (Post-clustering)
+		st.session_state.length_of_stay = None
+
+		# Filtering states
+		st.session_state.filter_params = {
+			'apply_encounter_timeframe' : False, 'encounter_timeframe'            : [],    # Default to off
+			'apply_age_range'           : False, 'min_age'                        : 18,    'max_age': 90, # Default to off
+			'apply_t2dm_diagnosis'      : False, 'apply_valid_admission_discharge': False,
+			'apply_inpatient_stay'      : False, 'admission_types'                : [],
+			'require_inpatient_transfer': False, 'required_inpatient_units'       : [],
+			'exclude_in_hospital_death' : False
+		}
+
+		st.session_state.app_initialized = True # Mark as initialized
+		logger.info("Session state initialized.")
+
+	@property
+	def is_selected_table_parquet(self) -> bool:
+		"""Check if the selected table is in Parquet format."""
+		if not st.session_state.get('selected_table') or st.session_state.selected_table == "merged_table":
+			return False
+
+		file_path = st.session_state.file_paths.get((st.session_state.selected_module, st.session_state.selected_table))
+		if file_path and isinstance(file_path, Path) and file_path.suffix == '.parquet':
+			return True
+		return False
+
+	@property
+	def _source_csv_exists(self) -> bool:
+		"""Check if a source CSV/GZ file exists for the selected table."""
+		if not st.session_state.get('selected_table') or st.session_state.selected_table == "merged_table":
+			return False
+		try:
+			table_name_enum = convert_table_names_to_enum_class(
+				name=st.session_state.selected_table,
+				module=st.session_state.selected_module
+			)
+			# This method will raise an error if the source is not found
+			self.parquet_converter._get_csv_file_path(table_name=table_name_enum)
+			return True
+		except (ValueError, IndexError): # _get_csv_file_path might cause IndexError or ValueError
+			return False
+
+	@property
+	def has_no_subject_id_column(self):
+		"""Check if the current table has a subject_id column."""
+		tables_that_can_be_sampled = [	"merged_table" ] + [table.value for table in self.data_handler._list_of_tables_w_subject_id_column]
+		return st.session_state.selected_table not in tables_that_can_be_sampled
+
+
+	# --------------- Parquet Conversion ---------------
+	def _run_parquet_conversion(self, tables_to_process: Optional[List[TableNamesHOSP | TableNamesICU]], process_type: str):
+		"""Generic handler for converting or updating tables to Parquet."""
+
+		verb_ing = "Converting" if process_type == 'convert' else "Updating"
+		verb_ed  = "converted" if process_type == 'convert' else "updated"
+
+		if not tables_to_process:
+			st.sidebar.warning("No tables to process.")
+			return
+
+		progress_bar = st.sidebar.progress(0)
+		status_text  = st.sidebar.empty()
+		total_tables = len(tables_to_process)
+
+		try:
+			for i, table_enum in enumerate(tables_to_process):
+				progress = (i + 1) / total_tables
+				status_text.info(f"{verb_ing} table: **{table_enum.value}** ({i+1} of {total_tables})...")
+				self.parquet_converter.save_as_parquet(table_name=table_enum)
+				progress_bar.progress(progress)
+
+			status_text.empty()
+			progress_bar.empty()
+
+			if self._rescan_and_update_state():
+				st.sidebar.success(f"Successfully {verb_ed} {total_tables} table(s)!")
+			else:
+				st.sidebar.error(f"{process_type.title()} might have failed. Could not find updated tables.")
+
+		except Exception as e:
+			status_text.error(f"Error during {process_type} job: {e}")
+			logger.error(f"Parquet {process_type} job failed: {e}", exc_info=True)
+			progress_bar.empty()
+			st.exception(e)
+
+	def _convert_table_to_parquet(self, tables_to_convert: Optional[List[TableNamesHOSP | TableNamesICU]] = None):
+		"""Callback to convert the selected table to Parquet format."""
+		if tables_to_convert is None:
+			# This is for a single table conversion
+			table_name_enum = convert_table_names_to_enum_class(
+				name   = st.session_state.selected_table,
+				module = st.session_state.selected_module )
+
+			tables_to_convert = [table_name_enum]
+		self._run_parquet_conversion(tables_to_convert, "convert")
+
+	def _update_table_to_parquet(self, tables_to_update: Optional[List[TableNamesHOSP | TableNamesICU]] = None):
+		"""Callback to re-convert a table to update its Parquet file."""
+		if tables_to_update is None:
+			table_name_enum = convert_table_names_to_enum_class(
+				name   = st.session_state.selected_table,
+				module = st.session_state.selected_module )
+
+			tables_to_update = [table_name_enum]
+		self._run_parquet_conversion(tables_to_update, "update")
+
 
 
 def main():

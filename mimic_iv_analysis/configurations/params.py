@@ -132,7 +132,7 @@ COLUMN_TYPES = {
 
     # ID columns
     'subject_id'            : 'int64',
-    'hadm_id'               : 'int64',
+    'hadm_id'               : 'string',
     'stay_id'               : 'int64',
     'icustay_id'            : 'int64',
     'itemid'                : 'int64',
@@ -182,21 +182,6 @@ COLUMN_TYPES = {
     'flag_work_phone': 'bool',
     'flag_phone'     : 'bool',
     'flag_email'     : 'bool',
-
-    # # Date/Time columns
-    # 'admittime'   : 'datetime64[ns]',
-    # 'dischtime'   : 'datetime64[ns]',
-    # 'deathtime'   : 'datetime64[ns]',
-    # 'edregtime'   : 'datetime64[ns]',
-    # 'edouttime'   : 'datetime64[ns]',
-    # 'storetime'   : 'datetime64[ns]',
-    # 'scheduletime': 'datetime64[ns]',
-    # 'storedate'   : 'datetime64[ns]',
-    # 'starttime'   : 'datetime64[ns]',
-    # 'endtime'     : 'datetime64[ns]',
-    # 'transfertime': 'datetime64[ns]',
-    # 'dod'         : 'datetime64[ns]',
-    # 'charttime'   : 'datetime64[ns]',
 
     # Object columns (requiring special handling)
     'interpretation'  : 'string',

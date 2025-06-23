@@ -329,6 +329,10 @@ class DataLoader:
 		else:
 
 			df = self._load_table_full(table_name=table_name, use_dask=True)
+			# if 'subject_id' not in df.columns:
+			# 	logger.warning(f"Table '{table_name.value}' does not have 'subject_id' column. Skipping subject ID loading from this table.")
+			# 	return
+
 			subject_ids = df['subject_id'].unique().compute()
 
 			# Save subject IDs
@@ -634,14 +638,15 @@ class DataLoader:
 			'merged_full_study': merged_full_study,
 			'poe_and_details'  : poe_and_details }
 
+
 	@property
 	def tables_w_subject_id_column(self) -> List[TableNamesHOSP | TableNamesICU]:
 		"""Tables that have a subject_id column."""
-		return  [	TableNamesHOSP.PATIENTS, 
-					TableNamesHOSP.ADMISSIONS, 
-					TableNamesHOSP.TRANSFERS, 
-					TableNamesHOSP.DIAGNOSES_ICD, 
-					TableNamesHOSP.POE, 
+		return  [	TableNamesHOSP.PATIENTS,
+					TableNamesHOSP.ADMISSIONS,
+					TableNamesHOSP.TRANSFERS,
+					TableNamesHOSP.DIAGNOSES_ICD,
+					TableNamesHOSP.POE,
 					TableNamesHOSP.POE_DETAIL]
 
 	@property
@@ -862,14 +867,14 @@ class ParquetConverter:
 
 		# # Get all columns from the DataFrame
 		# all_columns = df.columns.tolist()
-		
+
 		# # Get custom types from configurations
 		# dtypes, parse_dates = DataLoader._get_column_dtype(columns_list=all_columns)
-		
+
 		# # Create a dictionary for quick lookup of custom pyarrow types
 		# custom_pyarrow_types = {col: pyarrow_dtypes_map[dtype] for col, dtype in dtypes.items()}
 		# custom_pyarrow_types.update({col: pa.timestamp('ns') for col in parse_dates})
-		
+
 		# # Create fields for all columns
 		# fields = []
 		# for col in all_columns:
@@ -920,8 +925,6 @@ class ParquetConverter:
 			table = pa.Table.from_pandas(df, schema=schema)
 			pq.write_table(table, target_parquet_path, compression='snappy')
 
-
-
 	def save_all_tables_as_parquet(self, tables_list: Optional[List[TableNamesHOSP | TableNamesICU]] = None) -> None:
 		"""
 		Save all tables as Parquet files.
@@ -936,6 +939,7 @@ class ParquetConverter:
 		# Save tables as parquet
 		for table_name in tqdm(tables_list, desc="Saving tables as parquet"):
 			self.save_as_parquet(table_name=table_name)
+
 
 
 if __name__ == '__main__':
