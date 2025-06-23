@@ -132,7 +132,6 @@ COLUMN_TYPES = {
 
     # ID columns
     'subject_id'            : 'int64',
-    'hadm_id'               : 'string',
     'stay_id'               : 'int64',
     'icustay_id'            : 'int64',
     'itemid'                : 'int64',
@@ -141,6 +140,7 @@ COLUMN_TYPES = {
     'poe_seq'               : 'int64',
     'anchor_year'           : 'int64',
     'anchor_age'            : 'int64',
+    'seq_num'               : 'int64',
     'pharmacy_id'           : 'string',
     'poe_id'                : 'string',
     'order_provider_id'     : 'string',
@@ -197,6 +197,7 @@ COLUMN_TYPES = {
     'gsn'             : 'string',
     'dose_val_rx'     : 'string',
     'prev_service'    : 'string',
+    'hadm_id'         : 'string',
 }
 
 # List of datetime columns for parsing

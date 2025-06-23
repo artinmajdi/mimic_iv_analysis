@@ -494,6 +494,7 @@ class DataLoader:
 
 		# Load table
 		df = self._load_table_full(table_name=table_name, use_dask=use_dask)
+
 		logger.info(f"Loading full table: {_get_n_rows(df)} rows.")
 
 		# Apply filtering
