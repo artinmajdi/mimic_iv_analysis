@@ -5,8 +5,12 @@ import pyarrow as pa
 import pandas as pd
 import dask.dataframe as dd
 
+class TableNames(enum.Enum):
 
-class TableNamesHOSP(enum.Enum):
+    # ----- Merged Tables -----
+    MERGED = 'merged_table'
+
+    # ----- HOSP Tables -----
     ADMISSIONS         = 'admissions'
     D_HCPCS            = 'd_hcpcs'
     D_ICD_DIAGNOSES    = 'd_icd_diagnoses'
@@ -30,6 +34,21 @@ class TableNamesHOSP(enum.Enum):
     SERVICES           = 'services'
     TRANSFERS          = 'transfers'
 
+    # ----- ICU Tables -----
+    CAREGIVER          = 'caregiver'
+    CHARTEVENTS        = 'chartevents'
+    DATETIMEEVENTS     = 'datetimeevents'
+    D_ITEMS            = 'd_items'
+    ICUSTAYS           = 'icustays'
+    INGREDIENTEVENTS   = 'ingredientevents'
+    INPUTEVENTS        = 'inputevents'
+    OUTPUTEVENTS       = 'outputevents'
+    PROCEDUREEVENTS    = 'procedureevents'
+
+    @property
+    def hosp(self):
+        return ['ADMISSIONS', 'PATIENTS', 'LABEVENTS', 'MICROBIOLOGYEVENTS', 'PHARMACY', 'PRESCRIPTIONS', 'PROCEDURES_ICD', 'DIAGNOSES_ICD', 'EMAR', 'EMAR_DETAIL', 'POE', 'POE_DETAIL', 'D_HCPCS', 'D_ICD_DIAGNOSES', 'D_ICD_PROCEDURES', 'D_LABITEMS', 'HCPCSEVENTS', 'DRGCODES', 'SERVICES', 'TRANSFERS', 'PROVIDER']
+
     @classmethod
     def values(cls):
         return [member.value for member in cls]
@@ -37,6 +56,11 @@ class TableNamesHOSP(enum.Enum):
     @property
     def description(self):
         tables_descriptions = {
+
+            # ----- Merged Tables -----
+            ('merged', 'merged_table')    : "Merged table combining relevant columns from multiple HOSP and ICU sources.",
+
+            # ----- HOSP Tables -----
             ('hosp', 'admissions')        : "Patient hospital admissions information",
             ('hosp', 'patients')          : "Patient demographic data",
             ('hosp', 'labevents')         : "Laboratory measurements (large file)",
@@ -58,33 +82,9 @@ class TableNamesHOSP(enum.Enum):
             ('hosp', 'services')          : "Hospital services",
             ('hosp', 'transfers')         : "Patient transfers",
             ('hosp', 'provider')          : "Provider information",
-            ('hosp', 'omr')               : "Order monitoring results"
-        }
-        return tables_descriptions.get(('hosp', self.value))
+            ('hosp', 'omr')               : "Order monitoring results",
 
-    @property
-    def module(self):
-        return 'hosp'
-
-
-class TableNamesICU(enum.Enum):
-    CAREGIVER          = 'caregiver'
-    CHARTEVENTS        = 'chartevents'
-    DATETIMEEVENTS     = 'datetimeevents'
-    D_ITEMS            = 'd_items'
-    ICUSTAYS           = 'icustays'
-    INGREDIENTEVENTS   = 'ingredientevents'
-    INPUTEVENTS        = 'inputevents'
-    OUTPUTEVENTS       = 'outputevents'
-    PROCEDUREEVENTS    = 'procedureevents'
-
-    @classmethod
-    def values(cls):
-        return [member.value for member in cls]
-
-    @property
-    def description(self):
-        tables_descriptions = {
+            # ----- ICU Tables -----
             ('icu', 'chartevents')        : "Patient charting data (vital signs, etc.)",
             ('icu', 'datetimeevents')     : "Date/time-based events",
             ('icu', 'inputevents')        : "Patient intake data",
@@ -95,27 +95,29 @@ class TableNamesICU(enum.Enum):
             ('icu', 'icustays')           : "ICU stay information",
             ('icu', 'caregiver')          : "Caregiver information"
         }
-        return tables_descriptions.get(('icu', self.value))
+        return tables_descriptions.get((self.module, self.value))
 
     @property
     def module(self):
+        if self == TableNames.MERGED:
+            return 'merged'
+        if self.name in self.hosp:
+            return 'hosp'
         return 'icu'
 
-
-
 DEFAULT_STUDY_TABLES_LIST = [
-				TableNamesHOSP.PATIENTS,
-				TableNamesHOSP.ADMISSIONS,
-				TableNamesHOSP.DIAGNOSES_ICD,
-				# TableNamesHOSP.TRANSFERS,
-				TableNamesHOSP.D_ICD_DIAGNOSES,
-				TableNamesHOSP.POE,
-				TableNamesHOSP.POE_DETAIL
+				TableNames.PATIENTS,
+				TableNames.ADMISSIONS,
+				TableNames.DIAGNOSES_ICD,
+				# TableNames.TRANSFERS,
+				TableNames.D_ICD_DIAGNOSES,
+				TableNames.POE,
+				TableNames.POE_DETAIL
 			]
 
 
-def convert_table_names_to_enum_class(name: str, module: Literal['hosp', 'icu']='hosp') -> TableNamesHOSP | TableNamesICU:
-    return TableNamesHOSP(name) if module == 'hosp' else TableNamesICU(name)
+# def convert_table_names_to_enum_class(name: str, module: Literal['hosp', 'icu']='hosp') -> TableNames:
+#     return TableNames(name)
 
 
 # Constants
@@ -219,15 +221,15 @@ DATETIME_COLUMNS = [
 
 # Mapping of tables to their categorical columns
 TABLE_CATEGORICAL_COLUMNS = {
-	TableNamesHOSP.PATIENTS.value       : ['gender', 'race'],
-	TableNamesHOSP.ADMISSIONS.value     : ['admission_type', 'admission_location', 'discharge_location', 'insurance', 'language', 'marital_status'],
-	TableNamesHOSP.SERVICES.value       : ['curr_service', 'prev_service'],
-	TableNamesHOSP.PHARMACY.value       : ['drug_type', 'route', 'form_rx'],
-	TableNamesHOSP.PRESCRIPTIONS.value  : ['drug_type', 'route', 'form_rx', 'dose_unit_rx', 'form_unit_disp', 'expiration_unit', 'duration_interval', 'dispensation'],
-	TableNamesHOSP.DRGCODES.value       : ['drg_type'],
-	TableNamesHOSP.D_ICD_DIAGNOSES.value: ['icd_version'],
-	TableNamesHOSP.DIAGNOSES_ICD.value  : ['icd_version', 'seq_num'],
-	TableNamesHOSP.POE.value            : ['order_type', 'transaction_type'],
+	TableNames.PATIENTS.value       : ['gender', 'race'],
+	TableNames.ADMISSIONS.value     : ['admission_type', 'admission_location', 'discharge_location', 'insurance', 'language', 'marital_status'],
+	TableNames.SERVICES.value       : ['curr_service', 'prev_service'],
+	TableNames.PHARMACY.value       : ['drug_type', 'route', 'form_rx'],
+	TableNames.PRESCRIPTIONS.value  : ['drug_type', 'route', 'form_rx', 'dose_unit_rx', 'form_unit_disp', 'expiration_unit', 'duration_interval', 'dispensation'],
+	TableNames.DRGCODES.value       : ['drg_type'],
+	TableNames.D_ICD_DIAGNOSES.value: ['icd_version'],
+	TableNames.DIAGNOSES_ICD.value  : ['icd_version', 'seq_num'],
+	TableNames.POE.value            : ['order_type', 'transaction_type'],
 }
 
 # Default dtypes for pandas loading

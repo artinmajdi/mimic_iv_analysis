@@ -17,7 +17,7 @@ import pdb
 from mimic_iv_analysis import logger
 from mimic_iv_analysis.core import FeatureEngineerUtils
 from mimic_iv_analysis.io import DataLoader, ParquetConverter
-from mimic_iv_analysis.configurations import TableNamesHOSP, TableNamesICU, convert_table_names_to_enum_class, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS
+from mimic_iv_analysis.configurations import TableNames, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS
 
 from mimic_iv_analysis.visualization.app_components import FilteringTab, FeatureEngineeringTab, AnalysisVisualizationTab, ClusteringAnalysisTab
 
@@ -51,7 +51,7 @@ class MIMICDashboardApp:
 		logger.info("MIMICDashboardApp initialized.")
 
 
-	def _get_merged_table_components_to_convert(self, force_update: bool = False) -> List[TableNamesHOSP | TableNamesICU]:
+	def _get_merged_table_components_to_convert(self, force_update: bool = False) -> List[TableNames]:
 		"""
 		Checks which component tables of the merged table need to be converted to Parquet.
 
@@ -207,7 +207,7 @@ class MIMICDashboardApp:
 
 				logger.info(f"Displaying table info for {module}.{table}")
 
-				table_info = convert_table_names_to_enum_class(name=table, module=module).description
+				table_info = TableNames(table).description
 
 				if table_info:
 					st.sidebar.markdown( f"**Description:** {table_info}", help="Table description from MIMIC-IV documentation." )
@@ -261,9 +261,9 @@ class MIMICDashboardApp:
 		def _select_sampling_parameters():
 
 			if st.session_state.selected_table == 'merged_table' or self.has_no_subject_id_column:
-				table_name = TableNamesHOSP.ADMISSIONS
+				table_name = TableNames.ADMISSIONS
 			else:
-				table_name = convert_table_names_to_enum_class(name=st.session_state.selected_table, module=st.session_state.selected_module)
+				table_name = TableNames(st.session_state.selected_table)
 
 			total_unique_subjects = len(self.data_handler.all_subject_ids(table_name=table_name))
 
@@ -271,7 +271,7 @@ class MIMICDashboardApp:
 
 			# Subject-based sampling not available if no subjects found
 			if total_unique_subjects == 0 and self.data_handler.tables_info_df is not None:
-				st.sidebar.warning(f"Could not load subject IDs from '{TableNamesHOSP.PATIENTS}'. Ensure it's present and readable.")
+				st.sidebar.warning(f"Could not load subject IDs from '{TableNames.PATIENTS}'. Ensure it's present and readable.")
 
 			# Subject-based sampling not available if no subjects found
 			elif self.data_handler.tables_info_df is None:
@@ -390,29 +390,26 @@ class MIMICDashboardApp:
 	def _load_table(self, selected_display: str = None) -> Tuple[Optional[pd.DataFrame], int]:
 		"""Load a specific MIMIC-IV table, handling large files and sampling."""
 
-		def _get_subject_ids_list_and_loading_message() -> Tuple[Optional[List[int]], str]:
+		# def _get_subject_ids_list_and_loading_message() -> Tuple[Optional[List[int]], str]:
 
-			target_subject_ids = None
-			loading_message = "Loading full table..."
-			num_subjects_to_load = st.session_state.get('num_subjects_to_load')
+		# 	target_subject_ids = None
+		# 	loading_message = "Loading full table..."
+		# 	num_subjects_to_load = st.session_state.get('num_subjects_to_load')
 
-			if num_subjects_to_load and num_subjects_to_load > 0:
+		# 	if num_subjects_to_load and num_subjects_to_load > 0:
 
-				# For merged table, we need a base table to get subject IDs from
-				if st.session_state.selected_table == 'merged_table':
-					table_for_ids = TableNamesHOSP.ADMISSIONS
-				else:
-					table_for_ids = convert_table_names_to_enum_class(
-						name=st.session_state.selected_table,
-						module=st.session_state.selected_module
-					)
+		# 		# For merged table, we need a base table to get subject IDs from
+		# 		if st.session_state.selected_table == 'merged_table':
+		# 			table_for_ids = TableNames.ADMISSIONS
+		# 		else:
+		# 			table_for_ids = TableNames(st.session_state.selected_table)
 
-				target_subject_ids = self.data_handler.get_partial_subject_id_list_for_partial_loading(
-					num_subjects=num_subjects_to_load,
-					table_name=table_for_ids
-				)
-				loading_message = f"Loading table for {len(target_subject_ids)} subjects..."
-			return target_subject_ids, loading_message
+		# 		target_subject_ids = self.data_handler.get_partial_subject_id_list_for_partial_loading(
+		# 			num_subjects = num_subjects_to_load,
+		# 			table_name   = table_for_ids
+		# 		)
+		# 		loading_message = f"Loading table for {num_subjects_to_load} subjects..."
+		# 	return target_subject_ids, loading_message
 
 		def _get_total_rows(df):
 			if df is None:
@@ -424,7 +421,7 @@ class MIMICDashboardApp:
 
 			return st.session_state.total_row_count
 
-		def _load_merged_table(target_subject_ids, loading_message) -> pd.DataFrame:
+		def _load_merged_table() -> pd.DataFrame:
 
 			def _merged_df_is_valid(merged_df, total_rows):
 
@@ -452,17 +449,16 @@ class MIMICDashboardApp:
 				with st.spinner("Loading and merging connected tables..."):
 
 					# Load tables
-					st.session_state.connected_tables = self.data_handler.load_all_study_tables(partial_loading=True, subject_ids=target_subject_ids, use_dask=st.session_state.use_dask)
+					st.session_state.connected_tables = self.data_handler.load_all_study_tables_full(use_dask=st.session_state.use_dask)
 
 					# Load merged tables
-					merged_results = self.data_handler.load_merged_tables(tables_dict=st.session_state.connected_tables)
+					return self.data_handler.load_merged_tables(tables_dict=st.session_state.connected_tables, partial_loading=not st.session_state.load_full, num_subjects=st.session_state.num_subjects_to_load)
 
-				return merged_results['merged_full_study']
 
 			if not _dataset_path_is_valid():
 				return
 
-			with st.spinner(loading_message):
+			with st.spinner("Loading and merging connected tables..."):
 
 				merged_df = _load_connected_tables()
 
@@ -478,7 +474,7 @@ class MIMICDashboardApp:
 
 					st.sidebar.success(f"Successfully merged {len(st.session_state.connected_tables)} tables with {len(merged_df.columns)} columns and {total_rows} rows!")
 
-		def _load_single_table(target_subject_ids, loading_message):
+		def _load_single_table():
 
 			def _df_is_valid(df, total_rows):
 				# Check if DataFrame is not None
@@ -495,7 +491,13 @@ class MIMICDashboardApp:
 
 				return True
 
-			table_name = convert_table_names_to_enum_class(name=st.session_state.selected_table, module=st.session_state.selected_module)
+			if not st.session_state.load_full:
+				loading_message = f"Loading table for {st.session_state.num_subjects_to_load} subjects..."
+			else:
+				loading_message = "Loading table using " + ("Dask" if st.session_state.use_dask else "Pandas")
+
+
+			table_name = TableNames(st.session_state.selected_table)
 
 			file_path = st.session_state.file_paths.get((st.session_state.selected_module, st.session_state.selected_table))
 
@@ -503,13 +505,12 @@ class MIMICDashboardApp:
 
 			with st.spinner(loading_message):
 
-				df = self.data_handler.load_table(
+				df = self.data_handler.load_one_table(
 					table_name      = table_name,
 					partial_loading = not st.session_state.load_full,
-					subject_ids     = target_subject_ids,
+					num_subjects    = st.session_state.get('num_subjects_to_load', None),
 					use_dask        = st.session_state.use_dask,
-					apply_filtering = True
-				)
+					apply_filtering = True)
 
 				total_rows = _get_total_rows(df)
 
@@ -537,16 +538,15 @@ class MIMICDashboardApp:
 
 		if st.sidebar.button("Load Selected Table", key="load_button") and _check_table_selection():
 
-			if not st.session_state.load_full:
-				target_subject_ids, loading_message = _get_subject_ids_list_and_loading_message()
-			else:
-				target_subject_ids, loading_message = None, "Loading table using " + ("Dask" if st.session_state.use_dask else "Pandas")
-
+			# if not st.session_state.load_full:
+			# 	target_subject_ids, loading_message = _get_subject_ids_list_and_loading_message()
+			# else:
+			# 	target_subject_ids, loading_message = None, "Loading table using " + ("Dask" if st.session_state.use_dask else "Pandas")
 
 			if selected_display == "merged_table":
-				_load_merged_table(target_subject_ids, loading_message)
+				_load_merged_table()
 			else:
-				_load_single_table(target_subject_ids, loading_message)
+				_load_single_table()
 
 	def _clear_analysis_states(self):
 		"""Clears session state related to previous analysis when new data is loaded."""
@@ -900,10 +900,8 @@ class MIMICDashboardApp:
 		if not st.session_state.get('selected_table') or st.session_state.selected_table == "merged_table":
 			return False
 		try:
-			table_name_enum = convert_table_names_to_enum_class(
-				name=st.session_state.selected_table,
-				module=st.session_state.selected_module
-			)
+			table_name_enum = TableNames(st.session_state.selected_table)
+
 			# This method will raise an error if the source is not found
 			self.parquet_converter._get_csv_file_path(table_name=table_name_enum)
 			return True
@@ -918,7 +916,7 @@ class MIMICDashboardApp:
 
 
 	# --------------- Parquet Conversion ---------------
-	def _run_parquet_conversion(self, tables_to_process: Optional[List[TableNamesHOSP | TableNamesICU]], process_type: str):
+	def _run_parquet_conversion(self, tables_to_process: Optional[List[TableNames]], process_type: str):
 		"""Generic handler for converting or updating tables to Parquet."""
 
 		verb_ing = "Converting" if process_type == 'convert' else "Updating"
@@ -953,23 +951,19 @@ class MIMICDashboardApp:
 			progress_bar.empty()
 			st.exception(e)
 
-	def _convert_table_to_parquet(self, tables_to_convert: Optional[List[TableNamesHOSP | TableNamesICU]] = None):
+	def _convert_table_to_parquet(self, tables_to_convert: Optional[List[TableNames]] = None):
 		"""Callback to convert the selected table to Parquet format."""
 		if tables_to_convert is None:
 			# This is for a single table conversion
-			table_name_enum = convert_table_names_to_enum_class(
-				name   = st.session_state.selected_table,
-				module = st.session_state.selected_module )
+			table_name_enum = TableNames(st.session_state.selected_table)
 
 			tables_to_convert = [table_name_enum]
 		self._run_parquet_conversion(tables_to_convert, "convert")
 
-	def _update_table_to_parquet(self, tables_to_update: Optional[List[TableNamesHOSP | TableNamesICU]] = None):
+	def _update_table_to_parquet(self, tables_to_update: Optional[List[TableNames]] = None):
 		"""Callback to re-convert a table to update its Parquet file."""
 		if tables_to_update is None:
-			table_name_enum = convert_table_names_to_enum_class(
-				name   = st.session_state.selected_table,
-				module = st.session_state.selected_module )
+			table_name_enum = TableNames(st.session_state.selected_table)
 
 			tables_to_update = [table_name_enum]
 		self._run_parquet_conversion(tables_to_update, "update")

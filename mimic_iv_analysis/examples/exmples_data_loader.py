@@ -25,7 +25,7 @@ from pathlib import Path
 # Import our modules
 from mimic_iv_analysis import logger
 from mimic_iv_analysis.io.data_loader import DataLoader, ExampleDataLoader, ParquetConverter
-from mimic_iv_analysis.configurations.params import TableNamesHOSP, TableNamesICU, DataFrameType
+from mimic_iv_analysis.configurations.params import TableNames, TableNames, DataFrameType
 
 
 
@@ -101,7 +101,7 @@ class DataLoaderExamples:
 
         # 1. Load a table fully
         logger.info("Loading 'patients' table fully...")
-        patients_df = loader.load_table(TableNamesHOSP.PATIENTS, partial_loading=False)
+        patients_df = loader.load_one_table(TableNames.PATIENTS, partial_loading=False)
 
         # Check if Dask DataFrame and compute if needed for display
         if isinstance(patients_df, dd.DataFrame):
@@ -114,11 +114,11 @@ class DataLoaderExamples:
 
         # 2. Load with partial loading by subject IDs
         logger.info("\nLoading 'patients' table with partial loading by subject IDs...")
-        partial_subject_ids = loader.get_partial_subject_id_list_for_partial_loading(num_subjects=5, random_selection=False, table_name=TableNamesHOSP.PATIENTS)
+        partial_subject_ids = loader.get_partial_subject_id_list_for_partial_loading(num_subjects=5, random_selection=False, table_name=TableNames.PATIENTS)
         logger.info(f"Selected subject IDs for partial loading: {partial_subject_ids}")
 
-        partial_df = loader.load_table(
-            TableNamesHOSP.PATIENTS,
+        partial_df = loader.load_one_table(
+            TableNames.PATIENTS,
             partial_loading=True,
             subject_ids=partial_subject_ids
         )
@@ -178,11 +178,11 @@ class DataLoaderExamples:
     def example_get_table_info():
         """Demonstrates getting descriptive information for a table."""
         logger.info("\n--- Example: Get Table Info ---")
-        # We can use the TableNamesHOSP and TableNamesICU Enum classes' description property
-        info_admissions = TableNamesHOSP.ADMISSIONS.description
+        # We can use the TableNames and TableNames Enum classes' description property
+        info_admissions = TableNames.ADMISSIONS.description
         logger.info(f"Info for ADMISSIONS: {info_admissions}")
 
-        info_chartevents = TableNamesICU.CHARTEVENTS.description
+        info_chartevents = TableNames.CHARTEVENTS.description
         logger.info(f"Info for CHARTEVENTS: {info_chartevents}")
 
     # --- ExampleDataLoader Examples ---
@@ -209,8 +209,8 @@ class DataLoaderExamples:
         # Merge two tables
         logger.info("\nMerging patients and admissions tables:")
         merged_df = example_loader.merge_two_tables(
-            TableNamesHOSP.PATIENTS,
-            TableNamesHOSP.ADMISSIONS,
+            TableNames.PATIENTS,
+            TableNames.ADMISSIONS,
             on=('subject_id',),
             how='inner'
         )
@@ -245,7 +245,7 @@ class DataLoaderExamples:
         # Example: Save a small table as Parquet
         logger.info("Saving d_labitems table as Parquet...")
         try:
-            converter.save_as_parquet(TableNamesHOSP.D_LABITEMS)
+            converter.save_as_parquet(TableNames.D_LABITEMS)
 
             logger.info("Successfully saved d_labitems as Parquet")
 

@@ -17,12 +17,10 @@ from tqdm import tqdm
 
 from mimic_iv_analysis import logger
 from mimic_iv_analysis.core.filtering import Filtering
-from mimic_iv_analysis.configurations import (  TableNamesHOSP,
-												TableNamesICU,
+from mimic_iv_analysis.configurations import (  TableNames,
 												pyarrow_dtypes_map,
 												COLUMN_TYPES,
 												DATETIME_COLUMNS,
-												convert_table_names_to_enum_class,
 												DEFAULT_MIMIC_PATH,
 												DEFAULT_NUM_SUBJECTS,
 												SUBJECT_ID_COL,
@@ -33,11 +31,11 @@ from mimic_iv_analysis.configurations import (  TableNamesHOSP,
 class DataLoader:
 	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
 
-	def __init__(self,
-				mimic_path: Path = DEFAULT_MIMIC_PATH,
-				study_tables_list: Optional[List[TableNamesHOSP | TableNamesICU]] = None):
+	def __init__(self, mimic_path: Path = DEFAULT_MIMIC_PATH, study_tables_list: Optional[List[TableNames]] = None, apply_filtering: bool = True):
+
 		# MIMIC_IV v3.1 path
 		self.mimic_path = mimic_path
+		self.apply_filtering = apply_filtering
 
 		# Tables to load. Use list provided by user or default list
 		self.study_table_list = study_tables_list or DEFAULT_STUDY_TABLES_LIST
@@ -227,14 +225,13 @@ class DataLoader:
 		return self.tables_info_df[self.tables_info_df.table_name.isin(study_tables)]
 
 	@property
-	def _list_of_tables_w_subject_id_column(self) -> List[TableNamesHOSP | TableNamesICU]:
+	def _list_of_tables_w_subject_id_column(self) -> List[TableNames]:
 		"""Returns a list of tables that have subject_id column."""
 		tables_list = self.study_tables_info[
 			self.study_tables_info.columns_list.apply(lambda x: 'subject_id' in x)
 		].table_name.tolist()
 
-		return [convert_table_names_to_enum_class(name=table_name, module='hosp')
-				for table_name in tables_list]
+		return [TableNames(table_name) for table_name in tables_list]
 
 	@staticmethod
 	def _get_column_dtype(file_path: Optional[Path] = None, columns_list: Optional[List[str]] = None) -> Tuple[Dict[str, str], List[str]]:
@@ -251,7 +248,7 @@ class DataLoader:
 		parse_dates = [col for col in DATETIME_COLUMNS if col in columns_list]
 
 		# Check if the file being loaded is the transfers table
-		# if file_path is not None and TableNamesHOSP.TRANSFERS.value in file_path.name:
+		# if file_path is not None and TableNames.TRANSFERS.value in file_path.name:
 		# 	# If so, remove hadm_id from the dtypes to avoid type error on load
 		# 	if 'hadm_id' in dtypes:
 		# 		del dtypes['hadm_id']
@@ -288,93 +285,54 @@ class DataLoader:
 
 		return df
 
-	def _get_file_path(self, table_name: TableNamesHOSP | TableNamesICU) -> Path:
+	def _get_file_path(self, table_name: TableNames) -> Path:
 		"""Get the file path for a table."""
 
 		if self.tables_info_df is None:
 			self.scan_mimic_directory()
 
 		return Path(self.tables_info_df[
-			(self.tables_info_df.table_name == table_name.value) &
-			(self.tables_info_df.module == table_name.module)
-		]['file_path'].iloc[0])
+				(self.tables_info_df.table_name == table_name.value) &
+				(self.tables_info_df.module == table_name.module)
+			]['file_path'].iloc[0])
 
-	def _load_unique_subject_ids_for_table(self, table_name: TableNamesHOSP | TableNamesICU):
-		"""
-		Load unique subject IDs from the table_name.
-
-		Retrieves all unique subject IDs from the table_name and stores them
-		in the _subject_ids_list attribute. If the table_name cannot be found,
-		an empty list will be stored instead.
-		"""
-
-		logger.info(f"Loading subject IDs from {table_name.value} table")
-
-		# Scan directory if not already done
-		if self.tables_info_df is None:
-			self.scan_mimic_directory()
-
-		# Get csv file path
-		csv_file_path = self._get_file_path(table_name)
-
-		subject_ids_path = csv_file_path.parent / 'subject_ids' / f'{table_name.value}_subject_ids.csv'
-
-		subject_ids_path.parent.mkdir(parents=True, exist_ok=True)
-
-		if subject_ids_path.exists():
-
-			subject_ids = pd.read_csv(subject_ids_path)
-			self._all_subject_ids = subject_ids['subject_id'].values.tolist()
-
-		else:
-
-			df = self._load_table_full(table_name=table_name, use_dask=True)
-			# if 'subject_id' not in df.columns:
-			# 	logger.warning(f"Table '{table_name.value}' does not have 'subject_id' column. Skipping subject ID loading from this table.")
-			# 	return
-
-			subject_ids = df['subject_id'].unique().compute()
-
-			# Save subject IDs
-			subject_ids.to_csv(subject_ids_path, index=False)
-
-			self._all_subject_ids = subject_ids.values.tolist()
-
-
-	@lru_cache()
-	def all_subject_ids(self, table_name: TableNamesHOSP | TableNamesICU) -> List[int]:
+	def all_subject_ids(self, table_name: TableNames, df: Optional[pd.DataFrame | dd.DataFrame] = None) -> List[int]:
 		"""Returns a list of unique subject_ids found in the admission table."""
 
-		def _load_unique_subject_id_common_between_all_tables():
+		def _load_unique_subject_ids_for_table():
 
-			# TODO: I changed this to get the intersection of all subject IDs found in the tables that have subject_id column. but now, it returns empty. why? (could i do the filtering after I merged all the tables?)
+			if table_name == TableNames.MERGED:
+				subject_ids_path = self.mimic_path / 'merged_table.csv'
 
-			subject_ids = []
-			for table_name in self._list_of_tables_w_subject_id_column:
-				subject_ids.append(set(self.load_table(table_name=table_name, partial_loading=False)['subject_id'].unique().compute().tolist()))
+			else:
+				if self.tables_info_df is None:
+					self.scan_mimic_directory()
 
-			# get the intersection of all subject IDs
-			self._all_subject_ids = list(set.intersection(*subject_ids))
+				csv_file_path = self._get_file_path(table_name)
+				subject_ids_path = csv_file_path.parent / 'subject_ids' / f'{table_name.value}_subject_ids.csv'
+
+			subject_ids_path.parent.mkdir(parents=True, exist_ok=True)
+
+			if subject_ids_path.exists():
+				subject_ids = pd.read_csv(subject_ids_path)
+				self._all_subject_ids = subject_ids['subject_id'].values.tolist()
+
+			else:
+				if df is None:
+					df = self._load_table_full(table_name=table_name, use_dask=True)
+
+				subject_ids = df['subject_id'].unique().compute()
+				subject_ids.to_csv(subject_ids_path, index=False)
+				self._all_subject_ids = subject_ids.values.tolist()
 
 		if not self._all_subject_ids:
-			self._load_unique_subject_ids_for_table(table_name)
-			# self._load_unique_subject_id_common_between_all_tables()
+			_load_unique_subject_ids_for_table()
 
 		return self._all_subject_ids
 
-	def get_partial_subject_id_list_for_partial_loading(self, num_subjects: int = DEFAULT_NUM_SUBJECTS, table_name: TableNamesHOSP | TableNamesICU = TableNamesHOSP.ADMISSIONS, random_selection: bool = False ) -> List[int]:
-		"""
-		Returns a subset of subject IDs for sampling.
+	def get_partial_subject_id_list_for_partial_loading(self, num_subjects: int = DEFAULT_NUM_SUBJECTS, table_name: TableNames = TableNames.ADMISSIONS, df: Optional[pd.DataFrame | dd.DataFrame] = None, random_selection: bool = False ) -> List[int]:
 
-		Args:
-			num_subjects: Number of subject IDs to return. If 0 or negative, returns None.
-			random_selection: If True, randomly selects the subject IDs. Otherwise, takes the first N.
-
-		Returns:
-			List of subject IDs for sampling, or empty list if appropriate.
-		"""
-
-		subject_ids = self.all_subject_ids(table_name=table_name)
+		subject_ids = self.all_subject_ids(table_name=table_name, df=df)
 
 		# If no subject IDs or num_subjects is non-positive, return an empty list
 		if not subject_ids or num_subjects <= 0:
@@ -384,53 +342,32 @@ class DataLoader:
 		if num_subjects > len(subject_ids):
 			return subject_ids
 
-		# Randomly select subject IDs if random_selection is True
 		if random_selection:
-			self.partial_subject_id_list = np.random.choice(
-				a       = subject_ids,
-				size    = num_subjects,
-				replace = False
-			).tolist()
+			self.partial_subject_id_list = np.random.choice(a=subject_ids, size=num_subjects, replace=False).tolist()
 		else:
-			# Otherwise, return the first N subject IDs
 			self.partial_subject_id_list = subject_ids[:num_subjects]
 
 		return self.partial_subject_id_list
 
-	def load_all_study_tables(self,
-							partial_loading  : bool = False,
-							num_subjects     : int  = DEFAULT_NUM_SUBJECTS,
-							random_selection : bool = False,
-							use_dask         : bool = True,
-							subject_ids      : Optional[List[int]] = None,
-							) -> Dict[str, pd.DataFrame | dd.DataFrame]:
-		"""
-		Load all tables in the study.
+	def load_all_study_tables_full(self, use_dask: bool = True) -> Dict[str, pd.DataFrame | dd.DataFrame]:
 
-		Args            :
-		partial_loading : Whether to load only a subset of subjects
-		num_subjects    : Number of subjects to load if partial_loading is True
-		random_selection: Whether to randomly select subjects
-		subject_ids     : Optional list of subject IDs to load
-		use_dask        : Whether to use Dask for loading
-
-		Returns:
-			Dictionary mapping table names to DataFrames
-		"""
-		# Get subject IDs for partial loading
-		if partial_loading and (subject_ids is None):
-
-			subject_ids = self.get_partial_subject_id_list_for_partial_loading( num_subjects=num_subjects, random_selection=random_selection, table_name=TableNamesHOSP.PATIENTS)
+		# # Get subject IDs for partial loading
+		# if partial_loading and (subject_ids is None):
+		# 	subject_ids = self.get_partial_subject_id_list_for_partial_loading( num_subjects=num_subjects, random_selection=random_selection, table_name=TableNames.PATIENTS)
 
 		tables_dict = {}
 		for _, row in self.study_tables_info.iterrows():
-			table_name = convert_table_names_to_enum_class(name=row.table_name, module=row.module)
 
-			tables_dict[table_name.value] = self.load_table(table_name=table_name, partial_loading=partial_loading, subject_ids=subject_ids, use_dask=use_dask)
+			table_name = TableNames(row.table_name)
+
+			tables_dict[table_name.value] = self._load_table_full(table_name=table_name, use_dask=use_dask)
+
+			if self.apply_filtering:
+				tables_dict[table_name.value] = Filtering(df=tables_dict[table_name.value], table_name=table_name).render()
 
 		return tables_dict
 
-	def _load_table_full(self, table_name: TableNamesHOSP | TableNamesICU, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
+	def _load_table_full(self, table_name: TableNames, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
 
 		if self.tables_info_df is None:
 			self.scan_mimic_directory()
@@ -446,72 +383,32 @@ class DataLoader:
 
 		return self._load_unfiltered_csv_table(file_path, use_dask=use_dask)
 
-	def load_table(self,
-				table_name     : TableNamesHOSP | TableNamesICU,
-				partial_loading: bool = False,
-				subject_ids    : Optional[List[int]] = None,
-				use_dask       : bool = True,
-				apply_filtering: bool = True
-				) -> pd.DataFrame | dd.DataFrame:
-		"""
-		Load a single table.
+	def partial_loading(self, df: pd.DataFrame | dd.DataFrame, table_name: TableNames, num_subjects: int = DEFAULT_NUM_SUBJECTS) -> pd.DataFrame | dd.DataFrame:
 
-		Args:
-			table_name     : The table to load
-			partial_loading: Whether to load only a subset of subjects
-			subject_ids    : Optional list of subject IDs to load
-			use_dask       : Whether to use Dask for loading
-			apply_filtering: Whether to apply the filtering logic from the Filtering class
+		if 'subject_id' not in df.columns:
+			logger.info(f"Table {table_name.value} does not have a subject_id column. "
+						f"Partial loading is not possible. Skipping partial loading.")
+			return df
 
-		Returns:
-			The loaded DataFrame
-		"""
-		def _partial_loading(df: pd.DataFrame | dd.DataFrame) -> pd.DataFrame | dd.DataFrame:
+		subject_ids_set = set( self.get_partial_subject_id_list_for_partial_loading(num_subjects=num_subjects, table_name=table_name, random_selection=False, df=df) )
 
-			if subject_ids is None:
-				raise ValueError("partial_loading is True but subject_ids is None")
+		logger.info(f"Filtering {table_name.value} by subject_id for {num_subjects} subjects.")
 
-			if 'subject_id' not in df.columns:
-				logger.info(f"Table {table_name.value} does not have a subject_id column. "
-							f"Partial loading is not possible. Skipping partial loading.")
-				return df
+		# Use map_partitions for Dask DataFrame or direct isin for pandas
+		if isinstance(df, dd.DataFrame):
+			return df.map_partitions(lambda part: part[part['subject_id'].isin(subject_ids_set)])
 
-			logger.info(f"Filtering {table_name.value} by subject_id for {len(subject_ids)} subjects.")
+		return df[df['subject_id'].isin(subject_ids_set)]
 
-			# Convert subject_ids to a set for faster lookups
-			subject_ids_set = set(subject_ids)
+	def load_one_table(self, table_name: TableNames, partial_loading: bool = False, num_subjects: int = DEFAULT_NUM_SUBJECTS, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
 
-			# Use map_partitions for Dask DataFrame or direct isin for pandas
-			if isinstance(df, dd.DataFrame):
-				return df.map_partitions(lambda part: part[part['subject_id'].isin(subject_ids_set)])
-
-			return df[df['subject_id'].isin(subject_ids_set)]
-
-		def _get_n_rows(df: pd.DataFrame | dd.DataFrame) -> str:
-			n_rows = df.shape[0].compute() if isinstance(df, dd.DataFrame) else df.shape[0]
-			return humanize.intcomma(int(n_rows))
-
-
-		# Load table
 		df = self._load_table_full(table_name=table_name, use_dask=use_dask)
 
-		logger.info(f"Loading full table: {_get_n_rows(df)} rows.")
-
-		# Apply filtering
-		if apply_filtering:
+		if self.apply_filtering:
 			df = Filtering(df=df, table_name=table_name).render()
-			logger.info(f"Applied filters: {_get_n_rows(df)} rows.")
 
-		# Special handling for transfers table to clean hadm_id
-		# if table_name == TableNamesHOSP.TRANSFERS and 'hadm_id' in df.columns:
-		# 	df = df.dropna(subset=['hadm_id'])
-		# 	df['hadm_id'] = df['hadm_id'].astype('int64')
-
-		# Apply partial loading if requested
 		if partial_loading:
-			self._load_unique_subject_ids_for_table(table_name=table_name)
-			df = _partial_loading(df)
-			logger.info(f"Applied partial loading: {_get_n_rows(df)} rows.")
+			df = self.partial_loading(df=df, table_name=table_name, num_subjects=num_subjects)
 
 		return df
 
@@ -583,19 +480,15 @@ class DataLoader:
 		return df_result, total_rows_loaded
 
 	def load_merged_tables(self,
-						partial_loading : bool = False,
-						num_subjects    : int  = DEFAULT_NUM_SUBJECTS,
-						random_selection: bool = False,
-						use_dask        : bool = True,
-						tables_dict     : Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None
-						) -> Dict[str, pd.DataFrame | dd.DataFrame]:
+		tables_dict    : Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None,
+		use_dask       : bool = True,
+		partial_loading: bool = False,
+		num_subjects   : int  = DEFAULT_NUM_SUBJECTS
+		) -> pd.DataFrame | dd.DataFrame:
 		"""
 		Load and merge tables.
 
 		Args:
-			partial_loading: Whether to load only a subset of subjects
-			num_subjects: Number of subjects to load if partial_loading is True
-			random_selection: Whether to randomly select subjects
 			use_dask: Whether to use Dask for loading
 			tables_dict: Optional dictionary of pre-loaded tables
 
@@ -603,25 +496,21 @@ class DataLoader:
 			Dictionary of merged tables
 		"""
 		if tables_dict is None:
-			tables_dict = self.load_all_study_tables(
-				partial_loading  = partial_loading,
-				num_subjects     = num_subjects,
-				random_selection = random_selection,
-				use_dask         = use_dask )
+			tables_dict = self.load_all_study_tables_full(use_dask=use_dask)
 
 		# Get tables
-		patients_df        = tables_dict[TableNamesHOSP.PATIENTS.value]
-		admissions_df      = tables_dict[TableNamesHOSP.ADMISSIONS.value]
-		diagnoses_icd_df   = tables_dict[TableNamesHOSP.DIAGNOSES_ICD.value]
-		d_icd_diagnoses_df = tables_dict[TableNamesHOSP.D_ICD_DIAGNOSES.value]
-		poe_df             = tables_dict[TableNamesHOSP.POE.value]
-		poe_detail_df      = tables_dict[TableNamesHOSP.POE_DETAIL.value]
+		patients_df        = tables_dict[TableNames.PATIENTS.value]
+		admissions_df      = tables_dict[TableNames.ADMISSIONS.value]
+		diagnoses_icd_df   = tables_dict[TableNames.DIAGNOSES_ICD.value]
+		d_icd_diagnoses_df = tables_dict[TableNames.D_ICD_DIAGNOSES.value]
+		poe_df             = tables_dict[TableNames.POE.value]
+		poe_detail_df      = tables_dict[TableNames.POE_DETAIL.value]
 
 		# Merge tables
 		df12 = patients_df.merge(admissions_df, on='subject_id', how='inner')
 
-		if TableNamesHOSP.TRANSFERS.value in tables_dict:
-			transfers_df = tables_dict[TableNamesHOSP.TRANSFERS.value]
+		if TableNames.TRANSFERS.value in tables_dict:
+			transfers_df = tables_dict[TableNames.TRANSFERS.value]
 			df123 = df12.merge(transfers_df, on=['subject_id', 'hadm_id'], how='inner')
 		else:
 			df123 = df12
@@ -634,33 +523,37 @@ class DataLoader:
 		poe_and_details   = poe_df.merge(poe_detail_df, on=['poe_id', 'poe_seq', 'subject_id'], how='left')
 		merged_full_study = merged_wo_poe.merge(poe_and_details, on=['subject_id', 'hadm_id'], how='inner')
 
-		return {
-			'merged_wo_poe'    : merged_wo_poe,
-			'merged_full_study': merged_full_study,
-			'poe_and_details'  : poe_and_details }
+		# TODO: check why this returns an empty df
+		logger.info(f"Loaded {merged_full_study.shape[0].compute()} rows for {num_subjects} subjects from merged table.")
+		if partial_loading:
+			merged_full_study = self.partial_loading(df=merged_full_study, table_name=TableNames.MERGED, num_subjects=num_subjects)
+
+		logger.info(f"Loaded {merged_full_study.shape[0].compute()} rows after partial loading.")
+
+		return merged_full_study
 
 
 	@property
-	def tables_w_subject_id_column(self) -> List[TableNamesHOSP | TableNamesICU]:
+	def tables_w_subject_id_column(self) -> List[TableNames]:
 		"""Tables that have a subject_id column."""
-		return  [	TableNamesHOSP.PATIENTS,
-					TableNamesHOSP.ADMISSIONS,
-					TableNamesHOSP.TRANSFERS,
-					TableNamesHOSP.DIAGNOSES_ICD,
-					TableNamesHOSP.POE,
-					TableNamesHOSP.POE_DETAIL]
+		return  [	TableNames.PATIENTS,
+					TableNames.ADMISSIONS,
+					TableNames.TRANSFERS,
+					TableNames.DIAGNOSES_ICD,
+					TableNames.POE,
+					TableNames.POE_DETAIL]
 
 	@property
-	def merged_table_components(self) -> List[TableNamesHOSP | TableNamesICU]:
+	def merged_table_components(self) -> List[TableNames]:
 		"""Tables that are components of the merged table."""
 		return [
-			TableNamesHOSP.PATIENTS,
-			TableNamesHOSP.ADMISSIONS,
-			TableNamesHOSP.TRANSFERS,
-			TableNamesHOSP.DIAGNOSES_ICD,
-			TableNamesHOSP.D_ICD_DIAGNOSES,
-			TableNamesHOSP.POE,
-			TableNamesHOSP.POE_DETAIL
+			TableNames.PATIENTS,
+			TableNames.ADMISSIONS,
+			TableNames.TRANSFERS,
+			TableNames.DIAGNOSES_ICD,
+			TableNames.D_ICD_DIAGNOSES,
+			TableNames.POE,
+			TableNames.POE_DETAIL
 		]
 
 
@@ -672,14 +565,14 @@ class ExampleDataLoader:
 		self.data_loader.scan_mimic_directory()
 
 		if partial_loading:
-			self.tables_dict = self.data_loader.load_all_study_tables(
+			self.tables_dict = self.data_loader.load_all_study_tables_full(
 				partial_loading  = True,
 				num_subjects     = num_subjects,
 				random_selection = random_selection,
 				use_dask         = use_dask
 			)
 		else:
-			self.tables_dict = self.data_loader.load_all_study_tables(partial_loading=False, use_dask=use_dask)
+			self.tables_dict = self.data_loader.load_all_study_tables_full(partial_loading=False, use_dask=use_dask)
 
 		with warnings.catch_warnings():
 			warnings.simplefilter("ignore")
@@ -704,17 +597,17 @@ class ExampleDataLoader:
 		# Format the output in a tabular format
 		print(f"{'Table':<15} | {'Rows':<10} | {'Subject IDs':<10}")
 		print(f"{'-'*15} | {'-'*10} | {'-'*10}")
-		print(f"{'patients':<15} | {get_nrows(TableNamesHOSP.PATIENTS):<10} | {get_nsubject_ids(TableNamesHOSP.PATIENTS):<10}")
-		print(f"{'admissions':<15} | {get_nrows(TableNamesHOSP.ADMISSIONS):<10} | {get_nsubject_ids(TableNamesHOSP.ADMISSIONS):<10}")
-		print(f"{'diagnoses_icd':<15} | {get_nrows(TableNamesHOSP.DIAGNOSES_ICD):<10} | {get_nsubject_ids(TableNamesHOSP.DIAGNOSES_ICD):<10}")
-		print(f"{'poe':<15} | {get_nrows(TableNamesHOSP.POE):<10} | {get_nsubject_ids(TableNamesHOSP.POE):<10}")
-		print(f"{'poe_detail':<15} | {get_nrows(TableNamesHOSP.POE_DETAIL):<10} | {get_nsubject_ids(TableNamesHOSP.POE_DETAIL):<10}")
+		print(f"{'patients':<15} | {get_nrows(TableNames.PATIENTS):<10} | {get_nsubject_ids(TableNames.PATIENTS):<10}")
+		print(f"{'admissions':<15} | {get_nrows(TableNames.ADMISSIONS):<10} | {get_nsubject_ids(TableNames.ADMISSIONS):<10}")
+		print(f"{'diagnoses_icd':<15} | {get_nrows(TableNames.DIAGNOSES_ICD):<10} | {get_nsubject_ids(TableNames.DIAGNOSES_ICD):<10}")
+		print(f"{'poe':<15} | {get_nrows(TableNames.POE):<10} | {get_nsubject_ids(TableNames.POE):<10}")
+		print(f"{'poe_detail':<15} | {get_nrows(TableNames.POE_DETAIL):<10} | {get_nsubject_ids(TableNames.POE_DETAIL):<10}")
 
 	def study_table_info(self):
 		"""Get info about study tables."""
 		return self.data_loader.study_tables_info
 
-	def merge_two_tables(self, table1: TableNamesHOSP | TableNamesICU, table2: TableNamesHOSP | TableNamesICU, on: Tuple[str], how: Literal['inner', 'left', 'right', 'outer'] = 'inner'):
+	def merge_two_tables(self, table1: TableNames, table2: TableNames, on: Tuple[str], how: Literal['inner', 'left', 'right', 'outer'] = 'inner'):
 		"""Merge two tables."""
 		df1 = self.tables_dict[table1.value]
 		df2 = self.tables_dict[table2.value]
@@ -738,18 +631,18 @@ class ExampleDataLoader:
 
 		return df1.merge(df2, on=on, how=how)
 
-	def save_as_parquet(self, table_name: TableNamesHOSP | TableNamesICU):
+	def save_as_parquet(self, table_name: TableNames):
 		"""Save a table as Parquet."""
 		ParquetConverter(data_loader=self.data_loader).save_as_parquet(table_name=table_name)
 
 	def n_rows_after_merge(self):
 		"""Print row counts after merges."""
-		patients_df        = self.tables_dict[TableNamesHOSP.PATIENTS.value]
-		admissions_df      = self.tables_dict[TableNamesHOSP.ADMISSIONS.value]
-		diagnoses_icd_df   = self.tables_dict[TableNamesHOSP.DIAGNOSES_ICD.value]
-		poe_df             = self.tables_dict[TableNamesHOSP.POE.value]
-		d_icd_diagnoses_df = self.tables_dict[TableNamesHOSP.D_ICD_DIAGNOSES.value]
-		poe_detail_df      = self.tables_dict[TableNamesHOSP.POE_DETAIL.value]
+		patients_df        = self.tables_dict[TableNames.PATIENTS.value]
+		admissions_df      = self.tables_dict[TableNames.ADMISSIONS.value]
+		diagnoses_icd_df   = self.tables_dict[TableNames.DIAGNOSES_ICD.value]
+		poe_df             = self.tables_dict[TableNames.POE.value]
+		d_icd_diagnoses_df = self.tables_dict[TableNames.D_ICD_DIAGNOSES.value]
+		poe_detail_df      = self.tables_dict[TableNames.POE_DETAIL.value]
 
 		# Ensure compatible types
 		patients_df        = self.data_loader.ensure_compatible_types(patients_df, ['subject_id'])
@@ -776,7 +669,7 @@ class ExampleDataLoader:
 		print(f"{'merged_wo_poe':<15} {get_count(merged_wo_poe):<10} {'df34':<15} {get_count(df34):<10} {'df12':<15} {get_count(df12):<10}")
 		print(f"{'merged_full_study':<15} {get_count(merged_full_study):<10} {'poe_and_details':<15} {get_count(poe_and_details):<10} {'merged_wo_poe':<15} {get_count(merged_wo_poe):<10}")
 
-	def load_table(self, table_name: TableNamesHOSP | TableNamesICU):
+	def load_table(self, table_name: TableNames):
 		"""Load a single table."""
 		return self.tables_dict[table_name.value]
 
@@ -795,7 +688,7 @@ class ParquetConverter:
 	def __init__(self, data_loader: DataLoader):
 		self.data_loader = data_loader
 
-	def _get_csv_file_path(self, table_name: TableNamesHOSP | TableNamesICU) -> Tuple[Path, str]:
+	def _get_csv_file_path(self, table_name: TableNames) -> Tuple[Path, str]:
 		"""
 		Gets the CSV file path for a table.
 
@@ -888,7 +781,7 @@ class ParquetConverter:
 
 		return pa.schema(fields)
 
-	def save_as_parquet(self, table_name: TableNamesHOSP | TableNamesICU, df: Optional[pd.DataFrame | dd.DataFrame] = None, target_parquet_path: Optional[Path] = None, use_dask: bool = True) -> None:
+	def save_as_parquet(self, table_name: TableNames, df: Optional[pd.DataFrame | dd.DataFrame] = None, target_parquet_path: Optional[Path] = None, use_dask: bool = True) -> None:
 		"""
 		Saves a DataFrame as a Parquet file.
 
@@ -914,7 +807,7 @@ class ParquetConverter:
 		# Create schema
 		schema = self._create_table_schema(df)
 
-		# if table_name == TableNamesHOSP.TRANSFERS:
+		# if table_name == TableNames.TRANSFERS:
 		# 	df = df.dropna(subset=['hadm_id'])
 		# 	if 'hadm_id' in df.columns:
 		# 		df['hadm_id'] = df['hadm_id'].astype('int64')
@@ -926,7 +819,7 @@ class ParquetConverter:
 			table = pa.Table.from_pandas(df, schema=schema)
 			pq.write_table(table, target_parquet_path, compression='snappy')
 
-	def save_all_tables_as_parquet(self, tables_list: Optional[List[TableNamesHOSP | TableNamesICU]] = None) -> None:
+	def save_all_tables_as_parquet(self, tables_list: Optional[List[TableNames]] = None) -> None:
 		"""
 		Save all tables as Parquet files.
 
@@ -950,13 +843,13 @@ if __name__ == '__main__':
 
 	# Convert admissions table to Parquet
 	# converter = ParquetConverter(data_loader=loader)
-	# converter.save_as_parquet(table_name=TableNamesHOSP.ADMISSIONS, use_dask=True)
+	# converter.save_as_parquet(table_name=TableNames.ADMISSIONS, use_dask=True)
 	# converter.save_all_tables_as_parquet()
 
 
 	# 1. Load a table fully
 	logger.info("Loading 'patients' table fully...")
-	patients_df = loader.load_table(TableNamesHOSP.PATIENTS, partial_loading=False, use_dask=True)
+	patients_df = loader.load_one_table(TableNames.PATIENTS, partial_loading=False, use_dask=True)
 	# merged_tables = data_loader.load_merged_tables(partial_loading=True, num_subjects=10)
 
 	print('done')

@@ -9,7 +9,7 @@ import pandas as pd
 import dask.dataframe as dd
 
 from mimic_iv_analysis import logger
-from mimic_iv_analysis.configurations.params import TableNamesHOSP, TableNamesICU
+from mimic_iv_analysis.configurations.params import TableNames, TableNames
 
 
 class Filtering:
@@ -21,7 +21,7 @@ class Filtering:
 	It handles the relationships between different tables and applies filters efficiently.
 	"""
 
-	def __init__(self, df: pd.DataFrame | dd.DataFrame, table_name: TableNamesHOSP):
+	def __init__(self, df: pd.DataFrame | dd.DataFrame, table_name: TableNames):
 		"""Initialize the Filtering class."""
 
 		self.df = df
@@ -31,12 +31,12 @@ class Filtering:
 	def render(self) -> pd.DataFrame | dd.DataFrame:
 
 		# TODO: apply this filter too
-		if self.table_name == TableNamesHOSP.PATIENTS:
+		if self.table_name == TableNames.PATIENTS:
 			self.df = self.df[(self.df.anchor_age >= 18.0) & (self.df.anchor_age <= 75.0)]
 			self.df = self.df[self.df.anchor_year_group == '2017 - 2019']
 
 
-		elif self.table_name == TableNamesHOSP.DIAGNOSES_ICD:
+		elif self.table_name == TableNames.DIAGNOSES_ICD:
 			# Filter for rows where icd_version is 10
 			# TODO: why when i add this, I get errors.
 			# df2 = self.df.compute()
@@ -49,15 +49,15 @@ class Filtering:
 			self.df = self.df[self.df.icd_code.str.startswith('E11')]
 
 
-		elif self.table_name == TableNamesHOSP.D_ICD_DIAGNOSES:
+		elif self.table_name == TableNames.D_ICD_DIAGNOSES:
 			self.df = self.df[self.df.icd_version.isin([10,'10'])]
 
 
-		elif self.table_name == TableNamesHOSP.POE:
+		elif self.table_name == TableNames.POE:
 			self.df = self.df.drop(columns=['discontinue_of_poe_id', 'discontinued_by_poe_id'])
 
 
-		elif self.table_name == TableNamesHOSP.ADMISSIONS:
+		elif self.table_name == TableNames.ADMISSIONS:
 
 			# Get admission IDs where patient is alive
 			self.df = self.df[(self.df.deathtime.isnull()) | (self.df.hospital_expire_flag == 0)]

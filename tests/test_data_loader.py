@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock, PropertyMock
 
 from mimic_iv_analysis.io.data_loader import DataLoader, ParquetConverter, ExampleDataLoader
 
-from mimic_iv_analysis.configurations.params import TableNamesHOSP, TableNamesICU, DEFAULT_MIMIC_PATH, convert_table_names_to_enum_class, DEFAULT_STUDY_TABLES_LIST
+from mimic_iv_analysis.configurations.params import TableNames, DEFAULT_MIMIC_PATH, DEFAULT_STUDY_TABLES_LIST
 
 # Path to the core.filtering module to mock for testing
 FILTERING_PATH = 'mimic_iv_analysis.core.filtering.Filtering'
@@ -129,7 +129,7 @@ class TestDataLoader:
 
         # Test custom params
         custom_path = Path("/custom/path")
-        custom_tables = [TableNamesHOSP.PATIENTS, TableNamesHOSP.ADMISSIONS]
+        custom_tables = [TableNames.PATIENTS, TableNames.ADMISSIONS]
         loader = DataLoader(mimic_path=custom_path, study_tables_list=custom_tables)
         assert loader.mimic_path == custom_path
         assert loader.study_table_list == custom_tables
@@ -168,7 +168,7 @@ class TestDataLoader:
         """Test retrieving study tables info."""
         loader = DataLoader(
             mimic_path=mock_mimic_dir,
-            study_tables_list=[TableNamesHOSP.PATIENTS, TableNamesHOSP.ADMISSIONS]
+            study_tables_list=[TableNames.PATIENTS, TableNames.ADMISSIONS]
         )
 
         # Mock scan_mimic_directory to set tables_info_df
@@ -186,11 +186,11 @@ class TestDataLoader:
         loader = DataLoader(mimic_path=mock_mimic_dir)
         loader.scan_mimic_directory()
 
-        path = loader._get_file_path(TableNamesHOSP.PATIENTS)
+        path = loader._get_file_path(TableNames.PATIENTS)
         assert path.name == 'patients.csv'
         assert 'hosp' in str(path)
 
-        path = loader._get_file_path(TableNamesICU.ICUSTAYS)
+        path = loader._get_file_path(TableNames.ICUSTAYS)
         assert path.name == 'icustays.csv'
         assert 'icu' in str(path)
 
@@ -234,14 +234,14 @@ class TestDataLoader:
             mock_load_table.return_value = mock_df
 
             # Test with patients table
-            result = loader._load_unique_subject_ids_for_table(TableNamesHOSP.PATIENTS)
+            result = loader._load_unique_subject_ids_for_table(TableNames.PATIENTS)
             assert result == [1, 2, 3]
-            mock_load_table.assert_called_with(table_name=TableNamesHOSP.PATIENTS, partial_loading=False)
+            mock_load_table.assert_called_with(table_name=TableNames.PATIENTS, partial_loading=False)
 
             # Test with default table (admissions)
             result = loader._load_unique_subject_ids_for_table()
             assert result == [1, 2, 3]
-            mock_load_table.assert_called_with(table_name=TableNamesHOSP.ADMISSIONS, partial_loading=False)
+            mock_load_table.assert_called_with(table_name=TableNames.ADMISSIONS, partial_loading=False)
 
     @patch(FILTERING_PATH)
     def test_all_subject_ids(self, mock_mimic_dir):
@@ -316,7 +316,7 @@ class TestDataLoader:
         # Create a DataLoader with mock directory
         loader = DataLoader(
             mimic_path=mock_mimic_dir,
-            study_tables_list=[TableNamesHOSP.PATIENTS, TableNamesHOSP.ADMISSIONS]
+            study_tables_list=[TableNames.PATIENTS, TableNames.ADMISSIONS]
         )
         loader.scan_mimic_directory()
 
@@ -327,17 +327,17 @@ class TestDataLoader:
                 npartitions=1
             )
 
-            result = loader.load_all_study_tables(partial_loading=False)
+            result = loader.load_all_study_tables_full(partial_loading=False)
             assert 'patients' in result
             assert 'admissions' in result
             mock_load_table.assert_any_call(
-                table_name=TableNamesHOSP.PATIENTS,
+                table_name=TableNames.PATIENTS,
                 partial_loading=False,
                 subject_ids=None,
                 use_dask=True
             )
             mock_load_table.assert_any_call(
-                table_name=TableNamesHOSP.ADMISSIONS,
+                table_name=TableNames.ADMISSIONS,
                 partial_loading=False,
                 subject_ids=None,
                 use_dask=True
@@ -353,12 +353,12 @@ class TestDataLoader:
             )
             mock_get_ids.return_value = [1, 2]
 
-            result = loader.load_all_study_tables(partial_loading=True, num_subjects=2)
+            result = loader.load_all_study_tables_full(partial_loading=True, num_subjects=2)
             assert 'patients' in result
             assert 'admissions' in result
             mock_get_ids.assert_called_with(num_subjects=2, random_selection=False)
             mock_load_table.assert_any_call(
-                table_name=TableNamesHOSP.PATIENTS,
+                table_name=TableNames.PATIENTS,
                 partial_loading=True,
                 subject_ids=[1, 2],
                 use_dask=True
@@ -396,14 +396,14 @@ class TestDataLoader:
             mock_filtering.return_value = mock_filter_instance
 
             # Test full loading
-            result = loader.load_table(TableNamesHOSP.PATIENTS, partial_loading=False)
-            mock_get_path.assert_called_with(table_name=TableNamesHOSP.PATIENTS)
+            result = loader.load_one_table(TableNames.PATIENTS, partial_loading=False)
+            mock_get_path.assert_called_with(table_name=TableNames.PATIENTS)
             mock_load_csv.assert_called_with(file_path, use_dask=True)
             # Check that Filtering was created with the right parameters
             mock_filtering.assert_called_once()
             call_kwargs = mock_filtering.call_args.kwargs
             assert call_kwargs['df'] is test_df
-            assert call_kwargs['table_name'] == TableNamesHOSP.PATIENTS
+            assert call_kwargs['table_name'] == TableNames.PATIENTS
             assert isinstance(result, dd.DataFrame)
 
             # Test partial loading with subject_ids
@@ -411,12 +411,12 @@ class TestDataLoader:
             mock_load_csv.reset_mock()
             mock_filtering.reset_mock()
 
-            result = loader.load_table(
-                TableNamesHOSP.PATIENTS,
+            result = loader.load_one_table(
+                TableNames.PATIENTS,
                 partial_loading=True,
                 subject_ids=[1, 3]
             )
-            mock_get_path.assert_called_with(table_name=TableNamesHOSP.PATIENTS)
+            mock_get_path.assert_called_with(table_name=TableNames.PATIENTS)
             mock_load_csv.assert_called_with(file_path, use_dask=True)
 
     def test_load_with_pandas_chunking(self):
@@ -469,12 +469,12 @@ class TestDataLoader:
         loader = DataLoader(
             mimic_path=mock_mimic_dir,
             study_tables_list=[
-                TableNamesHOSP.PATIENTS,
-                TableNamesHOSP.ADMISSIONS,
-                TableNamesHOSP.DIAGNOSES_ICD,
-                TableNamesHOSP.D_ICD_DIAGNOSES,
-                TableNamesHOSP.POE,
-                TableNamesHOSP.POE_DETAIL
+                TableNames.PATIENTS,
+                TableNames.ADMISSIONS,
+                TableNames.DIAGNOSES_ICD,
+                TableNames.D_ICD_DIAGNOSES,
+                TableNames.POE,
+                TableNames.POE_DETAIL
             ]
         )
 
@@ -543,34 +543,34 @@ class TestDataLoader:
     def test_table_names_enum_converter(self):
         """Test the table_names_enum_converter function."""
         # Test hosp module
-        result = convert_table_names_to_enum_class('patients', 'hosp')
-        assert result == TableNamesHOSP.PATIENTS
+        result = TableNames('patients')
+        assert result == TableNames.PATIENTS
 
         # Test icu module
-        result = convert_table_names_to_enum_class('icustays', 'icu')
-        assert result == TableNamesICU.ICUSTAYS
+        result = TableNames('icustays')
+        assert result == TableNames.ICUSTAYS
 
         # Test invalid table name
         with pytest.raises(ValueError):
-            convert_table_names_to_enum_class('invalid_table', 'hosp')
+            TableNames('invalid_table')
 
     def test_enum_description_and_module(self):
-        """Test the description and module properties of TableNamesHOSP and TableNamesICU."""
+        """Test the description and module properties of TableNames and TableNames."""
         # Test hosp table descriptions
-        assert TableNamesHOSP.PATIENTS.description == "Patient demographic data"
-        assert TableNamesHOSP.ADMISSIONS.description == "Patient hospital admissions information"
+        assert TableNames.PATIENTS.description == "Patient demographic data"
+        assert TableNames.ADMISSIONS.description == "Patient hospital admissions information"
 
         # Test icu table descriptions
-        assert TableNamesICU.ICUSTAYS.description == "ICU stay information"
-        assert TableNamesICU.CHARTEVENTS.description == "Patient charting data (vital signs, etc.)"
+        assert TableNames.ICUSTAYS.description == "ICU stay information"
+        assert TableNames.CHARTEVENTS.description == "Patient charting data (vital signs, etc.)"
 
         # Test module property
-        assert TableNamesHOSP.PATIENTS.module == "hosp"
-        assert TableNamesICU.ICUSTAYS.module == "icu"
+        assert TableNames.PATIENTS.module == "hosp"
+        assert TableNames.ICUSTAYS.module == "icu"
 
         # Test values class method
-        assert "patients" in TableNamesHOSP.values()
-        assert "icustays" in TableNamesICU.values()
+        assert "patients" in TableNames.values()
+        assert "icustays" in TableNames.values()
 
 
 class TestParquetConverter:
@@ -617,7 +617,7 @@ class TestParquetConverter:
         converter = ParquetConverter(data_loader=data_loader)
 
         # Test getting CSV path
-        file_path, suffix = converter._get_csv_file_path(TableNamesHOSP.PATIENTS)
+        file_path, suffix = converter._get_csv_file_path(TableNames.PATIENTS)
         assert file_path.name == "patients.csv"
         assert suffix == ".csv"
 
@@ -637,7 +637,7 @@ class TestParquetConverter:
 
             # Mock Path.exists to return True only for CSV path
             with patch('pathlib.Path.exists', return_value=True):
-                result = converter._get_csv_file_path(TableNamesHOSP.PATIENTS)
+                result = converter._get_csv_file_path(TableNames.PATIENTS)
                 # Just verify we get a successful result without error
                 assert len(result) == 2
 
@@ -659,7 +659,7 @@ class TestParquetConverter:
             mock_load.return_value = mock_df
 
             # Call save_as_parquet
-            converter.save_as_parquet(TableNamesHOSP.PATIENTS)
+            converter.save_as_parquet(TableNames.PATIENTS)
 
             # Check to_parquet was called with the right path
             mock_to_parquet.assert_called_once()
@@ -671,7 +671,7 @@ class TestParquetConverter:
 
         with patch.object(dd.DataFrame, 'to_parquet') as mock_to_parquet:
             converter.save_as_parquet(
-                table_name=TableNamesHOSP.PATIENTS,
+                table_name=TableNames.PATIENTS,
                 df=test_df_dask,
                 target_parquet_path=target_path
             )
@@ -688,13 +688,13 @@ class TestParquetConverter:
         # Mock the save_as_parquet method
         with patch.object(converter, 'save_as_parquet') as mock_save:
             # Call save_all_tables_as_parquet with custom tables list
-            tables_list = [TableNamesHOSP.PATIENTS, TableNamesHOSP.ADMISSIONS]
+            tables_list = [TableNames.PATIENTS, TableNames.ADMISSIONS]
             converter.save_all_tables_as_parquet(tables_list=tables_list)
 
             # Check save_as_parquet was called for each table
             assert mock_save.call_count == 2
-            mock_save.assert_any_call(table_name=TableNamesHOSP.PATIENTS)
-            mock_save.assert_any_call(table_name=TableNamesHOSP.ADMISSIONS)
+            mock_save.assert_any_call(table_name=TableNames.PATIENTS)
+            mock_save.assert_any_call(table_name=TableNames.ADMISSIONS)
 
             # Reset and test with default tables list
             mock_save.reset_mock()
@@ -817,8 +817,8 @@ class TestExampleDataLoader:
 
         # Test merge_two_tables
         result = example_loader.merge_two_tables(
-            TableNamesHOSP.PATIENTS,
-            TableNamesHOSP.ADMISSIONS,
+            TableNames.PATIENTS,
+            TableNames.ADMISSIONS,
             on='subject_id'
         )
 
@@ -837,8 +837,8 @@ class TestExampleDataLoader:
         mock_table1.merge.return_value = mock_merged
 
         result = example_loader.merge_two_tables(
-            TableNamesHOSP.PATIENTS,
-            TableNamesHOSP.ADMISSIONS,
+            TableNames.PATIENTS,
+            TableNames.ADMISSIONS,
             on='subject_id',
             how='left'
         )
@@ -864,13 +864,13 @@ class TestExampleDataLoader:
             mock_converter_class.return_value = mock_converter
 
             # Test save_as_parquet
-            example_loader.save_as_parquet(TableNamesHOSP.PATIENTS)
+            example_loader.save_as_parquet(TableNames.PATIENTS)
 
             # Check ParquetConverter was created with correct parameters
             mock_converter_class.assert_called_once_with(data_loader=mock_loader)
 
             # Check save_as_parquet was called with correct parameters
-            mock_converter.save_as_parquet.assert_called_once_with(table_name=TableNamesHOSP.PATIENTS)
+            mock_converter.save_as_parquet.assert_called_once_with(table_name=TableNames.PATIENTS)
 
     def test_n_rows_after_merge(self):
         """Test n_rows_after_merge method."""
@@ -905,7 +905,7 @@ class TestExampleDataLoader:
         example_loader.tables_dict = tables_dict
 
         # Test load_table
-        result = example_loader.load_table(TableNamesHOSP.PATIENTS)
+        result = example_loader.load_table(TableNames.PATIENTS)
         assert result == mock_df
 
     def test_load_all_study_tables(self):
