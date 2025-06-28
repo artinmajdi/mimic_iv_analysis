@@ -34,7 +34,7 @@ class DataLoader:
 	def __init__(self, mimic_path: Path = DEFAULT_MIMIC_PATH, study_tables_list: Optional[List[TableNames]] = None, apply_filtering: bool = True):
 
 		# MIMIC_IV v3.1 path
-		self.mimic_path = mimic_path
+		self.mimic_path      = mimic_path
 		self.apply_filtering = apply_filtering
 
 		# Tables to load. Use list provided by user or default list
@@ -42,7 +42,7 @@ class DataLoader:
 
 		# Class variables
 		self._all_subject_ids       : List[int]                = []
-		self.tables_info_df          : Optional[pd.DataFrame]  = None
+		self.tables_info_df         : Optional[pd.DataFrame]  = None
 		self.tables_info_dict       : Optional[Dict[str, Any]] = None
 		self.partial_subject_id_list: Optional[List[int]]      = None
 
@@ -483,7 +483,7 @@ class DataLoader:
 		tables_dict    : Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None,
 		use_dask       : bool = True,
 		partial_loading: bool = False,
-		num_subjects   : int  = DEFAULT_NUM_SUBJECTS
+		num_subjects   : int  = DEFAULT_NUM_SUBJECTS,
 		) -> pd.DataFrame | dd.DataFrame:
 		"""
 		Load and merge tables.
@@ -838,7 +838,7 @@ class ParquetConverter:
 
 if __name__ == '__main__':
 
-	loader = DataLoader(mimic_path=DEFAULT_MIMIC_PATH)
+	loader = DataLoader(mimic_path=DEFAULT_MIMIC_PATH, apply_filtering=True)
 	loader.scan_mimic_directory()
 
 	# Convert admissions table to Parquet

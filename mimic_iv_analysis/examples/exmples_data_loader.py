@@ -101,7 +101,7 @@ class DataLoaderExamples:
 
         # 1. Load a table fully
         logger.info("Loading 'patients' table fully...")
-        patients_df = loader.load_one_table(TableNames.PATIENTS, partial_loading=False)
+        patients_df = loader.load_one_table(TableNames.PATIENTS, partial_loading=False, apply_filtering=True)
 
         # Check if Dask DataFrame and compute if needed for display
         if isinstance(patients_df, dd.DataFrame):
@@ -117,11 +117,7 @@ class DataLoaderExamples:
         partial_subject_ids = loader.get_partial_subject_id_list_for_partial_loading(num_subjects=5, random_selection=False, table_name=TableNames.PATIENTS)
         logger.info(f"Selected subject IDs for partial loading: {partial_subject_ids}")
 
-        partial_df = loader.load_one_table(
-            TableNames.PATIENTS,
-            partial_loading=True,
-            subject_ids=partial_subject_ids
-        )
+        partial_df = loader.load_one_table(table_name=TableNames.PATIENTS, partial_loading=True, subject_ids=partial_subject_ids, apply_filtering=True)
 
         if isinstance(partial_df, dd.DataFrame):
             partial_count = partial_df.shape[0].compute()

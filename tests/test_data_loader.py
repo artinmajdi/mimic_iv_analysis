@@ -396,7 +396,7 @@ class TestDataLoader:
             mock_filtering.return_value = mock_filter_instance
 
             # Test full loading
-            result = loader.load_one_table(TableNames.PATIENTS, partial_loading=False)
+            result = loader.load_one_table(TableNames.PATIENTS, partial_loading=False, apply_filtering=True)
             mock_get_path.assert_called_with(table_name=TableNames.PATIENTS)
             mock_load_csv.assert_called_with(file_path, use_dask=True)
             # Check that Filtering was created with the right parameters
@@ -414,7 +414,8 @@ class TestDataLoader:
             result = loader.load_one_table(
                 TableNames.PATIENTS,
                 partial_loading=True,
-                subject_ids=[1, 3]
+                subject_ids=[1, 3],
+                apply_filtering=True
             )
             mock_get_path.assert_called_with(table_name=TableNames.PATIENTS)
             mock_load_csv.assert_called_with(file_path, use_dask=True)

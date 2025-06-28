@@ -50,34 +50,6 @@ class MIMICDashboardApp:
 		self.init_session_state()
 		logger.info("MIMICDashboardApp initialized.")
 
-
-	def _get_merged_table_components_to_convert(self, force_update: bool = False) -> List[TableNames]:
-		"""
-		Checks which component tables of the merged table need to be converted to Parquet.
-
-		Args:
-			force_update: If True, returns all component tables for a full update.
-
-		Returns:
-			A list of table enums that need to be converted.
-		"""
-		tables_to_convert = []
-		component_tables = self.data_handler.merged_table_components
-
-		if force_update:
-			return component_tables
-
-		for table_enum in component_tables:
-			try:
-				file_path = self.data_handler._get_file_path(table_name=table_enum)
-				if file_path.suffix != '.parquet':
-					tables_to_convert.append(table_enum)
-			except (ValueError, IndexError):
-				# This can happen if a component table (e.g., transfers) is not present
-				logger.warning(f"Component table {table_enum.value} not found, skipping for conversion check.")
-				continue
-		return tables_to_convert
-
 	def _rescan_and_update_state(self):
 		"""Rescans the directory and updates session state with table info."""
 		logger.info("Re-scanning directory and updating state...")
@@ -95,17 +67,39 @@ class MIMICDashboardApp:
 			st.session_state.available_tables = {} # Clear previous results
 			return False
 
-	def _scan_dataset(self):
+	def _scan_directory(self, mimic_path: str):
+		try:
+			# Update the data handler's path if it changed
+			if mimic_path != str(self.data_handler.mimic_path):
+				self.data_handler      = DataLoader(mimic_path=Path(mimic_path))
+				self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
+
+			if self._rescan_and_update_state():
+				st.sidebar.success(f"Found {sum(len(tables) for tables in st.session_state.available_tables.values())} tables in {len(st.session_state.available_tables)} modules")
+
+				# Reset selections if scan is successful
+				if st.session_state.available_tables:
+					st.session_state.selected_module = list(st.session_state.available_tables.keys())[0]
+
+				# Force user to select table after scan
+				st.session_state.selected_table = None
+
+			else:
+				st.sidebar.error("No MIMIC-IV tables (.csv, .csv.gz, .parquet) found in the specified path or its subdirectories (hosp, icu).")
+
+		except AttributeError:
+			st.sidebar.error("Data Handler is not initialized or does not have a 'scan_mimic_directory' method.")
+		except Exception as e:
+			st.sidebar.error(f"Error scanning directory: {e}")
+			logger.exception("Error during directory scan")
+
+	def _dataset_configuration(self):
 
 		st.sidebar.markdown("---") # Separator
 		st.sidebar.markdown("## Dataset Configuration")
 
 		# MIMIC-IV path input
-		mimic_path = st.sidebar.text_input(
-			"MIMIC-IV Dataset Path",
-			value=st.session_state.mimic_path,
-			help="Enter the path to your local MIMIC-IV v3.1 dataset directory"
-		)
+		mimic_path = st.sidebar.text_input(label="MIMIC-IV Dataset Path", value=st.session_state.mimic_path, help="Enter the path to your local MIMIC-IV v3.1 dataset directory")
 
 		# Update mimic_path in session state if it changes
 		if mimic_path != st.session_state.mimic_path:
@@ -124,120 +118,13 @@ class MIMICDashboardApp:
 
 			if not mimic_path or not os.path.isdir(mimic_path):
 				st.sidebar.error("Please enter a valid directory path for the MIMIC-IV dataset")
+				return
 
-			else:
-
-				with st.spinner("Scanning directory..."):
-
-					try:
-
-						# Update the data handler's path if it changed
-						if mimic_path != str(self.data_handler.mimic_path):
-							self.data_handler = DataLoader(mimic_path=Path(mimic_path))
-							self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
-
-						if self._rescan_and_update_state():
-							st.sidebar.success(f"Found {sum(len(tables) for tables in st.session_state.available_tables.values())} tables in {len(st.session_state.available_tables)} modules")
-
-							# Reset selections if scan is successful
-							if st.session_state.available_tables:
-								st.session_state.selected_module = list(st.session_state.available_tables.keys())[0]
-
-							st.session_state.selected_table = None # Force user to select table after scan
-
-						else:
-							st.sidebar.error("No MIMIC-IV tables (.csv, .csv.gz, .parquet) found in the specified path or its subdirectories (hosp, icu).")
-
-					except AttributeError:
-						st.sidebar.error("Data Handler is not initialized or does not have a 'scan_mimic_directory' method.")
-					except Exception as e:
-						st.sidebar.error(f"Error scanning directory: {e}")
-						logger.exception("Error during directory scan")
+			with st.spinner("Scanning directory..."):
+				self._scan_directory(mimic_path)
 
 	def _display_sidebar(self):
 		"""Handles the display and logic of the sidebar components."""
-
-		def _select_module():
-
-			module_options = list(st.session_state.available_tables.keys())
-
-			module = st.sidebar.selectbox(
-				label   = "Select Module",
-				options = module_options,
-				index   = module_options.index('hosp') if st.session_state.selected_module == 'hosp' else 0,
-				key     = "module_select" ,
-				help    = "Select which MIMIC-IV module to explore (e.g., hosp, icu)"
-			)
-			# Update selected module if changed
-			if module != st.session_state.selected_module:
-				st.session_state.selected_module = module
-				st.session_state.selected_table = None # Reset table selection when module changes
-
-			return module
-
-		def _select_table(module: str) -> str:
-			"""Display table selection dropdown and handle selection logic."""
-
-			def _get_table_options_list():
-				# Get sorted table options for the selected module
-				table_options = sorted(st.session_state.available_tables[module])
-
-				# Create display options list with the special merged_table option first
-				tables_list_w_size_info = ["merged_table"]
-
-				# Create display-to-table mapping for reverse lookup
-				display_to_table_map = {'merged_table': 'merged_table'}
-
-				# Format each table with size information
-				for table in table_options:
-
-					# Get display name from session state
-					display_name = st.session_state.table_display_names.get((module, table), table)
-
-					# Add display name to list
-					tables_list_w_size_info.append(display_name)
-
-					# Map display name to table name
-					display_to_table_map[display_name] = table
-
-				return tables_list_w_size_info, display_to_table_map
-
-			def _display_table_info(table: str) -> None:
-				"""Display table description information in sidebar."""
-
-				logger.info(f"Displaying table info for {module}.{table}")
-
-				table_info = TableNames(table).description
-
-				if table_info:
-					st.sidebar.markdown( f"**Description:** {table_info}", help="Table description from MIMIC-IV documentation." )
-
-
-			# Get sorted table options for the selected module
-			tables_list_w_size_info, display_to_table_map = _get_table_options_list()
-
-			# Display the table selection dropdown
-			selected_table_w_size_info = st.sidebar.selectbox(
-				label   = "Select Table",
-				options = tables_list_w_size_info,
-				index   = 0,
-				key     = "table_select",
-				help    = "Select which table to load (file size shown in parentheses)"
-			)
-
-			# Get the actual table name from the selected display
-			table = display_to_table_map[selected_table_w_size_info]
-
-			# Update session state if table selection changed
-			if table != st.session_state.selected_table:
-				st.session_state.selected_table = table
-				st.session_state.df = None  # Clear dataframe when table changes
-
-			# Show table description if a regular table is selected
-			if st.session_state.selected_table != "merged_table":
-				_display_table_info(st.session_state.selected_table)
-
-			return selected_table_w_size_info
 
 		def _select_view():
 
@@ -292,124 +179,220 @@ class MIMICDashboardApp:
 
 			st.sidebar.caption(f"Total unique subjects found: {total_unique_subjects if total_unique_subjects > 0 else 'N/A (Scan or check patients.csv)'}")
 
+		def _parquet_conversion():
+
+			def _parquet_update_convert_single_table():
+
+				# Display "Convert" button if the selected table is not already in Parquet but a source CSV exists
+				if not self.is_selected_table_parquet and self._source_csv_exists:
+					st.sidebar.button(
+						label    = "Convert to Parquet",
+						key      = "convert_to_parquet_button",
+						on_click = self._convert_table_to_parquet,
+						args     = [ TableNames(st.session_state.selected_table) ],
+						help     = f"Convert {st.session_state.selected_table} from CSV to Parquet for faster loading." )
+
+					st.sidebar.warning('Please refresh the page to see the updated tables.')
+
+				# Display "Update" button if the selected table is already in Parquet and a source CSV exists
+				if self.is_selected_table_parquet and self._source_csv_exists:
+					st.sidebar.button(
+						label    = "Update Parquet",
+						key      = "update_parquet_button",
+						on_click = self._convert_table_to_parquet,
+						args     = [ TableNames(st.session_state.selected_table) ],
+						help     = f"Re-convert {st.session_state.selected_table} from CSV to update the Parquet file." )
+
+			def parquet_update_convert_merged_table():
+
+				def _get_tables_that_need_conversion(force_update: bool = False) -> List[TableNames]:
+					""" Checks which component tables of the merged table need to be converted to Parquet. """
+
+					tables_to_convert = []
+					component_tables = self.data_handler.merged_table_components
+
+					if force_update:
+						return component_tables
+
+					for table_enum in component_tables:
+						try:
+							file_path = self.data_handler._get_file_path(table_name=table_enum)
+							if file_path.suffix != '.parquet':
+								tables_to_convert.append(table_enum)
+						except (ValueError, IndexError):
+							# This can happen if a component table (e.g., transfers) is not present
+							logger.warning(f"Component table {table_enum.value} not found, skipping for conversion check.")
+							continue
+					return tables_to_convert
+
+				# Check which component tables need to be converted
+				tables_to_convert = _get_tables_that_need_conversion(force_update=False)
+				if tables_to_convert:
+					st.sidebar.warning(f"{len(tables_to_convert)} base table(s) are not in Parquet format.")
+					st.sidebar.button(
+						label    = "Convert Missing Tables to Parquet",
+						key      = "convert_merged_to_parquet",
+						on_click = self._convert_table_to_parquet,
+						args     = (tables_to_convert,),
+						help     = "Convert all required CSV tables to Parquet for the merged view." )
+
+				# Button to update all component tables of the merged view
+				st.sidebar.button(
+					label    = "Update All Base Parquet Tables",
+					key      = "update_merged_parquet",
+					on_click = self._convert_table_to_parquet,
+					args     = (self.data_handler.merged_table_components,),
+					help     = "Re-convert all base tables from CSV to update their Parquet files."
+				)
+
+			# --- Conversion/Update Buttons ---
+			if st.session_state.selected_table: # Ensure a table is selected
+				st.sidebar.markdown("---")
+				st.sidebar.markdown("#### Parquet Conversion")
+
+				if st.session_state.selected_table != "merged_table":
+					_parquet_update_convert_single_table()
+				else:
+					parquet_update_convert_merged_table()
+
+		def _load_configuration():
+
+			st.sidebar.markdown("---")
+
+			if st.session_state.selected_table and not self.is_selected_table_parquet and st.session_state.selected_table != "merged_table":
+				# Disable loading options since conversion is required
+				st.sidebar.caption("Loading is disabled until the table is converted to Parquet.")
+				st.sidebar.checkbox("Load Full Table", value=True, disabled=True, key="load_full_disabled")
+				st.sidebar.number_input("Number of Subjects to Load", value=1, disabled=True, key="num_subjects_disabled")
+				st.sidebar.checkbox("Use Dask", value=True, disabled=True, key="use_dask_disabled")
+			else:
+				# Sampling options
+				st.sidebar.checkbox(
+					label   = "Load Full Table",
+					value   = st.session_state.get('load_full', False) if not self.has_no_subject_id_column else True,
+					key     = "load_full",
+					disabled=self.has_no_subject_id_column )
+
+				if not st.session_state.load_full:
+					_select_sampling_parameters()
+
+				st.sidebar.checkbox("Apply Filtering", value=st.session_state.get('apply_filtering', True), key="apply_filtering", on_change=self._callback_apply_filtering, help="Apply cohort filtering to the table before loading.")
+				st.sidebar.checkbox("Use Dask"		 , value=st.session_state.get('use_dask', True)		  , key="use_dask"		 , help="Enable Dask for distributed computing and memory-efficient processing")
+
 		def _select_table_module():
+
+			def _select_module():
+
+				module_options = list(st.session_state.available_tables.keys())
+
+				module = st.sidebar.selectbox(
+					label   = "Select Module",
+					options = module_options,
+					index   = module_options.index('hosp') if st.session_state.selected_module == 'hosp' else 0,
+					key     = "module_select" ,
+					help    = "Select which MIMIC-IV module to explore (e.g., hosp, icu)"
+				)
+				# Update selected module if changed
+				if module != st.session_state.selected_module:
+					st.session_state.selected_module = module
+					st.session_state.selected_table = None # Reset table selection when module changes
+
+				return module
+
+			def _select_table(module: str):
+				"""Display table selection dropdown and handle selection logic."""
+
+				def _get_table_options_list():
+					# Get sorted table options for the selected module
+					table_options = sorted(st.session_state.available_tables[module])
+
+					# Create display options list with the special merged_table option first
+					tables_list_w_size_info = ["merged_table"]
+
+					# Create display-to-table mapping for reverse lookup
+					display_to_table_map = {'merged_table': 'merged_table'}
+
+					# Format each table with size information
+					for table in table_options:
+
+						# Get display name from session state
+						display_name = st.session_state.table_display_names.get((module, table), table)
+
+						# Add display name to list
+						tables_list_w_size_info.append(display_name)
+
+						# Map display name to table name
+						display_to_table_map[display_name] = table
+
+					return tables_list_w_size_info, display_to_table_map
+
+				def _display_table_info(table: str) -> None:
+					"""Display table description information in sidebar."""
+
+					logger.info(f"Displaying table info for {module}.{table}")
+
+					table_info = TableNames(table).description
+
+					if table_info:
+						st.sidebar.markdown( f"**Description:** {table_info}", help="Table description from MIMIC-IV documentation." )
+
+
+				# Get sorted table options for the selected module
+				tables_list_w_size_info, display_to_table_map = _get_table_options_list()
+
+				# Display the table selection dropdown
+				st.sidebar.selectbox(
+					label   = "Select Table",
+					options = tables_list_w_size_info,
+					index   = 0,
+					key     = "selected_table_name_w_size",
+					help    = "Select which table to load (file size shown in parentheses)" )
+
+				# Get the actual table name from the selected display
+				table = display_to_table_map[st.session_state.selected_table_name_w_size]
+
+				# Update session state if table selection changed
+				if table != st.session_state.selected_table:
+					st.session_state.selected_table = table
+					st.session_state.df = None  # Clear dataframe when table changes
+
+				# Show table description if a regular table is selected
+				if st.session_state.selected_table != "merged_table":
+					_display_table_info(st.session_state.selected_table)
 
 			module = _select_module()
 
 			if module in st.session_state.available_tables:
-
-				# Select Table
-				selected_display = _select_table(module=module)
-
-				# --- Conversion/Update Buttons ---
-				if st.session_state.selected_table: # Ensure a table is selected
-					st.sidebar.markdown("---")
-					st.sidebar.markdown("#### Parquet Conversion")
-
-					# --- Logic for single table selection ---
-					if st.session_state.selected_table != "merged_table":
-						# Display "Convert" button if the selected table is not already in Parquet but a source CSV exists
-						if not self.is_selected_table_parquet and self._source_csv_exists:
-							st.sidebar.button(
-								label    = "Convert to Parquet",
-								key      = "convert_to_parquet_button",
-								on_click = self._convert_table_to_parquet,
-								help     = f"Convert {st.session_state.selected_table} from CSV to Parquet for faster loading." )
-
-						# Display "Update" button if the selected table is already in Parquet and a source CSV exists
-						if self.is_selected_table_parquet and self._source_csv_exists:
-							st.sidebar.button(
-								label    = "Update Parquet",
-								key      = "update_parquet_button",
-								on_click = self._update_table_to_parquet,
-								help     = f"Re-convert {st.session_state.selected_table} from CSV to update the Parquet file." )
-
-					# --- Special handling for "merged_table" selection ---
-					else: # This means st.session_state.selected_table == "merged_table"
-						# Check which component tables need to be converted
-						tables_to_convert = self._get_merged_table_components_to_convert(force_update=False)
-						if tables_to_convert:
-							st.sidebar.warning(f"{len(tables_to_convert)} base table(s) are not in Parquet format.")
-							st.sidebar.button(
-								label    = "Convert Missing Tables to Parquet",
-								key      = "convert_merged_to_parquet",
-								on_click = self._convert_table_to_parquet,
-								args     = (tables_to_convert,),
-								help     = "Convert all required CSV tables to Parquet for the merged view." )
-
-						# Button to update all component tables of the merged view
-						st.sidebar.button(
-							label    = "Update All Base Parquet Tables",
-							key      = "update_merged_parquet",
-							on_click = self._update_table_to_parquet,
-							args     = (self.data_handler.merged_table_components,),
-							help     = "Re-convert all base tables from CSV to update their Parquet files."
-						)
-
-				# --- Data Loading UI Logic ---
-				if st.session_state.selected_table and not self.is_selected_table_parquet and st.session_state.selected_table != "merged_table":
-					# Disable loading options since conversion is required
-					st.sidebar.markdown("---")
-					st.sidebar.caption("Loading is disabled until the table is converted to Parquet.")
-					st.sidebar.checkbox("Load Full Table", value=True, disabled=True, key="load_full_disabled")
-					st.sidebar.number_input("Number of Subjects to Load", value=1, disabled=True, key="num_subjects_disabled")
-					st.sidebar.checkbox("Use Dask", value=True, disabled=True, key="use_dask_disabled")
-				else: # This handles merged_table and existing parquet files
-					# Sampling options
-					st.sidebar.checkbox(
-						label   = "Load Full Table",
-						value   = st.session_state.get('load_full', False) if not self.has_no_subject_id_column else True,
-						key     = "load_full",
-						disabled=self.has_no_subject_id_column
-					)
-
-					if not st.session_state.load_full:
-						_select_sampling_parameters()
-
-					# Dask option
-					st.session_state.use_dask = st.sidebar.checkbox("Use Dask", value=st.session_state.get('use_dask', True), help="Enable Dask for distributed computing and memory-efficient processing")
-
-				return selected_display
-
+				_select_table(module=module)
+			else:
+				st.session_state.selected_table_name_w_size = None
 
 		st.sidebar.title("MIMIC-IV Navigator")
 
 		_select_view()
 
-		self._scan_dataset()
+		self._dataset_configuration()
 
 		# Module and table selection
-		if st.session_state.available_tables:
-			selected_display = _select_table_module()
-			# Only show load button if table is Parquet or it is the merged view
-			if st.session_state.get('selected_table') == 'merged_table' or self.is_selected_table_parquet:
-				self._load_table(selected_display=selected_display)
-		else:
+		if not st.session_state.available_tables:
 			st.sidebar.info("Scan a MIMIC-IV directory to select and load tables.")
+			return
 
-	def _load_table(self, selected_display: str = None) -> Tuple[Optional[pd.DataFrame], int]:
+		_select_table_module()
+		_parquet_conversion()
+		_load_configuration()
+
+		# Only show load button if table is Parquet or it is the merged view
+		if st.session_state.get('selected_table') == 'merged_table' or self.is_selected_table_parquet:
+			self._load_table(selected_table_name_w_size=st.session_state.selected_table_name_w_size)
+
+	def _callback_apply_filtering(self):
+		self.data_handler = DataLoader(mimic_path=st.session_state.get('mimic_path', Path(DEFAULT_MIMIC_PATH)), apply_filtering=st.session_state.apply_filtering)
+
+
+
+	def _load_table(self, selected_table_name_w_size: str = None) -> Tuple[Optional[pd.DataFrame], int]:
 		"""Load a specific MIMIC-IV table, handling large files and sampling."""
-
-		# def _get_subject_ids_list_and_loading_message() -> Tuple[Optional[List[int]], str]:
-
-		# 	target_subject_ids = None
-		# 	loading_message = "Loading full table..."
-		# 	num_subjects_to_load = st.session_state.get('num_subjects_to_load')
-
-		# 	if num_subjects_to_load and num_subjects_to_load > 0:
-
-		# 		# For merged table, we need a base table to get subject IDs from
-		# 		if st.session_state.selected_table == 'merged_table':
-		# 			table_for_ids = TableNames.ADMISSIONS
-		# 		else:
-		# 			table_for_ids = TableNames(st.session_state.selected_table)
-
-		# 		target_subject_ids = self.data_handler.get_partial_subject_id_list_for_partial_loading(
-		# 			num_subjects = num_subjects_to_load,
-		# 			table_name   = table_for_ids
-		# 		)
-		# 		loading_message = f"Loading table for {num_subjects_to_load} subjects..."
-		# 	return target_subject_ids, loading_message
 
 		def _get_total_rows(df):
 			if df is None:
@@ -509,8 +492,8 @@ class MIMICDashboardApp:
 					table_name      = table_name,
 					partial_loading = not st.session_state.load_full,
 					num_subjects    = st.session_state.get('num_subjects_to_load', None),
-					use_dask        = st.session_state.use_dask,
-					apply_filtering = True)
+					use_dask        = st.session_state.use_dask
+					)
 
 				total_rows = _get_total_rows(df)
 
@@ -531,19 +514,14 @@ class MIMICDashboardApp:
 				st.sidebar.caption(f"Patient ID: {st.session_state.detected_patient_id_col}, Order: {st.session_state.detected_order_cols}, Time: {st.session_state.detected_time_cols}")
 
 		def _check_table_selection():
-			if selected_display != "merged_table" and (not st.session_state.selected_module or not st.session_state.selected_table):
+			if selected_table_name_w_size != "merged_table" and (not st.session_state.selected_module or not st.session_state.selected_table):
 				st.sidebar.warning("Please select a module and table first.")
 				return False
 			return True
 
 		if st.sidebar.button("Load Selected Table", key="load_button") and _check_table_selection():
 
-			# if not st.session_state.load_full:
-			# 	target_subject_ids, loading_message = _get_subject_ids_list_and_loading_message()
-			# else:
-			# 	target_subject_ids, loading_message = None, "Loading table using " + ("Dask" if st.session_state.use_dask else "Pandas")
-
-			if selected_display == "merged_table":
+			if selected_table_name_w_size == "merged_table":
 				_load_merged_table()
 			else:
 				_load_single_table()
@@ -739,7 +717,6 @@ class MIMICDashboardApp:
 
 				MIMICVisualizerUtils.display_visualizations(st.session_state.df, use_dask=use_dask)
 
-
 			with tab2:
 				FeatureEngineeringTab().render()
 
@@ -914,61 +891,35 @@ class MIMICDashboardApp:
 		tables_that_can_be_sampled = [	"merged_table" ] + [table.value for table in self.data_handler._list_of_tables_w_subject_id_column]
 		return st.session_state.selected_table not in tables_that_can_be_sampled
 
+	def _convert_table_to_parquet(self, tables_to_process: Optional[List[TableNames]] = None):
+		"""Callback to convert the selected table to Parquet format."""
 
-	# --------------- Parquet Conversion ---------------
-	def _run_parquet_conversion(self, tables_to_process: Optional[List[TableNames]], process_type: str):
-		"""Generic handler for converting or updating tables to Parquet."""
+		selected_table = st.session_state.selected_table
+		selected_module = st.session_state.selected_module
 
-		verb_ing = "Converting" if process_type == 'convert' else "Updating"
-		verb_ed  = "converted" if process_type == 'convert' else "updated"
+		if tables_to_process is None:
+			tables_to_process = [ TableNames(selected_table) ]
 
 		if not tables_to_process:
 			st.sidebar.warning("No tables to process.")
 			return
 
-		progress_bar = st.sidebar.progress(0)
-		status_text  = st.sidebar.empty()
-		total_tables = len(tables_to_process)
-
 		try:
-			for i, table_enum in enumerate(tables_to_process):
-				progress = (i + 1) / total_tables
-				status_text.info(f"{verb_ing} table: **{table_enum.value}** ({i+1} of {total_tables})...")
-				self.parquet_converter.save_as_parquet(table_name=table_enum)
-				progress_bar.progress(progress)
-
-			status_text.empty()
-			progress_bar.empty()
+			with st.spinner(f"Converting {len(tables_to_process)} table(s) to Parquet..."):
+				for table_enum in tables_to_process:
+					self.parquet_converter.save_as_parquet(table_name=table_enum)
 
 			if self._rescan_and_update_state():
-				st.sidebar.success(f"Successfully {verb_ed} {total_tables} table(s)!")
+				st.sidebar.success(f"Successfully converted {len(tables_to_process)} table(s)!")
 			else:
-				st.sidebar.error(f"{process_type.title()} might have failed. Could not find updated tables.")
+				st.sidebar.error("Conversion might have failed. Could not find updated tables.")
 
 		except Exception as e:
-			status_text.error(f"Error during {process_type} job: {e}")
-			logger.error(f"Parquet {process_type} job failed: {e}", exc_info=True)
-			progress_bar.empty()
+			logger.error(f"Parquet conversion job failed: {e}", exc_info=True)
 			st.exception(e)
 
-	def _convert_table_to_parquet(self, tables_to_convert: Optional[List[TableNames]] = None):
-		"""Callback to convert the selected table to Parquet format."""
-		if tables_to_convert is None:
-			# This is for a single table conversion
-			table_name_enum = TableNames(st.session_state.selected_table)
-
-			tables_to_convert = [table_name_enum]
-		self._run_parquet_conversion(tables_to_convert, "convert")
-
-	def _update_table_to_parquet(self, tables_to_update: Optional[List[TableNames]] = None):
-		"""Callback to re-convert a table to update its Parquet file."""
-		if tables_to_update is None:
-			table_name_enum = TableNames(st.session_state.selected_table)
-
-			tables_to_update = [table_name_enum]
-		self._run_parquet_conversion(tables_to_update, "update")
-
-
+		st.session_state.selected_table = selected_table
+		st.session_state.selected_module = selected_module
 
 def main():
     app = MIMICDashboardApp()
