@@ -30,7 +30,6 @@ class Filtering:
 
 	def render(self) -> pd.DataFrame | dd.DataFrame:
 
-		# TODO: apply this filter too
 		if self.table_name == TableNames.PATIENTS:
 			self.df = self.df[(self.df.anchor_age >= 18.0) & (self.df.anchor_age <= 75.0)]
 			self.df = self.df[self.df.anchor_year_group == '2017 - 2019']
@@ -38,8 +37,6 @@ class Filtering:
 
 		elif self.table_name == TableNames.DIAGNOSES_ICD:
 			# Filter for rows where icd_version is 10
-			# TODO: why when i add this, I get errors.
-			# df2 = self.df.compute()
 			self.df = self.df[self.df.icd_version.isin([10,'10'])]
 
 			# Filter for rows where seq_num is 1, 2, or 3
@@ -68,8 +65,14 @@ class Filtering:
 			# Additional validation: dischtime should be after admittime
 			self.df = self.df[self.df['dischtime'] > self.df['admittime']]
 
-			# # Exclude admission types like "EW EMER.", "URGENT", or "ELECTIVE"
+			# Exclude admission types like "EW EMER.", "URGENT", or "ELECTIVE"
 			# self.df = self.df[~self.df.admission_type.isin(['EW EMER.', 'URGENT', 'ELECTIVE'])]
+
+		elif self.table_name == TableNames.TRANSFERS:
+			# self.df = self.df.dropna(subset=['hadm_id'])
+			self.df = self.df[self.df.hadm_id != '']
+			# if 'hadm_id' in self.df.columns:
+			# 	self.df['hadm_id'] = self.df['hadm_id'].astype('int64')
 
 
 		self.df = self.df.reset_index(drop=True)

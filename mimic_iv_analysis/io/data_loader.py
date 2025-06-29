@@ -31,14 +31,16 @@ from mimic_iv_analysis.configurations import (  TableNames,
 class DataLoader:
 	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
 
-	def __init__(self, mimic_path: Path = DEFAULT_MIMIC_PATH, study_tables_list: Optional[List[TableNames]] = None, apply_filtering: bool = True):
+	def __init__(self, mimic_path: Path = DEFAULT_MIMIC_PATH, study_tables_list: Optional[List[TableNames]] = None, apply_filtering: bool = True, include_transfers: bool = False):
 
 		# MIMIC_IV v3.1 path
 		self.mimic_path      = mimic_path
 		self.apply_filtering = apply_filtering
 
 		# Tables to load. Use list provided by user or default list
-		self.study_table_list = study_tables_list or DEFAULT_STUDY_TABLES_LIST
+		self.study_table_list = set(study_tables_list or DEFAULT_STUDY_TABLES_LIST)
+		if not include_transfers:
+			self.study_table_list -= {TableNames.TRANSFERS}
 
 		# Class variables
 		self._all_subject_ids       : List[int]                = []
@@ -758,7 +760,7 @@ class ParquetConverter:
 if __name__ == '__main__':
 
 	loader = DataLoader(mimic_path=DEFAULT_MIMIC_PATH, apply_filtering=True)
-	df_merged = loader.load(table_name=TableNames.MERGED, partial_loading=True, num_subjects=10)
+	df_merged = loader.load(table_name=TableNames.MERGED, partial_loading=False)
 
 
 	# Convert admissions table to Parquet

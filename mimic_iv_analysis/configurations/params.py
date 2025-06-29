@@ -109,7 +109,7 @@ DEFAULT_STUDY_TABLES_LIST = [
 				TableNames.PATIENTS,
 				TableNames.ADMISSIONS,
 				TableNames.DIAGNOSES_ICD,
-				# TableNames.TRANSFERS,
+				TableNames.TRANSFERS,
 				TableNames.D_ICD_DIAGNOSES,
 				TableNames.POE,
 				TableNames.POE_DETAIL

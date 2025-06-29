@@ -17,7 +17,7 @@ import pdb
 from mimic_iv_analysis import logger
 from mimic_iv_analysis.core import FeatureEngineerUtils
 from mimic_iv_analysis.io import DataLoader, ParquetConverter
-from mimic_iv_analysis.configurations import TableNames, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS
+from mimic_iv_analysis.configurations import TableNames, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS, DEFAULT_STUDY_TABLES_LIST
 
 from mimic_iv_analysis.visualization.app_components import FilteringTab, FeatureEngineeringTab, AnalysisVisualizationTab, ClusteringAnalysisTab
 
@@ -276,7 +276,7 @@ class MIMICDashboardApp:
 				if not st.session_state.load_full:
 					_select_sampling_parameters()
 
-				st.sidebar.checkbox("Apply Filtering", value=st.session_state.get('apply_filtering', True), key="apply_filtering", on_change=self._callback_apply_filtering, help="Apply cohort filtering to the table before loading.")
+				st.sidebar.checkbox("Apply Filtering", value=st.session_state.get('apply_filtering', True), key="apply_filtering", on_change=self._callback_reload_dataloader, help="Apply cohort filtering to the table before loading.")
 				st.sidebar.checkbox("Use Dask"		 , value=st.session_state.get('use_dask', True)		  , key="use_dask"		 , help="Enable Dask for distributed computing and memory-efficient processing")
 
 		def _select_table_module():
@@ -364,6 +364,9 @@ class MIMICDashboardApp:
 
 			if module in st.session_state.available_tables:
 				_select_table(module=module)
+
+				if st.session_state.selected_table == "merged_table":
+					st.sidebar.checkbox('Include Transfers Table', value=False, key='include_transfers', on_change=self._callback_reload_dataloader)
 			else:
 				st.session_state.selected_table_name_w_size = None
 
@@ -386,10 +389,8 @@ class MIMICDashboardApp:
 		if st.session_state.get('selected_table') == 'merged_table' or self.is_selected_table_parquet:
 			self._load_table(selected_table_name_w_size=st.session_state.selected_table_name_w_size)
 
-	def _callback_apply_filtering(self):
-		self.data_handler = DataLoader(mimic_path=st.session_state.get('mimic_path', Path(DEFAULT_MIMIC_PATH)), apply_filtering=st.session_state.apply_filtering)
-
-
+	def _callback_reload_dataloader(self):
+		self.data_handler = DataLoader(mimic_path=st.session_state.get('mimic_path', Path(DEFAULT_MIMIC_PATH)), apply_filtering=st.session_state.apply_filtering, include_transfers=st.session_state.include_transfers)
 
 	def _load_table(self, selected_table_name_w_size: str = None) -> Tuple[Optional[pd.DataFrame], int]:
 		"""Load a specific MIMIC-IV table, handling large files and sampling."""
