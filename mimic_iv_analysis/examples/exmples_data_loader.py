@@ -25,7 +25,7 @@ from pathlib import Path
 # Import our modules
 from mimic_iv_analysis import logger
 from mimic_iv_analysis.io.data_loader import DataLoader, ExampleDataLoader, ParquetConverter
-from mimic_iv_analysis.configurations.params import TableNames, TableNames, DataFrameType
+from mimic_iv_analysis.configurations.params import TableNames, DataFrameType
 
 
 
@@ -35,11 +35,6 @@ MIMIC_DATA_PATH = Path("/Users/artinmajdi/Documents/GitHubs/RAP/mimic__pankaj/da
 
 class DataLoaderExamples:
     """Examples demonstrating the usage of the DataLoader, ExampleDataLoader, and ParquetConverter classes."""
-
-    @staticmethod
-    def configure_logger():
-        """Set up logger configuration."""
-        logger.setLevel(logger.INFO)
 
     @staticmethod
     def check_mimic_path():
@@ -101,7 +96,7 @@ class DataLoaderExamples:
 
         # 1. Load a table fully
         logger.info("Loading 'patients' table fully...")
-        patients_df = loader.load_one_table(TableNames.PATIENTS, partial_loading=False, apply_filtering=True)
+        patients_df = loader.load_one_table(TableNames.PATIENTS, partial_loading=False)
 
         # Check if Dask DataFrame and compute if needed for display
         if isinstance(patients_df, dd.DataFrame):
@@ -117,7 +112,8 @@ class DataLoaderExamples:
         partial_subject_ids = loader.get_partial_subject_id_list_for_partial_loading(num_subjects=5, random_selection=False, table_name=TableNames.PATIENTS)
         logger.info(f"Selected subject IDs for partial loading: {partial_subject_ids}")
 
-        partial_df = loader.load_one_table(table_name=TableNames.PATIENTS, partial_loading=True, subject_ids=partial_subject_ids, apply_filtering=True)
+        loader.subject_ids_for_partial_loading = partial_subject_ids
+        partial_df = loader.load_one_table(table_name=TableNames.PATIENTS, partial_loading=True)
 
         if isinstance(partial_df, dd.DataFrame):
             partial_count = partial_df.shape[0].compute()
@@ -126,7 +122,6 @@ class DataLoaderExamples:
         else:
             logger.info(f"Loaded {len(partial_df)} patients with partial loading. Sample data:")
             logger.info(partial_df.head())
-
 
     @staticmethod
     def example_merge_tables():
@@ -149,16 +144,15 @@ class DataLoaderExamples:
         merged_df = loader.load_merged_tables()
 
         logger.info("\nMerged dictionary keys:")
-        for key in merged_df.keys():
+        for key in merged_df.columns:
             logger.info(f"  - {key}")
 
-        # Show sample data from merged_wo_poe
-        if isinstance(merged_df['merged_wo_poe'], dd.DataFrame):
-            logger.info(f"\nSample from merged_wo_poe (shape: {merged_df['merged_wo_poe'].shape[0].compute()}):")
-            logger.info(merged_df['merged_wo_poe'].head())
+        if isinstance(merged_df, dd.DataFrame):
+            logger.info(f"\nSample from (shape: {merged_df.shape[0].compute()}):")
+            logger.info(merged_df.head())
         else:
-            logger.info(f"\nSample from merged_wo_poe (shape: {len(merged_df['merged_wo_poe'])}):")
-            logger.info(merged_df['merged_wo_poe'].head())
+            logger.info(f"\nSample from (shape: {len(merged_df)}):")
+            logger.info(merged_df.head())
 
     @staticmethod
     def example_apply_filters():
@@ -181,48 +175,6 @@ class DataLoaderExamples:
         info_chartevents = TableNames.CHARTEVENTS.description
         logger.info(f"Info for CHARTEVENTS: {info_chartevents}")
 
-    # --- ExampleDataLoader Examples ---
-    @staticmethod
-    def example_example_data_loader():
-        """Demonstrates using the ExampleDataLoader class."""
-
-        logger.info("\n--- Example: Using ExampleDataLoader ---")
-        if not DataLoaderExamples.check_mimic_path():
-            return
-
-        # Initialize ExampleDataLoader with partial loading
-        example_loader = ExampleDataLoader(partial_loading=True, num_subjects=10, random_selection=False)
-
-        # Show table counts
-        logger.info("Table counts from ExampleDataLoader.counter():")
-        example_loader.counter()
-
-        # Show study table info
-        study_tables = example_loader.study_table_info()
-        logger.info(f"\nStudy tables info shape: {study_tables.shape}")
-        logger.info(f"Study tables columns: {study_tables.columns.tolist()}")
-
-        # Merge two tables
-        logger.info("\nMerging patients and admissions tables:")
-        merged_df = example_loader.merge_two_tables(
-            TableNames.PATIENTS,
-            TableNames.ADMISSIONS,
-            on=('subject_id',),
-            how='inner'
-        )
-
-        if isinstance(merged_df, dd.DataFrame):
-            logger.info(f"Merged shape: {merged_df.shape[0].compute()} rows")
-            logger.info(f"Merged sample:\n{merged_df.head()}")
-        else:
-            logger.info(f"Merged shape: {len(merged_df)} rows")
-            logger.info(f"Merged sample:\n{merged_df.head()}")
-
-        # Show row counts after merges
-        logger.info("\nRow counts after various merges:")
-        example_loader.n_rows_after_merge()
-
-    # --- ParquetConverter Examples ---
     @staticmethod
     def example_parquet_converter():
         """Demonstrates using the ParquetConverter class."""
@@ -254,10 +206,7 @@ class DataLoaderExamples:
         logger.info("This operation may take a long time for large datasets, so it's not run in this example.")
 
 
-
 def main():
-    DataLoaderExamples.configure_logger()
-
     logger.info("--- Starting DataLoader Examples ---")
     logger.info(f"Using MIMIC_DATA_PATH: {MIMIC_DATA_PATH}")
 
@@ -270,9 +219,6 @@ def main():
         DataLoaderExamples.example_get_table_info()
         DataLoaderExamples.example_merge_tables()
         DataLoaderExamples.example_apply_filters()
-
-        # ExampleDataLoader examples
-        DataLoaderExamples.example_example_data_loader()
 
         # ParquetConverter examples
         # DataLoaderExamples.example_parquet_converter()

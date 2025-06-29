@@ -357,9 +357,7 @@ class DataLoader:
 
 		tables_dict = {}
 		for _, row in self.study_tables_info.iterrows():
-
 			table_name = TableNames(row.table_name)
-
 			tables_dict[table_name.value] = self._load_table_full(table_name=table_name, use_dask=use_dask)
 
 			if self.apply_filtering:
@@ -557,25 +555,23 @@ class DataLoader:
 		]
 
 
-class ExampleDataLoader:
+class ExampleDataLoader(DataLoader):
 	"""ExampleDataLoader class for loading example data."""
 
-	def __init__(self, partial_loading: bool = False, num_subjects: int = 100, random_selection: bool = False, use_dask: bool = True):
-		self.data_loader = DataLoader()
-		self.data_loader.scan_mimic_directory()
+	def __init__(self, partial_loading: bool = False, num_subjects: int = 100, random_selection: bool = False, use_dask: bool = True, apply_filtering: bool = True):
 
-		if partial_loading:
-			self.tables_dict = self.data_loader.load_all_study_tables_full(
-				partial_loading  = True,
-				num_subjects     = num_subjects,
-				random_selection = random_selection,
-				use_dask         = use_dask
-			)
-		else:
-			self.tables_dict = self.data_loader.load_all_study_tables_full(partial_loading=False, use_dask=use_dask)
+		super().__init__(apply_filtering=apply_filtering)
 
-		with warnings.catch_warnings():
-			warnings.simplefilter("ignore")
+		self.partial_loading = partial_loading
+		self.num_subjects    = num_subjects
+		self.random_selection = random_selection
+		self.use_dask        = use_dask
+
+		self.scan_mimic_directory()
+		self.tables_dict = self.load_all_study_tables_full(use_dask=use_dask)
+
+		# with warnings.catch_warnings():
+		# 	warnings.simplefilter("ignore")
 
 	def counter(self):
 		"""Print row and subject ID counts for each table."""
@@ -605,7 +601,7 @@ class ExampleDataLoader:
 
 	def study_table_info(self):
 		"""Get info about study tables."""
-		return self.data_loader.study_tables_info
+		return self.study_tables_info
 
 	def merge_two_tables(self, table1: TableNames, table2: TableNames, on: Tuple[str], how: Literal['inner', 'left', 'right', 'outer'] = 'inner'):
 		"""Merge two tables."""
@@ -633,7 +629,7 @@ class ExampleDataLoader:
 
 	def save_as_parquet(self, table_name: TableNames):
 		"""Save a table as Parquet."""
-		ParquetConverter(data_loader=self.data_loader).save_as_parquet(table_name=table_name)
+		ParquetConverter(data_loader=self).save_as_parquet(table_name=table_name)
 
 	def n_rows_after_merge(self):
 		"""Print row counts after merges."""
@@ -645,12 +641,12 @@ class ExampleDataLoader:
 		poe_detail_df      = self.tables_dict[TableNames.POE_DETAIL.value]
 
 		# Ensure compatible types
-		patients_df        = self.data_loader.ensure_compatible_types(patients_df, ['subject_id'])
-		admissions_df      = self.data_loader.ensure_compatible_types(admissions_df, ['subject_id', 'hadm_id'])
-		diagnoses_icd_df   = self.data_loader.ensure_compatible_types(diagnoses_icd_df, ['subject_id', 'hadm_id', 'icd_code', 'icd_version'])
-		d_icd_diagnoses_df = self.data_loader.ensure_compatible_types(d_icd_diagnoses_df, ['icd_code', 'icd_version'])
-		poe_df             = self.data_loader.ensure_compatible_types(poe_df, ['subject_id', 'hadm_id', 'poe_id', 'poe_seq'])
-		poe_detail_df      = self.data_loader.ensure_compatible_types(poe_detail_df, ['subject_id', 'poe_id', 'poe_seq'])
+		patients_df        = self.ensure_compatible_types(patients_df, ['subject_id'])
+		admissions_df      = self.ensure_compatible_types(admissions_df, ['subject_id', 'hadm_id'])
+		diagnoses_icd_df   = self.ensure_compatible_types(diagnoses_icd_df, ['subject_id', 'hadm_id', 'icd_code', 'icd_version'])
+		d_icd_diagnoses_df = self.ensure_compatible_types(d_icd_diagnoses_df, ['icd_code', 'icd_version'])
+		poe_df             = self.ensure_compatible_types(poe_df, ['subject_id', 'hadm_id', 'poe_id', 'poe_seq'])
+		poe_detail_df      = self.ensure_compatible_types(poe_detail_df, ['subject_id', 'poe_id', 'poe_seq'])
 
 		df12              = patients_df.merge(admissions_df, on='subject_id', how='inner')
 		df34              = diagnoses_icd_df.merge(d_icd_diagnoses_df, on=('icd_code', 'icd_version'), how='inner')
@@ -679,7 +675,11 @@ class ExampleDataLoader:
 
 	def load_merged_tables(self):
 		"""Load merged tables."""
-		return self.data_loader.load_merged_tables(tables_dict=self.tables_dict)
+		return self.data_loader.load_merged_tables(
+			tables_dict    = self.tables_dict,
+			partial_loading = self.partial_loading,
+			num_subjects    = self.num_subjects,
+			use_dask        = self.use_dask)
 
 
 class ParquetConverter:
@@ -838,18 +838,19 @@ class ParquetConverter:
 
 if __name__ == '__main__':
 
-	loader = DataLoader(mimic_path=DEFAULT_MIMIC_PATH, apply_filtering=True)
-	loader.scan_mimic_directory()
+	# loader = DataLoader(mimic_path=DEFAULT_MIMIC_PATH, apply_filtering=True)
+	# loader.scan_mimic_directory()
 
 	# Convert admissions table to Parquet
 	# converter = ParquetConverter(data_loader=loader)
 	# converter.save_as_parquet(table_name=TableNames.ADMISSIONS, use_dask=True)
 	# converter.save_all_tables_as_parquet()
 
-
 	# 1. Load a table fully
-	logger.info("Loading 'patients' table fully...")
-	patients_df = loader.load_one_table(TableNames.PATIENTS, partial_loading=False, use_dask=True)
+	# logger.info("Loading 'patients' table fully...")
+	# patients_df = loader.load_one_table(TableNames.PATIENTS, partial_loading=False, use_dask=True)
 	# merged_tables = data_loader.load_merged_tables(partial_loading=True, num_subjects=10)
+	example = ExampleDataLoader(partial_loading=True, num_subjects=10, apply_filtering=True)
+	example.load_merged_tables()
 
 	print('done')
