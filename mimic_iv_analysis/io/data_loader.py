@@ -299,19 +299,13 @@ class DataLoader:
 	def all_subject_ids(self, table_name: TableNames, df: Optional[pd.DataFrame | dd.DataFrame] = None) -> List[int]:
 		"""Returns a list of unique subject_ids found in the admission table."""
 
-		def _load_unique_subject_ids_for_table():
+		def _load_unique_subject_ids_for_table(df: pd.DataFrame | dd.DataFrame):
 
-			if table_name == TableNames.MERGED:
-				subject_ids_path = self.mimic_path / 'merged_table.csv'
-
-			else:
-				if self.tables_info_df is None:
-					self.scan_mimic_directory()
-
-				csv_file_path = self._get_file_path(table_name)
-				subject_ids_path = csv_file_path.parent / 'subject_ids' / f'{table_name.value}_subject_ids.csv'
-
+			subject_ids_path = self.mimic_path / 'subject_ids' / f'{table_name.value}_subject_ids.csv'
 			subject_ids_path.parent.mkdir(parents=True, exist_ok=True)
+
+			if self.tables_info_df is None:
+				self.scan_mimic_directory()
 
 			if subject_ids_path.exists():
 				subject_ids = pd.read_csv(subject_ids_path)
@@ -326,7 +320,7 @@ class DataLoader:
 				self._all_subject_ids = subject_ids.values.tolist()
 
 		if not self._all_subject_ids:
-			_load_unique_subject_ids_for_table()
+			_load_unique_subject_ids_for_table(df=df)
 
 		return self._all_subject_ids
 
@@ -351,13 +345,13 @@ class DataLoader:
 
 	def load_all_study_tables_full(self, use_dask: bool = True) -> Dict[str, pd.DataFrame | dd.DataFrame]:
 
-		# # Get subject IDs for partial loading
-		# if partial_loading and (subject_ids is None):
-		# 	subject_ids = self.get_partial_subject_id_list_for_partial_loading( num_subjects=num_subjects, random_selection=random_selection, table_name=TableNames.PATIENTS)
-
 		tables_dict = {}
 		for _, row in self.study_tables_info.iterrows():
 			table_name = TableNames(row.table_name)
+
+			if table_name is TableNames.MERGED:
+				raise ValueError("merged table can not be part of the merged table")
+
 			tables_dict[table_name.value] = self._load_table_full(table_name=table_name, use_dask=use_dask)
 
 			if self.apply_filtering:
@@ -521,12 +515,11 @@ class DataLoader:
 		poe_and_details   = poe_df.merge(poe_detail_df, on=['poe_id', 'poe_seq', 'subject_id'], how='left')
 		merged_full_study = merged_wo_poe.merge(poe_and_details, on=['subject_id', 'hadm_id'], how='inner')
 
-		# TODO: check why this returns an empty df
-		logger.info(f"Loaded {merged_full_study.shape[0].compute()} rows for {num_subjects} subjects from merged table.")
-		if partial_loading:
-			merged_full_study = self.partial_loading(df=merged_full_study, table_name=TableNames.MERGED, num_subjects=num_subjects)
-
-		logger.info(f"Loaded {merged_full_study.shape[0].compute()} rows after partial loading.")
+		# # TODO: check why this returns an empty df
+		# logger.info(f"Loaded {merged_full_study.shape[0].compute()} rows from merged table.")
+		# if partial_loading:
+		# 	merged_full_study = self.partial_loading(df=merged_full_study, table_name=TableNames.MERGED, num_subjects=num_subjects)
+		# 	logger.info(f"Loaded {merged_full_study.shape[0].compute()} rows after partial loading.")
 
 		return merged_full_study
 
@@ -838,8 +831,10 @@ class ParquetConverter:
 
 if __name__ == '__main__':
 
-	# loader = DataLoader(mimic_path=DEFAULT_MIMIC_PATH, apply_filtering=True)
+	loader = DataLoader(mimic_path=DEFAULT_MIMIC_PATH, apply_filtering=True)
 	# loader.scan_mimic_directory()
+	df_merged = loader.load_merged_tables(partial_loading=False)
+	subject_ids = loader.all_subject_ids(df=df_merged, table_name=TableNames.MERGED)
 
 	# Convert admissions table to Parquet
 	# converter = ParquetConverter(data_loader=loader)
@@ -850,7 +845,7 @@ if __name__ == '__main__':
 	# logger.info("Loading 'patients' table fully...")
 	# patients_df = loader.load_one_table(TableNames.PATIENTS, partial_loading=False, use_dask=True)
 	# merged_tables = data_loader.load_merged_tables(partial_loading=True, num_subjects=10)
-	example = ExampleDataLoader(partial_loading=True, num_subjects=10, apply_filtering=True)
-	example.load_merged_tables()
+	# example = ExampleDataLoader(partial_loading=True, num_subjects=10, apply_filtering=True)
+	# example.load_merged_tables()
 
 	print('done')
