@@ -96,7 +96,7 @@ class DataLoaderExamples:
 
         # 1. Load a table fully
         logger.info("Loading 'patients' table fully...")
-        patients_df = loader.load_one_table(TableNames.PATIENTS, partial_loading=False)
+        patients_df = loader.load(TableNames.PATIENTS, partial_loading=False)
 
         # Check if Dask DataFrame and compute if needed for display
         if isinstance(patients_df, dd.DataFrame):
@@ -113,7 +113,7 @@ class DataLoaderExamples:
         logger.info(f"Selected subject IDs for partial loading: {partial_subject_ids}")
 
         loader.subject_ids_for_partial_loading = partial_subject_ids
-        partial_df = loader.load_one_table(table_name=TableNames.PATIENTS, partial_loading=True)
+        partial_df = loader.load(table_name=TableNames.PATIENTS, partial_loading=True)
 
         if isinstance(partial_df, dd.DataFrame):
             partial_count = partial_df.shape[0].compute()
@@ -141,7 +141,7 @@ class DataLoaderExamples:
         df2 = pd.DataFrame(data2)
 
         logger.info("Demonstration of merging two DataFrames:")
-        merged_df = loader.load_merged_tables()
+        merged_df = loader.load(table_name=TableNames.MERGED)
 
         logger.info("\nMerged dictionary keys:")
         for key in merged_df.columns:

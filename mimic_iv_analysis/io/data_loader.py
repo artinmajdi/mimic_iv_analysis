@@ -255,7 +255,8 @@ class DataLoader:
 
 		return dtypes, parse_dates
 
-	def _load_unfiltered_csv_table(self, file_path: Path, use_dask: bool = True):
+	def _load_unfiltered_csv_table(self, file_path: Path, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
+
 		# Check if file exists
 		if not os.path.exists(file_path):
 			raise FileNotFoundError(f"CSV file not found: {file_path}")
@@ -313,7 +314,7 @@ class DataLoader:
 
 			else:
 				if df is None:
-					df = self._load_table_full(table_name=table_name, use_dask=True)
+					df = self._load_full_table_single(table_name=table_name, use_dask=True)
 
 				subject_ids = df['subject_id'].unique().compute()
 				subject_ids.to_csv(subject_ids_path, index=False)
@@ -324,24 +325,6 @@ class DataLoader:
 
 		return self._all_subject_ids
 
-	def get_partial_subject_id_list_for_partial_loading(self, num_subjects: int = DEFAULT_NUM_SUBJECTS, table_name: TableNames = TableNames.ADMISSIONS, df: Optional[pd.DataFrame | dd.DataFrame] = None, random_selection: bool = False ) -> List[int]:
-
-		subject_ids = self.all_subject_ids(table_name=table_name, df=df)
-
-		# If no subject IDs or num_subjects is non-positive, return an empty list
-		if not subject_ids or num_subjects <= 0:
-			return []
-
-		# If num_subjects is greater than the number of available subject IDs, return all subject IDs
-		if num_subjects > len(subject_ids):
-			return subject_ids
-
-		if random_selection:
-			self.partial_subject_id_list = np.random.choice(a=subject_ids, size=num_subjects, replace=False).tolist()
-		else:
-			self.partial_subject_id_list = subject_ids[:num_subjects]
-
-		return self.partial_subject_id_list
 
 	def load_all_study_tables_full(self, use_dask: bool = True) -> Dict[str, pd.DataFrame | dd.DataFrame]:
 
@@ -352,14 +335,13 @@ class DataLoader:
 			if table_name is TableNames.MERGED:
 				raise ValueError("merged table can not be part of the merged table")
 
-			tables_dict[table_name.value] = self._load_table_full(table_name=table_name, use_dask=use_dask)
+			tables_dict[table_name.value] = self._load_full_table_single(table_name=table_name, use_dask=use_dask)
 
-			if self.apply_filtering:
-				tables_dict[table_name.value] = Filtering(df=tables_dict[table_name.value], table_name=table_name).render()
+
 
 		return tables_dict
 
-	def _load_table_full(self, table_name: TableNames, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
+	def _load_full_table_single(self, table_name: TableNames, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
 
 		if self.tables_info_df is None:
 			self.scan_mimic_directory()
@@ -373,16 +355,40 @@ class DataLoader:
 			else:
 				return pd.read_parquet(file_path)
 
-		return self._load_unfiltered_csv_table(file_path, use_dask=use_dask)
+		df = self._load_unfiltered_csv_table(file_path, use_dask=use_dask)
+
+		if self.apply_filtering:
+			df = Filtering(df=df, table_name=table_name).render()
+
+		return df
 
 	def partial_loading(self, df: pd.DataFrame | dd.DataFrame, table_name: TableNames, num_subjects: int = DEFAULT_NUM_SUBJECTS) -> pd.DataFrame | dd.DataFrame:
+
+		def get_partial_subject_id_list(random_selection: bool = False ) -> List[int]:
+
+			subject_ids = self.all_subject_ids(table_name=table_name, df=df)
+
+			# If no subject IDs or num_subjects is non-positive, return an empty list
+			if not subject_ids or num_subjects <= 0:
+				return []
+
+			# If num_subjects is greater than the number of available subject IDs, return all subject IDs
+			if num_subjects > len(subject_ids):
+				return subject_ids
+
+			if random_selection:
+				self.partial_subject_id_list = np.random.choice(a=subject_ids, size=num_subjects, replace=False).tolist()
+			else:
+				self.partial_subject_id_list = subject_ids[:num_subjects]
+
+			return self.partial_subject_id_list
 
 		if 'subject_id' not in df.columns:
 			logger.info(f"Table {table_name.value} does not have a subject_id column. "
 						f"Partial loading is not possible. Skipping partial loading.")
 			return df
 
-		subject_ids_set = set( self.get_partial_subject_id_list_for_partial_loading(num_subjects=num_subjects, table_name=table_name, random_selection=False, df=df) )
+		subject_ids_set = set( get_partial_subject_id_list(random_selection=False) )
 
 		logger.info(f"Filtering {table_name.value} by subject_id for {num_subjects} subjects.")
 
@@ -392,101 +398,21 @@ class DataLoader:
 
 		return df[df['subject_id'].isin(subject_ids_set)]
 
-	def load_one_table(self, table_name: TableNames, partial_loading: bool = False, num_subjects: int = DEFAULT_NUM_SUBJECTS, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
+	def load(self, table_name: TableNames, partial_loading: bool = False, num_subjects: int = DEFAULT_NUM_SUBJECTS, use_dask:bool = True, tables_dict:Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None) -> pd.DataFrame | dd.DataFrame:
 
-		df = self._load_table_full(table_name=table_name, use_dask=use_dask)
-
-		if self.apply_filtering:
-			df = Filtering(df=df, table_name=table_name).render()
+		if table_name is TableNames.MERGED:
+			df = self._load_full_tables_merged(tables_dict=tables_dict, use_dask=use_dask)
+		else:
+			df = self._load_full_table_single(table_name=table_name, use_dask=use_dask)
 
 		if partial_loading:
 			df = self.partial_loading(df=df, table_name=table_name, num_subjects=num_subjects)
 
 		return df
 
-	def load_with_pandas_chunking(self,
-									file_path         : Path,
-									target_subject_ids: List[int],
-									max_chunks        : Optional[int] = None,
-									read_params       : Optional[Dict[str, Any]] = None
-								) -> Tuple[pd.DataFrame, int]:
-		"""
-		Loads a large file by filtering by subject_ids using pandas chunking.
+	def _load_full_tables_merged(self, tables_dict: Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
+		""" Load and merge tables. """
 
-		Args:
-			file_path: Path to the file to load
-			target_subject_ids: List of subject IDs to filter by
-			max_chunks: Maximum number of chunks to read
-			read_params: Additional parameters for pd.read_csv
-
-		Returns:
-			Tuple of (filtered DataFrame, number of rows loaded)
-		"""
-		logger.info(f"Using Pandas chunking to filter by subject_id for {os.path.basename(file_path)}.")
-
-		# Initialize variables
-		chunks_for_target_ids = []
-		processed_chunks = 0
-
-		# Set default read parameters if not provided
-		if read_params is None:
-			read_params = {}
-
-		read_params['dtype'], read_params['parse_dates'] = self._get_column_dtype(file_path=file_path)
-
-
-		# Read the file in chunks
-		with pd.read_csv(file_path, chunksize=100000, **read_params) as reader:
-
-			# Iterate through chunks
-			for chunk in reader:
-
-				# Increment processed chunks counter
-				processed_chunks += 1
-
-				# Filter chunk by target_subject_ids
-				filtered_chunk = chunk[chunk[SUBJECT_ID_COL].isin(target_subject_ids)]
-
-				# Add to chunks if not empty
-				if not filtered_chunk.empty:
-					chunks_for_target_ids.append(filtered_chunk)
-
-				# Check if we've reached max chunks
-				if max_chunks is not None and max_chunks != -1 and processed_chunks >= max_chunks:
-					logger.info(f"Reached max_chunks ({max_chunks}) during subject_id filtering for {os.path.basename(file_path)}.")
-					break
-
-			# Combine filtered chunks into final DataFrame
-			if chunks_for_target_ids:
-				df_result = pd.concat(chunks_for_target_ids, ignore_index=True)
-			else:
-				# Empty df with correct columns
-				df_result = pd.DataFrame(columns=pd.read_csv(file_path, nrows=0).columns)
-
-			# Calculate total rows loaded
-			total_rows_loaded = len(df_result)
-
-			# Log the result
-			logger.info(f"Loaded {total_rows_loaded} rows for {len(target_subject_ids)} subjects from {os.path.basename(file_path)} using Pandas chunking.")
-
-		return df_result, total_rows_loaded
-
-	def load_merged_tables(self,
-		tables_dict    : Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None,
-		use_dask       : bool = True,
-		partial_loading: bool = False,
-		num_subjects   : int  = DEFAULT_NUM_SUBJECTS,
-		) -> pd.DataFrame | dd.DataFrame:
-		"""
-		Load and merge tables.
-
-		Args:
-			use_dask: Whether to use Dask for loading
-			tables_dict: Optional dictionary of pre-loaded tables
-
-		Returns:
-			Dictionary of merged tables
-		"""
 		if tables_dict is None:
 			tables_dict = self.load_all_study_tables_full(use_dask=use_dask)
 
@@ -832,9 +758,8 @@ class ParquetConverter:
 if __name__ == '__main__':
 
 	loader = DataLoader(mimic_path=DEFAULT_MIMIC_PATH, apply_filtering=True)
-	# loader.scan_mimic_directory()
-	df_merged = loader.load_merged_tables(partial_loading=False)
-	subject_ids = loader.all_subject_ids(df=df_merged, table_name=TableNames.MERGED)
+	df_merged = loader.load(table_name=TableNames.MERGED, partial_loading=True, num_subjects=10)
+
 
 	# Convert admissions table to Parquet
 	# converter = ParquetConverter(data_loader=loader)

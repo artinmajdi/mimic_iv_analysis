@@ -396,7 +396,7 @@ class TestDataLoader:
             mock_filtering.return_value = mock_filter_instance
 
             # Test full loading
-            result = loader.load_one_table(TableNames.PATIENTS, partial_loading=False, apply_filtering=True)
+            result = loader.load(TableNames.PATIENTS, partial_loading=False, apply_filtering=True)
             mock_get_path.assert_called_with(table_name=TableNames.PATIENTS)
             mock_load_csv.assert_called_with(file_path, use_dask=True)
             # Check that Filtering was created with the right parameters
@@ -411,7 +411,7 @@ class TestDataLoader:
             mock_load_csv.reset_mock()
             mock_filtering.reset_mock()
 
-            result = loader.load_one_table(
+            result = loader.load(
                 TableNames.PATIENTS,
                 partial_loading=True,
                 subject_ids=[1, 3],
@@ -419,49 +419,6 @@ class TestDataLoader:
             )
             mock_get_path.assert_called_with(table_name=TableNames.PATIENTS)
             mock_load_csv.assert_called_with(file_path, use_dask=True)
-
-    def test_load_with_pandas_chunking(self):
-        """Test loading with pandas chunking."""
-        # Create a test CSV file
-        with tempfile.NamedTemporaryFile(suffix='.csv', delete=False) as f:
-            test_csv_path = Path(f.name)
-
-        try:
-            # Write test data
-            pd.DataFrame({
-                'subject_id': [1, 2, 3, 1, 2, 4],
-                'value': ['a', 'b', 'c', 'd', 'e', 'f']
-            }).to_csv(test_csv_path, index=False)
-
-            loader = DataLoader()
-
-            # Test filtering by subject_ids
-            target_subject_ids = [1, 3]
-            result_df, row_count = loader.load_with_pandas_chunking(
-                file_path=test_csv_path,
-                target_subject_ids=target_subject_ids,
-                read_params={'dtype': {'subject_id': int}}
-            )
-
-            # Check results
-            assert row_count == 3  # 2 rows for subject_id 1, 1 row for subject_id 3
-            assert set(result_df['subject_id'].tolist()) == set(target_subject_ids)
-            assert len(result_df) == 3
-
-            # Test with max_chunks
-            result_df, row_count = loader.load_with_pandas_chunking(
-                file_path=test_csv_path,
-                target_subject_ids=target_subject_ids,
-                max_chunks=1,
-                read_params={'dtype': {'subject_id': int}}
-            )
-
-            # With a small file, we should still get same results
-            assert row_count == 3
-
-        finally:
-            # Clean up
-            test_csv_path.unlink()
 
     @patch('mimic_iv_analysis.io.data_loader.DataLoader.load_all_study_tables')
     def test_load_merged_tables(self, mock_load_all, mock_mimic_dir):
@@ -512,7 +469,7 @@ class TestDataLoader:
         mock_merged_full_study.merge.return_value = mock_merged_w_poe
 
         # Test loading merged tables
-        result = loader.load_merged_tables()
+        result = loader.load(table_name=TableNames.MERGED)
 
         # Check that the right functions were called
         patients_df.merge.assert_called_with(admissions_df, on='subject_id', how='inner')
@@ -536,7 +493,7 @@ class TestDataLoader:
             'poe_detail': poe_detail_df
         }
 
-        result = loader.load_merged_tables(tables_dict=tables_dict)
+        result = loader.load(table_name=TableNames.MERGED, tables_dict=tables_dict)
 
         # Check that load_all_study_tables was not called
         mock_load_all.assert_not_called()
