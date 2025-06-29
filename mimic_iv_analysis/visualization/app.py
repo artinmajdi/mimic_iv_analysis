@@ -435,7 +435,7 @@ class MIMICDashboardApp:
 					st.session_state.connected_tables = self.data_handler.load_all_study_tables_full(use_dask=st.session_state.use_dask)
 
 					# Load merged tables
-					return self.data_handler.load(table_name=TableNames.MERGED, tables_dict=st.session_state.connected_tables, partial_loading=not st.session_state.load_full, num_subjects=st.session_state.num_subjects_to_load)
+					return self.data_handler.load(table_name=TableNames.MERGED, tables_dict=st.session_state.connected_tables, partial_loading=not st.session_state.load_full, num_subjects=st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS))
 
 
 			if not _dataset_path_is_valid():
