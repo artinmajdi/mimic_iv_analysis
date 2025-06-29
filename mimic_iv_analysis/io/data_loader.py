@@ -412,6 +412,7 @@ class DataLoader:
 		else:
 			df = self._load_full_table_single(table_name=table_name, use_dask=use_dask)
 
+		# TODO: Change this, so that when the merged table is selected, instead of extracting the subject_ids from the entire merged table, it should check if the list of subject_ids exist for the merged_table, if not create it. if it does exist, then apply that to each of the tables separately (or at least the bigger one which is poe.csv)
 		if partial_loading:
 			df = self.partial_loading(df=df, table_name=table_name, num_subjects=num_subjects)
 

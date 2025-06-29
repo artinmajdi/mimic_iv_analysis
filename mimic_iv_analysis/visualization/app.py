@@ -4,6 +4,9 @@ from io import BytesIO
 from pathlib import Path
 from typing import Tuple, Optional, List
 
+# Dask distributed for background computation
+from dask.distributed import Client, LocalCluster
+
 # Data processing imports
 import pandas as pd
 import dask.dataframe as dd
@@ -38,6 +41,30 @@ class MIMICDashboardApp:
 
 		logger.info("Initializing FeatureEngineerUtils...")
 		self.feature_engineer  = FeatureEngineerUtils()
+
+		# ----------------------------------------
+		# Initialize (or reuse) a Dask client so heavy
+		# computations can run on worker processes and
+		# the Streamlit script thread remains responsive
+		# ----------------------------------------
+		@st.cache_resource(show_spinner=False)
+		def _get_dask_client():
+			cluster = LocalCluster(
+				n_workers=4,
+				threads_per_worker=4,
+				processes=True,
+				memory_limit="16GB",
+				dashboard_address=":8787",
+			)
+			return Client(cluster)
+
+		# Store the client in session_state so that a new one
+		# is not spawned on every rerun.
+		if "dask_client" not in st.session_state:
+			st.session_state.dask_client = _get_dask_client()
+			logger.info("Dask client initialised: %s", st.session_state.dask_client)
+
+		self.dask_client = st.session_state.dask_client
 
 		# Initialize UI components for tabs
 		self.feature_engineering_ui    = None
