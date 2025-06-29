@@ -189,7 +189,7 @@ class MIMICDashboardApp:
 						label    = "Convert to Parquet",
 						key      = "convert_to_parquet_button",
 						on_click = self._convert_table_to_parquet,
-						args     = [ TableNames(st.session_state.selected_table) ],
+						args     = ([ TableNames(st.session_state.selected_table) ],),
 						help     = f"Convert {st.session_state.selected_table} from CSV to Parquet for faster loading." )
 
 					st.sidebar.warning('Please refresh the page to see the updated tables.')
@@ -200,7 +200,7 @@ class MIMICDashboardApp:
 						label    = "Update Parquet",
 						key      = "update_parquet_button",
 						on_click = self._convert_table_to_parquet,
-						args     = [ TableNames(st.session_state.selected_table) ],
+						args     = ([ TableNames(st.session_state.selected_table) ],),
 						help     = f"Re-convert {st.session_state.selected_table} from CSV to update the Parquet file." )
 
 			def parquet_update_convert_merged_table():
@@ -245,7 +245,6 @@ class MIMICDashboardApp:
 					help     = "Re-convert all base tables from CSV to update their Parquet files."
 				)
 
-			# --- Conversion/Update Buttons ---
 			if st.session_state.selected_table: # Ensure a table is selected
 				st.sidebar.markdown("---")
 				st.sidebar.markdown("#### Parquet Conversion")
@@ -254,6 +253,20 @@ class MIMICDashboardApp:
 					_parquet_update_convert_single_table()
 				else:
 					parquet_update_convert_merged_table()
+
+			if 'conversion_status' in st.session_state:
+				status = st.session_state.conversion_status
+				message_type = status.get('type')
+				message_text = status.get('message')
+
+				if message_type == 'success':
+					st.sidebar.success(message_text)
+				elif message_type == 'error':
+					st.sidebar.error(message_text)
+				elif message_type == 'warning':
+					st.sidebar.warning(message_text)
+				elif message_type == 'exception':
+					st.sidebar.exception(message_text)
 
 		def _load_configuration():
 
@@ -902,7 +915,7 @@ class MIMICDashboardApp:
 			tables_to_process = [ TableNames(selected_table) ]
 
 		if not tables_to_process:
-			st.sidebar.warning("No tables to process.")
+			st.session_state.conversion_status = {'type': 'warning', 'message': "No tables to process."}
 			return
 
 		try:
@@ -911,13 +924,14 @@ class MIMICDashboardApp:
 					self.parquet_converter.save_as_parquet(table_name=table_enum)
 
 			if self._rescan_and_update_state():
-				st.sidebar.success(f"Successfully converted {len(tables_to_process)} table(s)!")
+				st.session_state.conversion_status = {'type': 'success', 'message': f"Successfully converted {len(tables_to_process)} table(s)!"}
 			else:
-				st.sidebar.error("Conversion might have failed. Could not find updated tables.")
+				st.session_state.conversion_status = {'type': 'error', 'message': "Conversion might have failed. Could not find updated tables."}
+
 
 		except Exception as e:
 			logger.error(f"Parquet conversion job failed: {e}", exc_info=True)
-			st.exception(e)
+			st.session_state.conversion_status = {'type': 'exception', 'message': e}
 
 		st.session_state.selected_table = selected_table
 		st.session_state.selected_module = selected_module

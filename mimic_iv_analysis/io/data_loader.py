@@ -36,6 +36,7 @@ class DataLoader:
 		# MIMIC_IV v3.1 path
 		self.mimic_path      = mimic_path
 		self.apply_filtering = apply_filtering
+		self.include_transfers = include_transfers
 
 		# Tables to load. Use list provided by user or default list
 		self.study_table_list = set(study_tables_list or DEFAULT_STUDY_TABLES_LIST)
@@ -304,7 +305,11 @@ class DataLoader:
 
 		def _load_unique_subject_ids_for_table(df: pd.DataFrame | dd.DataFrame):
 
-			subject_ids_path = self.mimic_path / 'subject_ids' / f'{table_name.value}_subject_ids.csv'
+			csv_tag = table_name.value
+			if table_name == TableNames.MERGED and self.include_transfers:
+				csv_tag += '_w_transfers'
+
+			subject_ids_path = self.mimic_path / 'subject_ids' / f'{csv_tag}_subject_ids.csv'
 			subject_ids_path.parent.mkdir(parents=True, exist_ok=True)
 
 			if self.tables_info_df is None:
@@ -759,9 +764,9 @@ class ParquetConverter:
 
 if __name__ == '__main__':
 
-	loader = DataLoader(mimic_path=DEFAULT_MIMIC_PATH, apply_filtering=True)
+	loader = DataLoader(mimic_path=DEFAULT_MIMIC_PATH, apply_filtering=True, include_transfers=True)
 	df_merged = loader.load(table_name=TableNames.MERGED, partial_loading=False)
-
+	subject_ids = loader.all_subject_ids(df=df_merged, table_name=TableNames.MERGED)
 
 	# Convert admissions table to Parquet
 	# converter = ParquetConverter(data_loader=loader)
