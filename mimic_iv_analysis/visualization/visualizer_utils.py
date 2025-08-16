@@ -52,9 +52,11 @@ class MIMICVisualizerUtils:
 			# Display column information
 			st.markdown("<h3>Column Information</h3>", unsafe_allow_html=True)
 			try:
+				# Ensure dtype objects are converted to strings to prevent Arrow conversion issues
+				dtype_strings = pd.Series(df_stats.dtypes, index=df_stats.columns).astype(str).values
 				col_info = pd.DataFrame({
 					'Column': df_stats.columns,
-					'Type': df_stats.dtypes.values,
+					'Type': dtype_strings,
 					'Non-Null Count': df_stats.count().values,
 					'Missing Values (%)': (df_stats.isna().sum() / len(df_stats) * 100).values.round(2),
 					'Unique Values': [df_stats[col].nunique() for col in df_stats.columns]
