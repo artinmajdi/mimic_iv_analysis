@@ -50,12 +50,15 @@ class MIMICDashboardApp:
 		@st.cache_resource(show_spinner=False)
 		def _get_dask_client():
 			cluster = LocalCluster(
-				n_workers=4,
-				threads_per_worker=4,
-				processes=True,
-				memory_limit="16GB",
-				dashboard_address=":8787",
-			)
+			n_workers=1,
+			threads_per_worker=16,
+			processes=True,
+			memory_limit="20GB",  # 4 workers * 5GB = 20GB total
+			dashboard_address=":8787",
+			# I/O optimizations
+			# memory_spill_size="16GB",     # Spill to disk at 8GB
+			# memory_target_fraction=0.8,  # Target 80% memory usage
+		)
 			return Client(cluster)
 
 		# Store the client in session_state so that a new one
@@ -472,12 +475,48 @@ class MIMICDashboardApp:
 
 				with st.spinner("Loading and merging connected tables..."):
 
-					# Load tables
-					st.session_state.connected_tables = self.data_handler.load_all_study_tables_full(use_dask=st.session_state.use_dask)
+					# If loading full dataset, keep previous behavior
+					if st.session_state.load_full:
+						st.session_state.connected_tables = self.data_handler.load_all_study_tables_full(use_dask=st.session_state.use_dask)
+						# Merge without partial filtering (tables already fully loaded)
+						return self.data_handler.load(
+							table_name=TableNames.MERGED,
+							tables_dict=st.session_state.connected_tables,
+							partial_loading=False,
+							use_dask=st.session_state.use_dask,
+							num_subjects=st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS)
+						)
 
-					# Load merged tables
-					return self.data_handler.load(table_name=TableNames.MERGED, tables_dict=st.session_state.connected_tables, partial_loading=not st.session_state.load_full, num_subjects=st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS))
+					# Optimized path: 1) choose subject_ids via intersection, 2) load only those rows, 3) merge
+					selected_ids = self.data_handler.get_merged_table_subject_id_intersection(
+						num_subjects=st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS)
+					)
 
+					# Fallback to full load if no subject_ids found
+					if not selected_ids:
+						st.session_state.connected_tables = self.data_handler.load_all_study_tables_full(use_dask=st.session_state.use_dask)
+						return self.data_handler.load(
+							table_name=TableNames.MERGED,
+							tables_dict=st.session_state.connected_tables,
+							partial_loading=False,
+							use_dask=st.session_state.use_dask,
+							num_subjects=st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS)
+						)
+
+					filtered_tables = self.data_handler.load_filtered_study_tables_by_subjects(
+						subject_ids=selected_ids,
+						use_dask=st.session_state.use_dask
+					)
+
+					st.session_state.connected_tables = filtered_tables
+
+					return self.data_handler.load(
+						table_name=TableNames.MERGED,
+						tables_dict=filtered_tables,
+						partial_loading=False,
+						use_dask=st.session_state.use_dask,
+						num_subjects=st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS)
+					)
 
 			if not _dataset_path_is_valid():
 				return

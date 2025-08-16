@@ -145,7 +145,7 @@ class DataLoader:
 
 				# Store columns
 				if suffix == '.parquet':
-					df = dd.read_parquet(file_path)
+					df = dd.read_parquet(file_path, split_row_groups=True)
 				else:
 					df = pd.read_csv(file_path, nrows=1)
 				tables_info_dict['columns_list'][(module, table_name)] = set(df.columns.tolist())
@@ -332,6 +332,68 @@ class DataLoader:
 
 		return self._all_subject_ids
 
+	def get_merged_table_subject_id_intersection(self, num_subjects: int = DEFAULT_NUM_SUBJECTS) -> List[int]:
+		"""Find the intersection of subject_ids across all merged table components and return a subset."""
+		
+		# Get all tables that have subject_id column and are part of merged table
+		tables_with_subject_id = [table for table in self.merged_table_components 
+								  if table in self.tables_w_subject_id_column]
+		
+		if not tables_with_subject_id:
+			logger.warning("No tables with subject_id found in merged table components")
+			return []
+		
+		logger.info(f"Finding subject_id intersection across {len(tables_with_subject_id)} tables")
+		
+		# Start with subject_ids from the first table
+		intersection_set = None
+		
+		for table_name in tables_with_subject_id:
+			# Load only subject_id column to minimize memory usage
+			file_path = self._get_file_path(table_name)
+			
+			if file_path.suffix == '.parquet':
+				# For parquet, we can select specific columns efficiently
+				df_subject_ids = dd.read_parquet(file_path, columns=['subject_id'], split_row_groups=True)
+			else:
+				# For CSV, read only the subject_id column
+				if file_path.suffix in ['.csv', '.gz', '.csv.gz']:
+					df_subject_ids = dd.read_csv(
+						urlpath=file_path,
+						usecols=['subject_id'],
+						dtype={'subject_id': 'int64'},
+						assume_missing=True,
+						blocksize=None if str(file_path).endswith('.gz') else '200MB'
+					)
+				else:
+					# Fallback: load via helper then select column
+					df = self._load_unfiltered_csv_table(file_path, use_dask=True)
+					df_subject_ids = df[['subject_id']]
+			
+			# Get unique subject_ids for this table
+			unique_subject_ids = set(df_subject_ids['subject_id'].unique().compute())
+			
+			if intersection_set is None:
+				intersection_set = unique_subject_ids
+			else:
+				intersection_set = intersection_set.intersection(unique_subject_ids)
+			
+			logger.info(f"After {table_name.value}: {len(intersection_set)} subject_ids in intersection")
+		
+		if not intersection_set:
+			logger.warning("No common subject_ids found across all tables")
+			return []
+		
+		# Convert to sorted list and take the requested number
+		intersection_list = sorted(list(intersection_set))
+		
+		if num_subjects <= 0:
+			return []
+		elif num_subjects >= len(intersection_list):
+			return intersection_list
+		else:
+			return intersection_list[:num_subjects]
+
 
 	def load_all_study_tables_full(self, use_dask: bool = True) -> Dict[str, pd.DataFrame | dd.DataFrame]:
 
@@ -358,7 +420,7 @@ class DataLoader:
 		# For parquet files, respect the use_dask flag
 		if file_path.suffix == '.parquet':
 			if use_dask:
-				return dd.read_parquet(file_path)
+				return dd.read_parquet(file_path, split_row_groups=True)
 			else:
 				return pd.read_parquet(file_path)
 
@@ -408,12 +470,17 @@ class DataLoader:
 	def load(self, table_name: TableNames, partial_loading: bool = False, num_subjects: int = DEFAULT_NUM_SUBJECTS, use_dask:bool = True, tables_dict:Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None) -> pd.DataFrame | dd.DataFrame:
 
 		if table_name is TableNames.MERGED:
+			# Use optimized path when partial loading is requested (select subject_ids first, then load only needed rows)
+			if partial_loading and tables_dict is None:
+				return self._load_full_tables_merged_optimized(num_subjects=num_subjects, use_dask=use_dask)
+				
+			# Fall back to regular merge (uses provided tables_dict when available)
 			df = self._load_full_tables_merged(tables_dict=tables_dict, use_dask=use_dask)
 		else:
 			df = self._load_full_table_single(table_name=table_name, use_dask=use_dask)
 
-		# TODO: Change this, so that when the merged table is selected, instead of extracting the subject_ids from the entire merged table, it should check if the list of subject_ids exist for the merged_table, if not create it. if it does exist, then apply that to each of the tables separately (or at least the bigger one which is poe.csv)
-		if partial_loading:
+		# Apply legacy row-level filtering only for non-merged tables
+		if partial_loading and table_name is not TableNames.MERGED:
 			df = self.partial_loading(df=df, table_name=table_name, num_subjects=num_subjects)
 
 		return df
@@ -449,13 +516,56 @@ class DataLoader:
 		poe_and_details   = poe_df.merge(poe_detail_df, on=['poe_id', 'poe_seq', 'subject_id'], how='left')
 		merged_full_study = merged_wo_poe.merge(poe_and_details, on=['subject_id', 'hadm_id'], how='inner')
 
-		# # TODO: check why this returns an empty df
-		# logger.info(f"Loaded {merged_full_study.shape[0].compute()} rows from merged table.")
-		# if partial_loading:
-		# 	merged_full_study = self.partial_loading(df=merged_full_study, table_name=TableNames.MERGED, num_subjects=num_subjects)
-		# 	logger.info(f"Loaded {merged_full_study.shape[0].compute()} rows after partial loading.")
-
 		return merged_full_study
+
+	def load_filtered_study_tables_by_subjects(self, subject_ids: List[int], use_dask: bool = True) -> Dict[str, pd.DataFrame | dd.DataFrame]:
+		"""Load only rows for the given subject_ids for each study table, keeping descriptor tables unfiltered."""
+
+		if self.tables_info_df is None:
+			self.scan_mimic_directory()
+
+		subject_ids_set = set(subject_ids)
+		tables_dict: Dict[str, pd.DataFrame | dd.DataFrame] = {}
+
+		for _, row in self.study_tables_info.iterrows():
+			table_name = TableNames(row.table_name)
+
+			if table_name is TableNames.MERGED:
+				raise ValueError("merged table can not be part of the merged table")
+
+			# Load table
+			df = self._load_full_table_single(table_name=table_name, use_dask=use_dask)
+
+			# Apply subject_id filtering when available
+			if 'subject_id' in df.columns:
+				if isinstance(df, dd.DataFrame):
+					df = df.map_partitions(lambda part: part[part['subject_id'].isin(subject_ids_set)])
+				else:
+					df = df[df['subject_id'].isin(subject_ids_set)]
+
+			tables_dict[table_name.value] = df
+
+		return tables_dict
+
+	def _load_full_tables_merged_optimized(self, num_subjects: int = DEFAULT_NUM_SUBJECTS, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
+		"""Optimized merged loading: select subject_ids first, load filtered tables, then merge."""
+
+		# 1) Compute intersection and select N subject_ids
+		selected_subject_ids = self.get_merged_table_subject_id_intersection(num_subjects=num_subjects)
+		if not selected_subject_ids:
+			logger.warning("No subject_ids selected for optimized merged loading; falling back to full merged load")
+			return self._load_full_tables_merged(use_dask=use_dask)
+
+		# 2) Load only rows for selected subject_ids across component tables
+		filtered_tables = self.load_filtered_study_tables_by_subjects(subject_ids=selected_subject_ids, use_dask=use_dask)
+
+		# 3) Merge filtered tables using the same logic as the regular merger
+		merged = self._load_full_tables_merged(tables_dict=filtered_tables, use_dask=use_dask)
+
+		# Persist selected ids for potential reuse by other methods
+		self.partial_subject_id_list = selected_subject_ids
+
+		return merged
 
 
 	@property
@@ -563,7 +673,6 @@ class ExampleDataLoader(DataLoader):
 		patients_df        = self.tables_dict[TableNames.PATIENTS.value]
 		admissions_df      = self.tables_dict[TableNames.ADMISSIONS.value]
 		diagnoses_icd_df   = self.tables_dict[TableNames.DIAGNOSES_ICD.value]
-		poe_df             = self.tables_dict[TableNames.POE.value]
 		d_icd_diagnoses_df = self.tables_dict[TableNames.D_ICD_DIAGNOSES.value]
 		poe_detail_df      = self.tables_dict[TableNames.POE_DETAIL.value]
 
