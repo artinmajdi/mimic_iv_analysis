@@ -27,6 +27,7 @@ from mimic_iv_analysis.visualization.app_components import FilteringTab, Feature
 from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtils
 
 
+# TODO: Make sure the UI doesn't reload the table everytime user changes a setting. 
 # TODO: fix the Order Timing Analysis tab. I am getting an error when i run "generate timing features" inside the "order timing analysis" tab , which itself is under "feature engineering" tab.
 class MIMICDashboardApp:
 
