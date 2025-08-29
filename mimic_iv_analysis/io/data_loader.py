@@ -185,10 +185,9 @@ class DataLoader:
 			'columns_list'       : {},
 		}
 
-		# If the mimic path does not exist, return an empty DataFrame with correct columns
+		# If the mimic path does not exist, return an empty DataFrame
 		if not self.mimic_path.exists():
-			self.tables_info_df = pd.DataFrame(columns=['module', 'table_name', 'file_path', 'file_size', 'display_name', 'suffix', 'columns_list'])
-			self.tables_info_dict = tables_info_dict
+			self.tables_info_df = pd.DataFrame(columns=tables_info_dict.keys())
 			return None, None
 
 		# Iterate through modules
@@ -622,7 +621,7 @@ class ExampleDataLoader(DataLoader):
 			df = self.tables_dict[table_name.value]
 			if 'subject_id' not in df.columns:
 				return "N/A"
-			# TODO: if returns errors, use df.subject_id.unique().shape[0].compute() instead
+			# INFO: if returns errors, use df.subject_id.unique().shape[0].compute() instead
 			return humanize.intcomma(
 				df.subject_id.nunique().compute() if isinstance(df, dd.DataFrame)
 				else df.subject_id.nunique()
