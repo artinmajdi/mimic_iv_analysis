@@ -185,9 +185,10 @@ class DataLoader:
 			'columns_list'       : {},
 		}
 
-		# If the mimic path does not exist, return an empty DataFrame
+		# If the mimic path does not exist, return an empty DataFrame with correct columns
 		if not self.mimic_path.exists():
-			self.tables_info_df = pd.DataFrame(columns=tables_info_dict.keys())
+			self.tables_info_df = pd.DataFrame(columns=['module', 'table_name', 'file_path', 'file_size', 'display_name', 'suffix', 'columns_list'])
+			self.tables_info_dict = tables_info_dict
 			return None, None
 
 		# Iterate through modules

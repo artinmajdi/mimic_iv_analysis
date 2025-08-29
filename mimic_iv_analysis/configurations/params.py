@@ -121,7 +121,9 @@ DEFAULT_STUDY_TABLES_LIST = [
 
 
 # Constants
+# TODO: I need to fix this, so that its not dependent on this path. 
 DEFAULT_MIMIC_PATH   = Path("/Users/artinmajdi/Documents/GitHubs/RAP/mimic__pankaj/dataset/mimic-iv-3.1")
+# DEFAULT_MIMIC_PATH   = Path("/Users/pankajvyas/MIMIC_Project/MIMIC-IV-Raw Data")
 DEFAULT_NUM_SUBJECTS = 10
 RANDOM_STATE         = 42
 SUBJECT_ID_COL       = 'subject_id'
