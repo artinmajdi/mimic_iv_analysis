@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name        = "mimic_iv_analysis"
-version     = "1.6.2"
+version     = "1.7.0"
 description = "A data science and machine learning framework for nursing research"
 readme      = "README.md"
 authors     = [ {name = "Artin Majdi", email = "msm2024@gmail.com"} ]
