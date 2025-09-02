@@ -410,7 +410,7 @@ class FeatureEngineeringTab:
 			admission_time_col = st.selectbox(
 				label   = "Select Admission Time Column (Optional)",
 				options = [None] + all_columns,
-				index   = all_columns.index('admittime') if 'admittime' in all_columns else 0,
+				index   = ([None] + all_columns).index('admittime') if 'admittime' in all_columns else 0,
 				key     = "admission_time_col",
 				help    = "Column containing admission timestamps (for relative timing features)",
 			)
@@ -421,7 +421,7 @@ class FeatureEngineeringTab:
 		discharge_time_col = st.selectbox(
 			label   = "Select Discharge Time Column (Optional)",
 			options = [None] + all_columns,
-			index   = all_columns.index('dischtime') if 'dischtime' in all_columns else 0,
+			index   = ([None] + all_columns).index('dischtime') if 'dischtime' in all_columns else 0,
 			key     = "discharge_time_col",
 			help    = "Column containing discharge timestamps (for relative timing features)",
 		)

@@ -60,7 +60,7 @@ class MIMICDashboardApp:
 			# I/O optimizations
 			# memory_spill_size="16GB",     # Spill to disk at 8GB
 			# memory_target_fraction=0.8,  # Target 80% memory usage
-		)
+			)
 			return Client(cluster)
 
 		# Store the client in session_state so that a new one
@@ -914,6 +914,7 @@ class MIMICDashboardApp:
 		st.session_state.order_dist = None
 		st.session_state.patient_order_dist = None
 		st.session_state.transition_matrix = None
+		st.session_state.include_transfers = False
 
 		# Clustering states
 		st.session_state.clustering_input_data = None # Holds the final data used for clustering (post-preprocessing)

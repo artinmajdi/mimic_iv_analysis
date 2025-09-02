@@ -175,6 +175,32 @@ class DataLoader:
 
 			return dataset_info_df
 
+		def _iterate_through_modules():
+			modules = ['hosp', 'icu']
+			for module in modules:
+
+				# Get module path
+				module_path: Path = self.mimic_path / module
+
+				# if the module does not exist, skip it
+				if not module_path.exists():
+					continue
+
+				# Get available tables:
+				available_tables_dict = _get_list_of_available_tables(module_path)
+
+				# If no tables found, skip this module
+				if not available_tables_dict:
+					continue
+
+				# Get available tables info
+				_get_available_tables_info(available_tables_dict, module)
+    
+		if self.mimic_path is None or not self.mimic_path.exists():
+			self.tables_info_dict = None
+			self.tables_info_df = None
+			return
+
 		# Initialize dataset info
 		tables_info_dict = {
 			'available_tables'   : {},
@@ -185,31 +211,7 @@ class DataLoader:
 			'columns_list'       : {},
 		}
 
-		# If the mimic path does not exist, return an empty DataFrame
-		if not self.mimic_path.exists():
-			self.tables_info_df = pd.DataFrame(columns=tables_info_dict.keys())
-			return None, None
-
-		# Iterate through modules
-		modules = ['hosp', 'icu']
-		for module in modules:
-
-			# Get module path
-			module_path: Path = self.mimic_path / module
-
-			# if the module does not exist, skip it
-			if not module_path.exists():
-				continue
-
-			# Get available tables:
-			available_tables_dict = _get_list_of_available_tables(module_path)
-
-			# If no tables found, skip this module
-			if not available_tables_dict:
-				continue
-
-			# Get available tables info
-			_get_available_tables_info(available_tables_dict, module)
+		_iterate_through_modules()
 
 		# Convert to DataFrame
 		self.tables_info_df = _get_info_as_dataframe()
