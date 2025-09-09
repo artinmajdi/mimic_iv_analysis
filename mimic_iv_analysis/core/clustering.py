@@ -442,64 +442,90 @@ class ClusteringAnalyzer:
 		Returns:
 			Tuple of (optimal k, metrics for all k)
 		"""
-		# Initialize metrics
-		results = {
-			'k': list(k_range),
-			'silhouette': [],
-			'davies_bouldin': [],
-			'calinski_harabasz': [],
-			'inertia': []
-		}
-
-		# Compute metrics for each k
-		for k in k_range:
-			# Run K-means
-			kmeans = KMeans(n_clusters=k, random_state=self.random_state, **kwargs)
-			labels = kmeans.fit_predict(data)
-
-			# Store inertia
-			results['inertia'].append(kmeans.inertia_)
-
-			# Calculate other metrics if more than one cluster
-			if k > 1:
-				results['silhouette'].append(silhouette_score(data, labels))
-				results['davies_bouldin'].append(davies_bouldin_score(data, labels))
-				results['calinski_harabasz'].append(calinski_harabasz_score(data, labels))
+		# Track persisted intermediates for this method
+		persisted_intermediates = {}
+		
+		try:
+			# Persist data if it's a Dask DataFrame for repeated access
+			if hasattr(data, 'persist'):
+				data_persisted = data.persist()
+				persisted_intermediates['data'] = data_persisted
+				logging.info("Persisted input data for optimal k search")
 			else:
-				results['silhouette'].append(np.nan)
-				results['davies_bouldin'].append(np.nan)
-				results['calinski_harabasz'].append(np.nan)
+				data_persisted = data
+			
+			# Initialize metrics
+			results = {
+				'k': list(k_range),
+				'silhouette': [],
+				'davies_bouldin': [],
+				'calinski_harabasz': [],
+				'inertia': []
+			}
 
-		# Find optimal k based on selected metric
-		if metric == 'silhouette':
-			# Higher is better
-			optimal_idx = np.nanargmax(results['silhouette'])
-		elif metric == 'davies_bouldin':
-			# Lower is better
-			optimal_idx = np.nanargmin(results['davies_bouldin'])
-		elif metric == 'calinski_harabasz':
-			# Higher is better
-			optimal_idx = np.nanargmax(results['calinski_harabasz'])
-		elif metric == 'inertia':
-			# Use elbow method for inertia
-			# Calculate the rate of change of inertia
-			inertia = np.array(results['inertia'])
-			rate_of_change = np.diff(inertia) / inertia[:-1]
+			# Compute metrics for each k
+			for k in k_range:
+				# Run K-means
+				kmeans = KMeans(n_clusters=k, random_state=self.random_state, **kwargs)
+				labels = kmeans.fit_predict(data_persisted)
 
-			# Find the point where rate of change starts to diminish
-			# (add 1 because diff reduces length by 1)
-			optimal_idx = np.argmax(rate_of_change) + 1
+				# Store inertia
+				results['inertia'].append(kmeans.inertia_)
 
-			# Ensure optimal_idx is within bounds
-			if optimal_idx >= len(k_range):
-				optimal_idx = len(k_range) - 1
-		else:
-			raise ValueError(f"Invalid metric: {metric}")
+				# Calculate other metrics if more than one cluster
+				if k > 1:
+					results['silhouette'].append(silhouette_score(data_persisted, labels))
+					results['davies_bouldin'].append(davies_bouldin_score(data_persisted, labels))
+					results['calinski_harabasz'].append(calinski_harabasz_score(data_persisted, labels))
+				else:
+					results['silhouette'].append(np.nan)
+					results['davies_bouldin'].append(np.nan)
+					results['calinski_harabasz'].append(np.nan)
 
-		# Get optimal k
-		optimal_k = k_range[optimal_idx]
+			# Find optimal k based on selected metric
+			if metric == 'silhouette':
+				# Higher is better
+				optimal_idx = np.nanargmax(results['silhouette'])
+			elif metric == 'davies_bouldin':
+				# Lower is better
+				optimal_idx = np.nanargmin(results['davies_bouldin'])
+			elif metric == 'calinski_harabasz':
+				# Higher is better
+				optimal_idx = np.nanargmax(results['calinski_harabasz'])
+			elif metric == 'inertia':
+				# Use elbow method for inertia
+				# Calculate the rate of change of inertia
+				inertia = np.array(results['inertia'])
+				rate_of_change = np.diff(inertia) / inertia[:-1]
 
-		return optimal_k, results
+				# Find the point where rate of change starts to diminish
+				# (add 1 because diff reduces length by 1)
+				optimal_idx = np.argmax(rate_of_change) + 1
+
+				# Ensure optimal_idx is within bounds
+				if optimal_idx >= len(k_range):
+					optimal_idx = len(k_range) - 1
+			else:
+				raise ValueError(f"Invalid metric: {metric}")
+
+			# Get optimal k
+			optimal_k = k_range[optimal_idx]
+			
+			# Update persisted resources tracking
+			self._persisted_resources.update(persisted_intermediates)
+
+			return optimal_k, results
+			
+		except Exception as e:
+			logging.error(f"Error in find_optimal_k_for_kmeans: {e}")
+			# Clean up persisted intermediates on error
+			for key, persisted_obj in persisted_intermediates.items():
+				try:
+					if hasattr(persisted_obj, '__dask_graph__'):
+						del persisted_obj
+				except Exception as cleanup_error:
+					logging.warning(f"Error cleaning up persisted resource {key}: {cleanup_error}")
+			raise
 
 
 	def find_optimal_eps_for_dbscan(self, data: pd.DataFrame, k_dist: int = 5, n_samples: int = 1000) -> float:
@@ -644,26 +670,52 @@ class ClusteringAnalyzer:
 		Returns:
 			DataFrame of metrics with inertia and silhouette scores
 		"""
-		metrics = {'k': list(k_range), 'inertia': [], 'silhouette': []}
-
-		for k in k_range:
-			kmeans = KMeans(n_clusters=k, n_init=n_init, max_iter=max_iter, random_state=self.random_state)
-			labels = kmeans.fit_predict(data)
-
-			# Record inertia (within-cluster sum of squares)
-			metrics['inertia'].append(kmeans.inertia_)
-
-			# Calculate silhouette score for k > 1
-			if k > 1:
-				metrics['silhouette'].append(silhouette_score(data, labels))
+		# Track persisted intermediates for this method
+		persisted_intermediates = {}
+		
+		try:
+			# Persist data if it's a Dask DataFrame for repeated access
+			if hasattr(data, 'persist'):
+				data_persisted = data.persist()
+				persisted_intermediates['data'] = data_persisted
+				logging.info("Persisted input data for optimal k search")
 			else:
-				metrics['silhouette'].append(0)
+				data_persisted = data
+			
+			metrics = {'k': list(k_range), 'inertia': [], 'silhouette': []}
 
-		# Find optimal k using silhouette score (higher is better)
-		optimal_k_silhouette = k_range[np.argmax(metrics['silhouette'])]
+			for k in k_range:
+				kmeans = KMeans(n_clusters=k, n_init=n_init, max_iter=max_iter, random_state=self.random_state)
+				labels = kmeans.fit_predict(data_persisted)
 
-		# Return optimal k based on silhouette score and all metrics
-		return pd.DataFrame(metrics), optimal_k_silhouette
+				# Record inertia (within-cluster sum of squares)
+				metrics['inertia'].append(kmeans.inertia_)
+
+				# Calculate silhouette score for k > 1
+				if k > 1:
+					metrics['silhouette'].append(silhouette_score(data_persisted, labels))
+				else:
+					metrics['silhouette'].append(0)
+
+			# Find optimal k using silhouette score (higher is better)
+			optimal_k_silhouette = k_range[np.argmax(metrics['silhouette'])]
+
+			# Update persisted resources tracking
+			self._persisted_resources.update(persisted_intermediates)
+			
+			# Return optimal k based on silhouette score and all metrics
+			return pd.DataFrame(metrics), optimal_k_silhouette
+			
+		except Exception as e:
+			logging.error(f"Error in find_optimal_k_kmeans_elbow_silhouette: {e}")
+			# Clean up persisted intermediates on error
+			for key, persisted_obj in persisted_intermediates.items():
+				try:
+					if hasattr(persisted_obj, '__dask_graph__'):
+						del persisted_obj
+				except Exception as cleanup_error:
+					logging.warning(f"Error cleaning up persisted resource {key}: {cleanup_error}")
+			raise
 
 
 class ClusterInterpreter:
@@ -763,7 +815,7 @@ class ClusterInterpreter:
 			elif method == 'kruskal':
 				# Non-parametric Kruskal-Wallis H-test
 				groups = [data[data[cluster_col] == cluster][feature].dropna().values
-						 for cluster in data[cluster_col].unique() if cluster != -1]
+							for cluster in data[cluster_col].unique() if cluster != -1]
 
 				if len(groups) >= 2 and all(len(g) > 0 for g in groups):
 					try:
@@ -772,20 +824,20 @@ class ClusterInterpreter:
 						significant = p_value < 0.05
 
 						results.append({
-							'Feature': feature,
-							'Test': 'Kruskal-Wallis',
-							'Statistic': h_stat,
-							'P-Value': p_value,
-							'Significant': Significant
+							'Feature'    : feature,
+							'Test'       : 'Kruskal-Wallis',
+							'Statistic'  : h_stat,
+							'P-Value'    : p_value,
+							'Significant': significant
 						})
 					except Exception as e:
 						results.append({
-							'Feature': feature,
-							'Test': 'Kruskal-Wallis',
-							'Statistic': None,
-							'P-Value': None,
+							'Feature'    : feature,
+							'Test'       : 'Kruskal-Wallis',
+							'Statistic'  : None,
+							'P-Value'    : None,
 							'Significant': False,
-							'Error': str(e)
+							'Error'      : str(e)
 						})
 
 		# Create DataFrame of results
@@ -803,9 +855,7 @@ class ClusterInterpreter:
 
 		return results_df
 
-	def calculate_feature_importance(self,
-								   data: pd.DataFrame,
-								   cluster_col: str = 'cluster') -> pd.DataFrame:
+	def calculate_feature_importance(self, data: pd.DataFrame, cluster_col: str = 'cluster') -> pd.DataFrame:
 		"""Calculate feature importance for distinguishing between clusters."""
 		from sklearn.ensemble import RandomForestClassifier
 		from sklearn.preprocessing import StandardScaler

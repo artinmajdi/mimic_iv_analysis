@@ -8,10 +8,20 @@ import dask.dataframe as dd
 # Visualization imports
 import plotly.express as px
 
-
 # Streamlit import
 import streamlit as st
 
+
+def display_dataframe_head(df):
+	MAX_DATAFRAME_ROWS_DISPLAYED = 30
+	if isinstance(df, dd.DataFrame):
+		df_length = df.shape[0].compute()
+	else:
+		df_length = df.shape[0]
+
+	n_rows = min(MAX_DATAFRAME_ROWS_DISPLAYED, df_length)
+	st.dataframe(df.head(n_rows) , use_container_width=True)
+ 
 
 class MIMICVisualizerUtils:
 	"""Handles the display of dataset statistics and data preview."""
@@ -160,4 +170,5 @@ class MIMICVisualizerUtils:
 
 					fig = px.bar(value_counts, x=selected_cat_col, y='Count', title=title)
 					st.plotly_chart(fig, use_container_width=True)
+
 

@@ -32,6 +32,8 @@ class DataLoader:
 	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
 
 	def __init__(self, mimic_path: Path = DEFAULT_MIMIC_PATH, study_tables_list: Optional[List[TableNames]] = None, apply_filtering: bool = True, include_transfers: bool = False):
+		# Initialize persisted resources tracking
+		self._persisted_resources = {}
 
 		# MIMIC_IV v3.1 path
 		self.mimic_path      = Path(mimic_path)
@@ -401,17 +403,58 @@ class DataLoader:
 	def load_all_study_tables_full(self, use_dask: bool = True) -> Dict[str, pd.DataFrame | dd.DataFrame]:
 
 		tables_dict = {}
-		for _, row in self.study_tables_info.iterrows():
-			table_name = TableNames(row.table_name)
+		persisted_tables = {}  # Track persisted DataFrames for cleanup
+		
+		try:
+			for _, row in self.study_tables_info.iterrows():
+				table_name = TableNames(row.table_name)
 
-			if table_name is TableNames.MERGED:
-				raise ValueError("merged table can not be part of the merged table")
+				if table_name is TableNames.MERGED:
+					raise ValueError("merged table can not be part of the merged table")
 
-			tables_dict[table_name.value] = self._load_full_table_single(table_name=table_name, use_dask=use_dask)
+				df = self._load_full_table_single(table_name=table_name, use_dask=use_dask)
+				
+				# Persist Dask DataFrames for efficient reuse
+				if use_dask and isinstance(df, dd.DataFrame):
+					df_persisted = df.persist()
+					tables_dict[table_name.value] = df_persisted
+					persisted_tables[table_name.value] = df_persisted
+					logger.info(f"Persisted table: {table_name.value}")
+				else:
+					tables_dict[table_name.value] = df
 
-
+			# Store persisted tables for potential cleanup
+			self._persisted_resources.update(persisted_tables)
+			
+		except Exception as e:
+			logger.error(f"Error in load_all_study_tables_full: {str(e)}")
+			# Cleanup on error
+			self._cleanup_persisted_resources(persisted_tables)
+			raise
 
 		return tables_dict
+
+	def _cleanup_persisted_resources(self, resources_dict: Dict[str, dd.DataFrame] = None):
+		"""Clean up persisted Dask DataFrames to free memory."""
+		try:
+			if resources_dict is None:
+				resources_dict = self._persisted_resources
+			
+			for name, df in resources_dict.items():
+				if isinstance(df, dd.DataFrame):
+					try:
+						# Clear the persisted data from memory
+						df.clear_divisions()
+						logger.info(f"Cleaned up persisted table: {name}")
+					except Exception as cleanup_error:
+						logger.warning(f"Error cleaning up {name}: {str(cleanup_error)}")
+			
+			# Clear the tracking dictionary
+			if resources_dict is self._persisted_resources:
+				self._persisted_resources.clear()
+				
+		except Exception as e:
+			logger.error(f"Error in cleanup_persisted_resources: {str(e)}")
 
 	def _load_full_table_single(self, table_name: TableNames, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
 
@@ -495,29 +538,68 @@ class DataLoader:
 			tables_dict = self.load_all_study_tables_full(use_dask=use_dask)
 
 		# Get tables
-		patients_df        = tables_dict[TableNames.PATIENTS.value]
-		admissions_df      = tables_dict[TableNames.ADMISSIONS.value]
-		diagnoses_icd_df   = tables_dict[TableNames.DIAGNOSES_ICD.value]
-		d_icd_diagnoses_df = tables_dict[TableNames.D_ICD_DIAGNOSES.value]
-		poe_df             = tables_dict[TableNames.POE.value]
-		poe_detail_df      = tables_dict[TableNames.POE_DETAIL.value]
+		patients_df        = tables_dict[TableNames.PATIENTS.value] # 2.8MB
+		admissions_df      = tables_dict[TableNames.ADMISSIONS.value] # 19.9MB
+		diagnoses_icd_df   = tables_dict[TableNames.DIAGNOSES_ICD.value] # 33.6MB
+		d_icd_diagnoses_df = tables_dict[TableNames.D_ICD_DIAGNOSES.value] # 876KB
+		poe_df             = tables_dict[TableNames.POE.value] # 606MB
+		poe_detail_df      = tables_dict[TableNames.POE_DETAIL.value] # 55MB
 
-		# Merge tables
-		df12 = patients_df.merge(admissions_df, on='subject_id', how='inner')
+		persisted_intermediates = {}  # Track intermediate results for cleanup
+		
+		try:
+			# Merge tables with persist() for intermediate results
+			df12 = patients_df.merge(admissions_df, on='subject_id', how='inner')
+			
+			# Persist intermediate result if using Dask
+			if use_dask and isinstance(df12, dd.DataFrame):
+				df12 = df12.persist()
+				persisted_intermediates['patients_admissions'] = df12
 
-		if TableNames.TRANSFERS.value in tables_dict:
-			transfers_df = tables_dict[TableNames.TRANSFERS.value]
-			df123 = df12.merge(transfers_df, on=['subject_id', 'hadm_id'], how='inner')
-		else:
-			df123 = df12
+			if TableNames.TRANSFERS.value in tables_dict:
+				transfers_df = tables_dict[TableNames.TRANSFERS.value]
+				df123 = df12.merge(transfers_df, on=['subject_id', 'hadm_id'], how='inner')
+				
+				# Persist intermediate result
+				if use_dask and isinstance(df123, dd.DataFrame):
+					df123 = df123.persist()
+					persisted_intermediates['with_transfers'] = df123
+			else:
+				df123 = df12
 
-		diagnoses_merged = diagnoses_icd_df.merge(d_icd_diagnoses_df, on=['icd_code', 'icd_version'], how='inner')
-		merged_wo_poe    = df123.merge(diagnoses_merged, on=['subject_id', 'hadm_id'], how='inner')
+			diagnoses_merged = diagnoses_icd_df.merge(d_icd_diagnoses_df, on=['icd_code', 'icd_version'], how='inner')
+			
+			# Persist diagnoses merge result
+			if use_dask and isinstance(diagnoses_merged, dd.DataFrame):
+				diagnoses_merged = diagnoses_merged.persist()
+				persisted_intermediates['diagnoses_merged'] = diagnoses_merged
+			
+			merged_wo_poe = df123.merge(diagnoses_merged, on=['subject_id', 'hadm_id'], how='inner')
+			
+			# Persist before final merge
+			if use_dask and isinstance(merged_wo_poe, dd.DataFrame):
+				merged_wo_poe = merged_wo_poe.persist()
+				persisted_intermediates['merged_wo_poe'] = merged_wo_poe
 
-		# The reason for 'left' is that we want to keep all the rows from poe table.
-		# The poe_detail table for unknown reasons, has fewer rows than poe table.
-		poe_and_details   = poe_df.merge(poe_detail_df, on=['poe_id', 'poe_seq', 'subject_id'], how='left')
-		merged_full_study = merged_wo_poe.merge(poe_and_details, on=['subject_id', 'hadm_id'], how='inner')
+			# The reason for 'left' is that we want to keep all the rows from poe table.
+			# The poe_detail table for unknown reasons, has fewer rows than poe table.
+			poe_and_details = poe_df.merge(poe_detail_df, on=['poe_id', 'poe_seq', 'subject_id'], how='left')
+			
+			# Persist POE merge result
+			if use_dask and isinstance(poe_and_details, dd.DataFrame):
+				poe_and_details = poe_and_details.persist()
+				persisted_intermediates['poe_and_details'] = poe_and_details
+			
+			merged_full_study = merged_wo_poe.merge(poe_and_details, on=['subject_id', 'hadm_id'], how='inner')
+
+			# Store intermediate persisted results for potential cleanup
+			self._persisted_resources.update(persisted_intermediates)
+			
+		except Exception as e:
+			logger.error(f"Error in _load_full_tables_merged: {str(e)}")
+			# Cleanup intermediate results on error
+			self._cleanup_persisted_resources(persisted_intermediates)
+			raise
 
 		return merged_full_study
 

@@ -22,8 +22,10 @@ import streamlit as st
 # Local application imports
 from mimic_iv_analysis.core.clustering import ClusteringAnalyzer
 from mimic_iv_analysis.core.feature_engineering import FeatureEngineerUtils
+from mimic_iv_analysis.visualization.visualizer_utils import display_dataframe_head
 
 RANDOM_STATE = 42
+
 
 class ClusteringAnalysisTab:
 	""" Handles the UI and logic for the Clustering Analysis tab. """
@@ -124,7 +126,7 @@ class ClusteringAnalysisTab:
 					if selected_cols:
 						input_data = st.session_state.df[selected_cols].copy()
 						st.markdown(f"Selected data shape: {input_data.shape[0]} rows × {input_data.shape[1]} columns")
-						st.dataframe(input_data.head(), use_container_width=True)
+						display_dataframe_head(input_data)
 						input_data_ready = True
 
 					else:
@@ -140,7 +142,7 @@ class ClusteringAnalysisTab:
 			if 'freq_matrix' in st.session_state and st.session_state.freq_matrix is not None:
 				input_data = st.session_state.freq_matrix.copy() # Use copy
 				st.markdown(f"Using order frequency matrix with shape: {input_data.shape[0]} patients × {input_data.shape[1]} order types")
-				st.dataframe(input_data.head(), use_container_width=True)
+				display_dataframe_head(input_data)
 				input_data_ready = True
 			else:
 				st.warning("Order frequency matrix not found. Please generate it in the Feature Engineering tab first.")
@@ -161,7 +163,7 @@ class ClusteringAnalysisTab:
 					if selected_cols:
 						input_data = st.session_state.timing_features[selected_cols].copy()
 						st.markdown(f"Selected data shape: {input_data.shape[0]} rows × {input_data.shape[1]} columns")
-						st.dataframe(input_data.head(), use_container_width=True)
+						display_dataframe_head(input_data)
 						input_data_ready = True
 					else:
 						st.warning("Please select at least one timing feature.")
@@ -187,7 +189,8 @@ class ClusteringAnalysisTab:
 						input_data = None
 					else:
 						st.markdown(f"Uploaded data shape: {input_data.shape[0]} rows × {input_data.shape[1]} columns")
-						st.dataframe(input_data.head(), use_container_width=True)
+						display_dataframe_head(input_data)
+      
 						# Select only numeric columns
 						input_data = input_data.select_dtypes(include=np.number)
 						st.info(f"Using {input_data.shape[1]} numeric columns for clustering.")
@@ -258,7 +261,7 @@ class ClusteringAnalysisTab:
 							st.success(f"Data preprocessed and ready for clustering! Shape: {processed_data.shape}")
 
 							# Show preview of processed data
-							st.dataframe(processed_data.head(), use_container_width=True)
+							display_dataframe_head(processed_data)
 
 				except AttributeError:
 					st.error("Clustering Analyzer is not properly initialized or does not have a 'preprocess_data' method.")
@@ -269,6 +272,7 @@ class ClusteringAnalysisTab:
 		elif not input_data_ready and data_source != "Upload Data":
 			# Show message if no data source could be loaded (excluding upload state)
 			st.info("Select a data source and ensure it's available or upload a file.")
+
 
 	def _dimensionality_reduction(self):
 		st.markdown("<h3>Dimensionality Reduction</h3>", unsafe_allow_html=True)
@@ -362,7 +366,7 @@ class ClusteringAnalysisTab:
 							st.success(f"Dimensionality reduction complete! Reduced from {input_shape[1]} to {n_components} dimensions.")
 
 							# Show preview
-							st.dataframe(reduced_data.head(), use_container_width=True)
+							display_dataframe_head(reduced_data)
 
 					except AttributeError:
 						st.error("Clustering Analyzer is not properly initialized or does not have an 'apply_dimensionality_reduction' method.")

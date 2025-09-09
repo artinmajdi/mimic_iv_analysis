@@ -18,7 +18,7 @@ import streamlit as st
 
 # Local application imports
 from mimic_iv_analysis.core.feature_engineering import FeatureEngineerUtils
-from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtils
+from mimic_iv_analysis.visualization.visualizer_utils import display_dataframe_head
 
 
 class FeatureEngineeringTab:
@@ -129,7 +129,7 @@ class FeatureEngineeringTab:
 			st.markdown("<h4>Order Frequency Matrix</h4>", unsafe_allow_html=True)
 
 			# Show preview
-			st.dataframe(st.session_state.freq_matrix.head(10), use_container_width=True)
+			display_dataframe_head(st.session_state.freq_matrix)
 
 			# Matrix stats
 			st.markdown(f"<div class='info-box'>Matrix size: {st.session_state.freq_matrix.shape[0]} patients × {st.session_state.freq_matrix.shape[1]} order types</div>", unsafe_allow_html=True)
@@ -449,7 +449,7 @@ class FeatureEngineeringTab:
 			st.markdown("<h4>Order Timing Features</h4>", unsafe_allow_html=True)
 
 			# Show preview of features
-			st.dataframe(st.session_state.timing_features.head(10), use_container_width=True)
+			display_dataframe_head(st.session_state.timing_features)
 
 			# Generate visualizations based on available features
 			st.markdown("<h4>Order Timing Visualizations</h4>", unsafe_allow_html=True)

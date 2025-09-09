@@ -10,6 +10,31 @@ import streamlit as st
 
 class FeatureEngineerUtils:
 	"""Handles feature engineering for MIMIC-IV data."""
+	
+	def __init__(self):
+		"""Initialize with persisted resources tracking."""
+		self._persisted_resources = {}
+	
+	def _cleanup_persisted_resources(self, resources_dict: Dict[str, dd.DataFrame] = None):
+		"""Clean up persisted Dask DataFrames to free memory."""
+		try:
+			if resources_dict is None:
+				resources_dict = self._persisted_resources
+			
+			for name, df in resources_dict.items():
+				if isinstance(df, dd.DataFrame):
+					try:
+						# Clear the persisted data from memory
+						df.clear_divisions()
+					except Exception as cleanup_error:
+						pass  # Silently handle cleanup errors
+			
+			# Clear the tracking dictionary
+			if resources_dict is self._persisted_resources:
+				self._persisted_resources.clear()
+				
+		except Exception:
+			pass  # Silently handle cleanup errors
 
 	@staticmethod
 	def detect_order_columns(df: pd.DataFrame) -> List[str]:
@@ -106,38 +131,71 @@ class FeatureEngineerUtils:
 		if patient_id_col not in df.columns or order_col not in df.columns:
 			raise ValueError(f"Columns {patient_id_col} or {order_col} not found in DataFrame")
 
-		# Convert Dask DataFrame to pandas if necessary
-		if use_dask and hasattr(df, 'compute'):
-			with st.spinner('Computing data for order frequency matrix...'):
+		persisted_intermediates = {}  # Track intermediate results
+		
+		try:
+			# Convert Dask DataFrame to pandas if necessary
+			if use_dask and isinstance(df, dd.DataFrame):
+				with st.spinner('Computing data for order frequency matrix...'):
+					if top_n > 0:
+						# Get top N order types first
+						value_counts = df[order_col].value_counts().compute()
+						top_orders = value_counts.head(top_n).index.tolist()
+						
+						# Persist the DataFrame before filtering
+						df_persisted = df.persist()
+						persisted_intermediates['input_df'] = df_persisted
+						
+						# Filter and persist before computing
+						filtered_dask = df_persisted[df_persisted[order_col].isin(top_orders)]
+						filtered_dask_persisted = filtered_dask.persist()
+						persisted_intermediates['filtered_df'] = filtered_dask_persisted
+						
+						# Final compute
+						filtered_df = filtered_dask_persisted.compute()
+					else:
+						# Persist entire DataFrame before computing
+						df_persisted = df.persist()
+						persisted_intermediates['input_df'] = df_persisted
+						filtered_df = df_persisted.compute()
+			elif isinstance(df, dd.DataFrame):
+				# Dask DataFrame but use_dask=False, compute directly
 				if top_n > 0:
-					# For Dask, compute value counts to find top orders
 					value_counts = df[order_col].value_counts().compute()
 					top_orders = value_counts.head(top_n).index.tolist()
-					# Filter and compute
 					filtered_df = df[df[order_col].isin(top_orders)].compute()
 				else:
-					# Compute the entire DataFrame
 					filtered_df = df.compute()
-		else:
-			# Regular pandas processing
-			# Get the most common order types for dimensionality reduction
-			if top_n > 0:
-				top_orders = df[order_col].value_counts().head(top_n).index.tolist()
-				filtered_df = df[df[order_col].isin(top_orders)].copy()
 			else:
-				filtered_df = df.copy()
+				# Regular pandas processing
+				# Get the most common order types for dimensionality reduction
+				if top_n > 0:
+					top_orders = df[order_col].value_counts().head(top_n).index.tolist()
+					filtered_df = df[df[order_col].isin(top_orders)].copy()
+				else:
+					filtered_df = df.copy()
 
-		# Create a crosstab of patient IDs and order types
-		freq_matrix = pd.crosstab(
-			filtered_df[patient_id_col],
-			filtered_df[order_col]
-		)
+			# Create a crosstab of patient IDs and order types
+			freq_matrix = pd.crosstab(
+				filtered_df[patient_id_col],
+				filtered_df[order_col]
+			)
 
-		# Normalize if requested
-		if normalize:
-			freq_matrix = freq_matrix.div(freq_matrix.sum(axis=1), axis=0)
+			# Normalize if requested
+			if normalize:
+				freq_matrix = freq_matrix.div(freq_matrix.sum(axis=1), axis=0)
 
-		return freq_matrix
+			return freq_matrix
+			
+		except Exception as e:
+			# Cleanup persisted resources on error
+			for name, persisted_df in persisted_intermediates.items():
+				if isinstance(persisted_df, dd.DataFrame):
+					try:
+						persisted_df.clear_divisions()
+					except Exception:
+						pass
+			raise
 
 	@staticmethod
 	def extract_temporal_order_sequences(df: Union[pd.DataFrame, dd.DataFrame], patient_id_col: str, order_col: str, time_col: str, max_sequence_length: int = 20, use_dask: bool = False) -> Dict[Any, List[str]]:
@@ -159,38 +217,62 @@ class FeatureEngineerUtils:
 			missing = [col for col in [patient_id_col, order_col, time_col] if col not in df.columns]
 			raise ValueError(f"Columns {missing} not found in DataFrame")
 
-		# Convert Dask DataFrame to pandas if necessary
-		if use_dask and hasattr(df, 'compute'):
-			with st.spinner('Computing data for temporal order sequences...'):
-				# For sequences, we need the complete DataFrame
-				df = df.compute()
-		else:
-			# Make a copy of the DataFrame
-			df = df.copy()
+		persisted_intermediates = {}  # Track intermediate results
+		
+		try:
+			# Convert Dask DataFrame to pandas if necessary
+			if use_dask and hasattr(df, 'compute'):
+				with st.spinner('Computing data for temporal order sequences...'):
+					# For sequences, we need the complete DataFrame
+					# Persist before computing to optimize memory usage
+					if isinstance(df, dd.DataFrame):
+						# Select only needed columns and persist
+						needed_cols  = [patient_id_col, order_col, time_col]
+						df_subset    = df[needed_cols]
+						df_persisted = df_subset.persist()
+						persisted_intermediates['input_df'] = df_persisted
+						
+						# Compute the persisted DataFrame
+						df = df_persisted.compute()
+					else:
+						df = df.compute()
+			else:
+				# Make a copy of the DataFrame
+				df = df.copy()
 
-		# Ensure time column is datetime
-		if df[time_col].dtype != 'datetime64[ns]':
-			try:
-				df[time_col] = pd.to_datetime(df[time_col])
-			except:
-				raise ValueError(f"Could not convert {time_col} to datetime format")
+			# Ensure time column is datetime
+			if df[time_col].dtype != 'datetime64[ns]':
+				try:
+					df[time_col] = pd.to_datetime(df[time_col])
+				except:
+					raise ValueError(f"Could not convert {time_col} to datetime format")
 
-		# Sort by patient ID and timestamp
-		sorted_df = df.sort_values([patient_id_col, time_col])
+			# Sort by patient ID and timestamp
+			sorted_df = df.sort_values([patient_id_col, time_col])
 
-		# Extract sequences
-		sequences = {}
-		for patient_id, group in sorted_df.groupby(patient_id_col):
-			# Get ordered sequence of orders
-			patient_sequence = group[order_col].tolist()
+			# Extract sequences
+			sequences = {}
+			for patient_id, group in sorted_df.groupby(patient_id_col):
+				# Get ordered sequence of orders
+				patient_sequence = group[order_col].tolist()
 
-			# Limit sequence length if needed
-			if max_sequence_length > 0 and len(patient_sequence) > max_sequence_length:
-				patient_sequence = patient_sequence[:max_sequence_length]
+				# Limit sequence length if needed
+				if max_sequence_length > 0 and len(patient_sequence) > max_sequence_length:
+					patient_sequence = patient_sequence[:max_sequence_length]
 
-			sequences[patient_id] = patient_sequence
+				sequences[patient_id] = patient_sequence
 
-		return sequences
+			return sequences
+			
+		except Exception as e:
+			# Cleanup persisted resources on error
+			for name, persisted_df in persisted_intermediates.items():
+				if isinstance(persisted_df, dd.DataFrame):
+					try:
+						persisted_df.clear_divisions()
+					except Exception:
+						pass
+			raise
 
 	@staticmethod
 	def create_order_timing_features(
@@ -212,79 +294,112 @@ class FeatureEngineerUtils:
 		It supports both pandas and Dask DataFrames.
 		"""	
 		
-		# Convert Dask DataFrame (only the needed portion) to pandas to avoid the Dask error
-		df = df[[patient_id_col, order_col, order_time_col] + ([admission_time_col] if admission_time_col else []) + ([discharge_time_col] if discharge_time_col else [])].compute()
+		persisted_intermediates = {}  # Track intermediate results
+		
+		try:
+			# Select needed columns and optimize for Dask processing
+			needed_cols = [patient_id_col, order_col, order_time_col]
+			if admission_time_col:
+				needed_cols.append(admission_time_col)
+			if discharge_time_col:
+				needed_cols.append(discharge_time_col)
+			
+			# Persist intermediate DataFrame if using Dask
+			if hasattr(df, 'compute') and isinstance(df, dd.DataFrame):
+				df_subset    = df[needed_cols]
+				df_persisted = df_subset.persist()
+				persisted_intermediates['input_df'] = df_persisted
+				
+				# Convert Dask DataFrame (only the needed portion) to pandas
+				df = df_persisted.compute()
+			else:
+				# For pandas DataFrames, just select columns
+				df = df[needed_cols]
 
-		# Calculate unique order counts separately
-		unique_orders = df.groupby(patient_id_col)[order_col].nunique().to_frame(name='unique_order_types')
+			# Ensure datetime columns are properly typed
+			df[order_time_col] = pd.to_datetime(df[order_time_col])
+			if admission_time_col and admission_time_col in df.columns:
+				df[admission_time_col] = pd.to_datetime(df[admission_time_col])
+			if discharge_time_col and discharge_time_col in df.columns:
+				df[discharge_time_col] = pd.to_datetime(df[discharge_time_col])
 
-		# Define aggregations
-		aggs = {
-			order_time_col: ['min', 'max'],
-			order_col: ['count']
-		}
+			# Calculate unique order counts separately
+			unique_orders = df.groupby(patient_id_col)[order_col].nunique().to_frame(name='unique_order_types')
 
-		# Add admission-related aggregations if admission time is available
-		if admission_time_col and admission_time_col in df.columns:
-			df['orders_in_first_24h'] = (df[order_time_col] <= df[admission_time_col] + pd.Timedelta(hours=24)).astype(int)
-			df['orders_in_first_48h'] = (df[order_time_col] <= df[admission_time_col] + pd.Timedelta(hours=48)).astype(int)
-			df['orders_in_first_72h'] = (df[order_time_col] <= df[admission_time_col] + pd.Timedelta(hours=72)).astype(int)
-			aggs[admission_time_col] = ['first']
-			aggs['orders_in_first_24h'] = ['sum']
-			aggs['orders_in_first_48h'] = ['sum']
-			aggs['orders_in_first_72h'] = ['sum']
+			# Define aggregations
+			aggs = {
+				order_time_col: ['min', 'max'],
+				order_col: ['count']
+			}
 
-		# Add discharge-related aggregations if discharge time is available
-		if discharge_time_col and discharge_time_col in df.columns:
-			df['orders_in_last_24h'] = (df[order_time_col] >= df[discharge_time_col] - pd.Timedelta(hours=24)).astype(int)
-			df['orders_in_last_48h'] = (df[order_time_col] >= df[discharge_time_col] - pd.Timedelta(hours=48)).astype(int)
-			aggs[discharge_time_col] = ['first']
-			aggs['orders_in_last_24h'] = ['sum']
-			aggs['orders_in_last_48h'] = ['sum']
+			# Add admission-related aggregations if admission time is available
+			if admission_time_col and admission_time_col in df.columns:
+				df['orders_in_first_24h'] = (df[order_time_col] <= df[admission_time_col] + pd.Timedelta(hours=24)).astype(int)
+				df['orders_in_first_48h'] = (df[order_time_col] <= df[admission_time_col] + pd.Timedelta(hours=48)).astype(int)
+				df['orders_in_first_72h'] = (df[order_time_col] <= df[admission_time_col] + pd.Timedelta(hours=72)).astype(int)
+				aggs[admission_time_col] = ['first']
+				aggs['orders_in_first_24h'] = ['sum']
+				aggs['orders_in_first_48h'] = ['sum']
+				aggs['orders_in_first_72h'] = ['sum']
 
-		# Group by patient and aggregate
-		timing_features_agg = df.groupby(patient_id_col).agg(aggs)
+			# Add discharge-related aggregations if discharge time is available
+			if discharge_time_col and discharge_time_col in df.columns:
+				df['orders_in_last_24h'] = (df[order_time_col] >= df[discharge_time_col] - pd.Timedelta(hours=24)).astype(int)
+				df['orders_in_last_48h'] = (df[order_time_col] >= df[discharge_time_col] - pd.Timedelta(hours=48)).astype(int)
+				aggs[discharge_time_col] = ['first']
+				aggs['orders_in_last_24h'] = ['sum']
+				aggs['orders_in_last_48h'] = ['sum']
 
-		# Flatten multi-index columns
-		timing_features_agg.columns = ['_'.join(col).strip('_') for col in timing_features_agg.columns.values]
+			# Group by patient and aggregate
+			timing_features_agg = df.groupby(patient_id_col).agg(aggs)
 
-		# Merge the aggregated features with unique order counts
-		if isinstance(df, dd.DataFrame):
-			timing_features = dd.merge(timing_features_agg, unique_orders, left_index=True, right_index=True)
-		else:
+			# Flatten multi-index columns
+			timing_features_agg.columns = ['_'.join(col).strip('_') for col in timing_features_agg.columns.values]
+
+			# Merge the aggregated features with unique order counts
 			timing_features = pd.merge(timing_features_agg, unique_orders, left_index=True, right_index=True)
-		
-		# Rename columns to match expected output
-		rename_map = {
-			f"{order_time_col}_min": "first_order_time",
-			f"{order_time_col}_max": "last_order_time",
-			f"{order_col}_count": "total_orders",
-		}
-		if admission_time_col and admission_time_col in df.columns:
-			rename_map[f"{admission_time_col}_first"] = admission_time_col
-			rename_map[f"orders_in_first_24h_sum"] = "orders_in_first_24h"
-			rename_map[f"orders_in_first_48h_sum"] = "orders_in_first_48h"
-			rename_map[f"orders_in_first_72h_sum"] = "orders_in_first_72h"
+			
+			# Rename columns to match expected output
+			rename_map = {
+				f"{order_time_col}_min": "first_order_time",
+				f"{order_time_col}_max": "last_order_time",
+				f"{order_col}_count": "total_orders",
+			}
+			if admission_time_col and admission_time_col in df.columns:
+				rename_map[f"{admission_time_col}_first"] = admission_time_col
+				rename_map[f"orders_in_first_24h_sum"] = "orders_in_first_24h"
+				rename_map[f"orders_in_first_48h_sum"] = "orders_in_first_48h"
+				rename_map[f"orders_in_first_72h_sum"] = "orders_in_first_72h"
 
-		if discharge_time_col and discharge_time_col in df.columns:
-			rename_map[f"{discharge_time_col}_first"] = discharge_time_col
-			rename_map[f"orders_in_last_24h_sum"] = "orders_in_last_24h"
-			rename_map[f"orders_in_last_48h_sum"] = "orders_in_last_48h"
-		
-		timing_features = timing_features.rename(columns=rename_map)
+			if discharge_time_col and discharge_time_col in df.columns:
+				rename_map[f"{discharge_time_col}_first"] = discharge_time_col
+				rename_map[f"orders_in_last_24h_sum"] = "orders_in_last_24h"
+				rename_map[f"orders_in_last_48h_sum"] = "orders_in_last_48h"
+			
+			timing_features = timing_features.rename(columns=rename_map)
 
-		# --- Post-aggregation calculations ---
-		timing_features['order_span_hours'] = (timing_features['last_order_time'] - timing_features['first_order_time']).dt.total_seconds() / 3600
+			# --- Post-aggregation calculations ---
+			timing_features['order_span_hours'] = (timing_features['last_order_time'] - timing_features['first_order_time']).dt.total_seconds() / 3600
 
-		if admission_time_col and admission_time_col in df.columns:
-			timing_features['time_to_first_order_hours'] = (timing_features['first_order_time'] - timing_features[admission_time_col]).dt.total_seconds() / 3600
-			timing_features = timing_features.drop(columns=[admission_time_col])
+			if admission_time_col and admission_time_col in df.columns:
+				timing_features['time_to_first_order_hours'] = (timing_features['first_order_time'] - timing_features[admission_time_col]).dt.total_seconds() / 3600
+				timing_features = timing_features.drop(columns=[admission_time_col])
 
-		if discharge_time_col and discharge_time_col in df.columns:
-			timing_features['time_from_last_order_to_discharge_hours'] = (timing_features[discharge_time_col] - timing_features['last_order_time']).dt.total_seconds() / 3600
-			timing_features = timing_features.drop(columns=[discharge_time_col])
+			if discharge_time_col and discharge_time_col in df.columns:
+				timing_features['time_from_last_order_to_discharge_hours'] = (timing_features[discharge_time_col] - timing_features['last_order_time']).dt.total_seconds() / 3600
+				timing_features = timing_features.drop(columns=[discharge_time_col])
 
-		return timing_features.reset_index()
+			return timing_features.reset_index()
+			
+		except Exception as e:
+			# Cleanup persisted resources on error
+			for name, persisted_df in persisted_intermediates.items():
+				if isinstance(persisted_df, dd.DataFrame):
+					try:
+						persisted_df.clear_divisions()
+					except Exception:
+						pass
+			raise
 
 	@staticmethod
 	def get_order_type_distributions(df: pd.DataFrame, patient_id_col: str='subject_id', order_col: str='order_type') -> Tuple[pd.DataFrame, pd.DataFrame]:

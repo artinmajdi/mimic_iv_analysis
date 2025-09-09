@@ -73,9 +73,6 @@ class MIMICDashboardApp:
 			processes          = True,
 			memory_limit       = memory_limit,
 			dashboard_address  = f":{dashboard_port}",
-			# I/O optimizations
-			# memory_spill_size       = "16GB",     # Spill to disk at 8GB
-			# memory_target_fraction = 0.8,  # Target 80% memory usage
 			)
 			return Client(cluster)
 
