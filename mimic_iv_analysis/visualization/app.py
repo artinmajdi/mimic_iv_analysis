@@ -66,27 +66,41 @@ class MIMICDashboardApp:
 		# the Streamlit script thread remains responsive
 		# ----------------------------------------
 		@st.cache_resource(show_spinner=False)
-		def _get_dask_client():
+		def _get_dask_client(n_workers, threads_per_worker, memory_limit, dashboard_port):
 			cluster = LocalCluster(
-			n_workers          = 1,
-			threads_per_worker = 16,
+			n_workers          = n_workers,
+			threads_per_worker = threads_per_worker,
 			processes          = True,
-			memory_limit       = "20GB",  # 4 workers * 5GB = 20GB total
-			dashboard_address  = ":8787",
+			memory_limit       = memory_limit,
+			dashboard_address  = f":{dashboard_port}",
 			# I/O optimizations
 			# memory_spill_size       = "16GB",     # Spill to disk at 8GB
 			# memory_target_fraction = 0.8,  # Target 80% memory usage
 			)
 			return Client(cluster)
 
+		# Get Dask configuration from session state
+		n_workers          = st.session_state.get('dask_n_workers', 1)
+		threads_per_worker = st.session_state.get('dask_threads_per_worker', 16)
+		memory_limit       = st.session_state.get('dask_memory_limit', '20GB')
+		dashboard_port     = st.session_state.get('dask_dashboard_port', 8787)
+
+		# Create a unique key based on configuration to force recreation when settings change
+		config_key = f"{n_workers}_{threads_per_worker}_{memory_limit}_{dashboard_port}"
+		
 		# Store the client in session_state so that a new one
-		# is not spawned on every rerun.
-		if "dask_client" not in st.session_state:
-			st.session_state.dask_client = _get_dask_client()
-			logger.info("Dask client initialised: %s", st.session_state.dask_client)
+		# is not spawned on every rerun, but recreate if config changed
+		if "dask_client" not in st.session_state or st.session_state.get('dask_config_key') != config_key:
+			# Close existing client if it exists
+			if "dask_client" in st.session_state:
+				st.session_state.dask_client.close()
+				
+			st.session_state.dask_client = _get_dask_client(n_workers, threads_per_worker, memory_limit, dashboard_port)
+			st.session_state.dask_config_key = config_key
+			logger.info("Dask client initialised with config %s: %s", config_key, st.session_state.dask_client)
 
 		self.dask_client = st.session_state.dask_client
-  
+
 	def _rescan_and_update_state(self):
 		"""Rescans the directory and updates session state with table info."""
 		logger.info("Re-scanning directory and updating state...")
@@ -131,35 +145,110 @@ class MIMICDashboardApp:
 			st.sidebar.error(f"Error scanning directory: {e}")
 			logger.exception("Error during directory scan")
 
+	def _dask_configuration(self):
+		"""Display Dask configuration options in the sidebar."""
+		
+		# Initialize default values if not in session state
+		if 'dask_n_workers' not in st.session_state:
+			st.session_state.dask_n_workers = 1
+		if 'dask_threads_per_worker' not in st.session_state:
+			st.session_state.dask_threads_per_worker = 16
+		if 'dask_memory_limit' not in st.session_state:
+			st.session_state.dask_memory_limit = '20GB'
+		if 'dask_dashboard_port' not in st.session_state:
+			st.session_state.dask_dashboard_port = 8787
+
+		# st.sidebar.markdown("---")  # Separator
+
+		with st.sidebar.expander(label="Dask Configuration", expanded=False):
+			
+			# Number of workers
+			n_workers = st.number_input(
+				label="Number of Workers",
+				min_value=1,
+				max_value=8,
+				value=st.session_state.dask_n_workers,
+				help="Number of Dask worker processes. More workers can improve parallel processing but use more memory."
+			)
+			
+			# Threads per worker
+			threads_per_worker = st.number_input(
+				label="Threads per Worker",
+				min_value=1,
+				max_value=32,
+				value=st.session_state.dask_threads_per_worker,
+				help="Number of threads per worker. Higher values can improve CPU-bound tasks."
+			)
+			
+			# Memory limit
+			memory_limit = st.text_input(
+				label="Memory Limit per Worker",
+				value=st.session_state.dask_memory_limit,
+				help="Memory limit per worker (e.g., '4GB', '8GB', '20GB'). Total memory usage will be this value × number of workers."
+			)
+			
+			# Dashboard port
+			dashboard_port = st.number_input(
+				label="Dashboard Port",
+				min_value=8000,
+				max_value=9999,
+				value=st.session_state.dask_dashboard_port,
+				help="Port for Dask dashboard. Access at http://localhost:[port] to monitor Dask performance."
+			)
+			
+		# Check if any values changed and update session state
+		config_changed = False
+		if n_workers != st.session_state.dask_n_workers:
+			st.session_state.dask_n_workers = n_workers
+			config_changed = True
+			
+		if threads_per_worker != st.session_state.dask_threads_per_worker:
+			st.session_state.dask_threads_per_worker = threads_per_worker
+			config_changed = True
+			
+		if memory_limit != st.session_state.dask_memory_limit:
+			st.session_state.dask_memory_limit = memory_limit
+			config_changed = True
+			
+		if dashboard_port != st.session_state.dask_dashboard_port:
+			st.session_state.dask_dashboard_port = dashboard_port
+			config_changed = True
+		
+		# If configuration changed, reinitialize Dask client
+		if config_changed:
+			st.sidebar.success("Dask configuration updated! Client will be reinitialized.")
+			self.__init_dask_client()  # Reinitialize with new settings
+			st.rerun()  # Refresh the UI
+
 	def _dataset_configuration(self):
 
-		st.sidebar.markdown("---") # Separator
-		st.sidebar.markdown("## Dataset Configuration")
+		# st.sidebar.markdown("---") # Separator
+		with st.sidebar.expander(label="## Dataset Configuration", expanded=True):
 
-		# MIMIC-IV path input
-		mimic_path = st.sidebar.text_input(label="MIMIC-IV Dataset Path", value=st.session_state.mimic_path, help="Enter the path to your local MIMIC-IV v3.1 dataset directory")
+			# MIMIC-IV path input
+			mimic_path = st.text_input(label="MIMIC-IV Dataset Path", value=st.session_state.mimic_path, help="Enter the path to your local MIMIC-IV v3.1 dataset directory")
 
-		# Update mimic_path in session state if it changes
-		if mimic_path != st.session_state.mimic_path:
-			st.session_state.mimic_path = mimic_path
-			# Clear previous scan results if path changes
-			st.session_state.available_tables = {}
-			st.session_state.file_paths = {}
-			st.session_state.file_sizes = {}
-			st.session_state.table_display_names = {}
-			st.session_state.selected_module = None
-			st.session_state.selected_table = None
-			st.sidebar.info("Path changed. Please re-scan.")
+			# Update mimic_path in session state if it changes
+			if mimic_path != st.session_state.mimic_path:
+				st.session_state.mimic_path = mimic_path
+				# Clear previous scan results if path changes
+				st.session_state.available_tables = {}
+				st.session_state.file_paths = {}
+				st.session_state.file_sizes = {}
+				st.session_state.table_display_names = {}
+				st.session_state.selected_module = None
+				st.session_state.selected_table = None
+				st.sidebar.info("Path changed. Please re-scan.")
 
-		# Scan button
-		if st.sidebar.button("Scan MIMIC-IV Directory", key="scan_button"):
+			# Scan button
+			if st.button("Scan MIMIC-IV Directory", key="scan_button"):
 
-			if not mimic_path or not os.path.isdir(mimic_path):
-				st.sidebar.error("Please enter a valid directory path for the MIMIC-IV dataset")
-				return
+				if not mimic_path or not os.path.isdir(mimic_path):
+					st.error("Please enter a valid directory path for the MIMIC-IV dataset")
+					return
 
-			with st.spinner("Scanning directory..."):
-				self._scan_directory(mimic_path)
+				with st.spinner("Scanning directory..."):
+					self._scan_directory(mimic_path)
 
 	def _display_sidebar(self):
 		"""Handles the display and logic of the sidebar components."""
@@ -223,23 +312,26 @@ class MIMICDashboardApp:
 
 				# Display "Convert" button if the selected table is not already in Parquet but a source CSV exists
 				if not self.is_selected_table_parquet and self._source_csv_exists:
-					st.sidebar.button(
+					if st.button(
 						label    = "Convert to Parquet",
 						key      = "convert_to_parquet_button",
 						on_click = self._convert_table_to_parquet,
 						args     = ([ TableNames(st.session_state.selected_table) ],),
-						help     = f"Convert {st.session_state.selected_table} from CSV to Parquet for faster loading." )
+						help     = f"Convert {st.session_state.selected_table} from CSV to Parquet for faster loading." ):
 
-					st.sidebar.warning('Please refresh the page to see the updated tables.')
+						st.warning('Please refresh the page to see the updated tables.')
 
 				# Display "Update" button if the selected table is already in Parquet and a source CSV exists
 				if self.is_selected_table_parquet and self._source_csv_exists:
-					st.sidebar.button(
+					st.button(
 						label    = "Update Parquet",
 						key      = "update_parquet_button",
 						on_click = self._convert_table_to_parquet,
 						args     = ([ TableNames(st.session_state.selected_table) ],),
-						help     = f"Re-convert {st.session_state.selected_table} from CSV to update the Parquet file." )
+						help     = f"Re-convert {st.session_state.selected_table} from CSV to update the Parquet file.",
+						type     = 'secondary' )
+
+					st.warning('You only need to update parquet table if you think the current parquet file is corrupted or the corresponding csv file is changed.')
 
 			def parquet_update_convert_merged_table():
 
@@ -266,8 +358,8 @@ class MIMICDashboardApp:
 				# Check which component tables need to be converted
 				tables_to_convert = _get_tables_that_need_conversion(force_update=False)
 				if tables_to_convert:
-					st.sidebar.warning(f"{len(tables_to_convert)} base table(s) are not in Parquet format.")
-					st.sidebar.button(
+					st.warning(f"{len(tables_to_convert)} base table(s) are not in Parquet format.")
+					st.button(
 						label    = "Convert Missing Tables to Parquet",
 						key      = "convert_merged_to_parquet",
 						on_click = self._convert_table_to_parquet,
@@ -275,7 +367,7 @@ class MIMICDashboardApp:
 						help     = "Convert all required CSV tables to Parquet for the merged view." )
 
 				# Button to update all component tables of the merged view
-				st.sidebar.button(
+				st.button(
 					label    = "Update All Base Parquet Tables",
 					key      = "update_merged_parquet",
 					on_click = self._convert_table_to_parquet,
@@ -283,14 +375,16 @@ class MIMICDashboardApp:
 					help     = "Re-convert all base tables from CSV to update their Parquet files."
 				)
 
-			if st.session_state.selected_table: # Ensure a table is selected
-				st.sidebar.markdown("---")
-				st.sidebar.markdown("#### Parquet Conversion")
+				st.warning('You only need to update parquet table if you think the current parquet file is corrupted or the corresponding csv file is changed.')
 
-				if st.session_state.selected_table != "merged_table":
-					_parquet_update_convert_single_table()
-				else:
-					parquet_update_convert_merged_table()
+			st.markdown("---")
+			with st.sidebar.expander("Parquet Conversion"):
+
+				if st.session_state.selected_table: # Ensure a table is selected
+					if st.session_state.selected_table != "merged_table":
+						_parquet_update_convert_single_table()
+					else:
+						parquet_update_convert_merged_table()
 
 			if 'conversion_status' in st.session_state:
 				status = st.session_state.conversion_status
@@ -424,6 +518,8 @@ class MIMICDashboardApp:
 		st.sidebar.title("MIMIC-IV Navigator")
 
 		_select_view()
+
+		self._dask_configuration()
 
 		self._dataset_configuration()
 
