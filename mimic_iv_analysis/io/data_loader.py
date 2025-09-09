@@ -34,12 +34,13 @@ class DataLoader:
 	def __init__(self, mimic_path: Path = DEFAULT_MIMIC_PATH, study_tables_list: Optional[List[TableNames]] = None, apply_filtering: bool = True, include_transfers: bool = False):
 
 		# MIMIC_IV v3.1 path
-		self.mimic_path      = mimic_path
+		self.mimic_path      = Path(mimic_path)
 		self.apply_filtering = apply_filtering
 		self.include_transfers = include_transfers
 
 		# Tables to load. Use list provided by user or default list
 		self.study_table_list = set(study_tables_list or DEFAULT_STUDY_TABLES_LIST)
+
 		if not include_transfers:
 			self.study_table_list -= {TableNames.TRANSFERS}
 
@@ -339,7 +340,7 @@ class DataLoader:
 		
 		# Get all tables that have subject_id column and are part of merged table
 		tables_with_subject_id = [table for table in self.merged_table_components 
-								  if table in self.tables_w_subject_id_column]
+									if table in self.tables_w_subject_id_column]
 		
 		if not tables_with_subject_id:
 			logger.warning("No tables with subject_id found in merged table components")
@@ -361,15 +362,15 @@ class DataLoader:
 				# For CSV, read only the subject_id column
 				if file_path.suffix in ['.csv', '.gz', '.csv.gz']:
 					df_subject_ids = dd.read_csv(
-						urlpath=file_path,
-						usecols=['subject_id'],
-						dtype={'subject_id': 'int64'},
-						assume_missing=True,
-						blocksize=None if str(file_path).endswith('.gz') else '200MB'
+						urlpath        = file_path,
+						usecols        = ['subject_id'],
+						dtype          = {'subject_id': 'int64'},
+						assume_missing = True,
+						blocksize      = None if str(file_path).endswith('.gz') else '200MB'
 					)
 				else:
 					# Fallback: load via helper then select column
-					df = self._load_unfiltered_csv_table(file_path, use_dask=True)
+					df             = self._load_unfiltered_csv_table(file_path, use_dask=True)
 					df_subject_ids = df[['subject_id']]
 			
 			# Get unique subject_ids for this table

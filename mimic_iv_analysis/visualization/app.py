@@ -33,10 +33,11 @@ class MIMICDashboardApp:
 
 	def __init__(self):
 		logger.info("Initializing MIMICDashboardApp...")
+		self.init_session_state()
 
 		# Initialize core components
 		logger.info(f"Initializing DataLoader with path: {DEFAULT_MIMIC_PATH}")
-		self.data_handler      = DataLoader(mimic_path=Path(DEFAULT_MIMIC_PATH))
+		self.data_handler = DataLoader(mimic_path=Path(DEFAULT_MIMIC_PATH))
 
 		logger.info("Initializing ParquetConverter...")
 		self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
@@ -44,6 +45,21 @@ class MIMICDashboardApp:
 		logger.info("Initializing FeatureEngineerUtils...")
 		self.feature_engineer  = FeatureEngineerUtils()
 
+		self.__init_dask_client()
+
+		# Initialize UI components for tabs
+		self.feature_engineering_ui    = None
+		self.clustering_analysis_ui    = None
+		self.analysis_visualization_ui = None
+
+		# Initialize session state
+		self.current_file_path = None
+
+		# self.init_session_state()
+		logger.info("MIMICDashboardApp initialized.")
+
+
+	def __init_dask_client(self):
 		# ----------------------------------------
 		# Initialize (or reuse) a Dask client so heavy
 		# computations can run on worker processes and
@@ -52,14 +68,14 @@ class MIMICDashboardApp:
 		@st.cache_resource(show_spinner=False)
 		def _get_dask_client():
 			cluster = LocalCluster(
-			n_workers=1,
-			threads_per_worker=16,
-			processes=True,
-			memory_limit="20GB",  # 4 workers * 5GB = 20GB total
-			dashboard_address=":8787",
+			n_workers          = 1,
+			threads_per_worker = 16,
+			processes          = True,
+			memory_limit       = "20GB",  # 4 workers * 5GB = 20GB total
+			dashboard_address  = ":8787",
 			# I/O optimizations
-			# memory_spill_size="16GB",     # Spill to disk at 8GB
-			# memory_target_fraction=0.8,  # Target 80% memory usage
+			# memory_spill_size       = "16GB",     # Spill to disk at 8GB
+			# memory_target_fraction = 0.8,  # Target 80% memory usage
 			)
 			return Client(cluster)
 
@@ -70,18 +86,7 @@ class MIMICDashboardApp:
 			logger.info("Dask client initialised: %s", st.session_state.dask_client)
 
 		self.dask_client = st.session_state.dask_client
-
-		# Initialize UI components for tabs
-		self.feature_engineering_ui    = None
-		self.clustering_analysis_ui    = None
-		self.analysis_visualization_ui = None
-
-		# Initialize session state
-		self.current_file_path = None
-
-		self.init_session_state()
-		logger.info("MIMICDashboardApp initialized.")
-
+  
 	def _rescan_and_update_state(self):
 		"""Rescans the directory and updates session state with table info."""
 		logger.info("Re-scanning directory and updating state...")
@@ -103,8 +108,9 @@ class MIMICDashboardApp:
 		try:
 			# Update the data handler's path if it changed
 			if mimic_path != str(self.data_handler.mimic_path):
-				self.data_handler      = DataLoader(mimic_path=Path(mimic_path))
-				self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
+				self._callback_reload_dataloader()
+				# self.data_handler      = DataLoader(mimic_path=Path(mimic_path))
+				# self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
 
 			if self._rescan_and_update_state():
 				st.sidebar.success(f"Found {sum(len(tables) for tables in st.session_state.available_tables.values())} tables in {len(st.session_state.available_tables)} modules")
@@ -435,7 +441,13 @@ class MIMICDashboardApp:
 			self._load_table(selected_table_name_w_size=st.session_state.selected_table_name_w_size)
 
 	def _callback_reload_dataloader(self):
-		self.data_handler = DataLoader(mimic_path=st.session_state.get('mimic_path', Path(DEFAULT_MIMIC_PATH)), apply_filtering=st.session_state.apply_filtering, include_transfers=st.session_state.include_transfers)
+
+		self.data_handler = DataLoader(
+						mimic_path        = st.session_state.get('mimic_path', Path(DEFAULT_MIMIC_PATH)),
+						apply_filtering   = st.session_state.apply_filtering,
+						include_transfers = st.session_state.include_transfers )
+
+		self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
 
 	def _load_table(self, selected_table_name_w_size: str = None) -> Tuple[Optional[pd.DataFrame], int]:
 		"""Load a specific MIMIC-IV table, handling large files and sampling."""
@@ -475,50 +487,34 @@ class MIMICDashboardApp:
 
 			def _load_connected_tables():
 
+				def _load_and_return():
+					return self.data_handler.load(
+						table_name      = TableNames.MERGED,
+						tables_dict     = st.session_state.connected_tables,
+						partial_loading = False,
+						use_dask        = st.session_state.use_dask,
+						num_subjects    = st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS)
+					) 
+
 				with st.spinner("Loading and merging connected tables..."):
 
 					# If loading full dataset, keep previous behavior
 					if st.session_state.load_full:
 						st.session_state.connected_tables = self.data_handler.load_all_study_tables_full(use_dask=st.session_state.use_dask)
 						# Merge without partial filtering (tables already fully loaded)
-						return self.data_handler.load(
-							table_name=TableNames.MERGED,
-							tables_dict=st.session_state.connected_tables,
-							partial_loading=False,
-							use_dask=st.session_state.use_dask,
-							num_subjects=st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS)
-						)
+						return _load_and_return()
 
 					# Optimized path: 1) choose subject_ids via intersection, 2) load only those rows, 3) merge
 					selected_ids = self.data_handler.get_merged_table_subject_id_intersection(
-						num_subjects=st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS)
-					)
+								num_subjects=st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS) )
 
 					# Fallback to full load if no subject_ids found
 					if not selected_ids:
 						st.session_state.connected_tables = self.data_handler.load_all_study_tables_full(use_dask=st.session_state.use_dask)
-						return self.data_handler.load(
-							table_name=TableNames.MERGED,
-							tables_dict=st.session_state.connected_tables,
-							partial_loading=False,
-							use_dask=st.session_state.use_dask,
-							num_subjects=st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS)
-						)
+					else:
+						st.session_state.connected_tables = self.data_handler.load_filtered_study_tables_by_subjects( subject_ids=selected_ids, use_dask=st.session_state.use_dask )
 
-					filtered_tables = self.data_handler.load_filtered_study_tables_by_subjects(
-						subject_ids=selected_ids,
-						use_dask=st.session_state.use_dask
-					)
-
-					st.session_state.connected_tables = filtered_tables
-
-					return self.data_handler.load(
-						table_name=TableNames.MERGED,
-						tables_dict=filtered_tables,
-						partial_loading=False,
-						use_dask=st.session_state.use_dask,
-						num_subjects=st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS)
-					)
+					return _load_and_return()
 
 			if not _dataset_path_is_valid():
 				return
@@ -600,6 +596,9 @@ class MIMICDashboardApp:
 				st.sidebar.warning("Please select a module and table first.")
 				return False
 			return True
+
+		# Updating self.data_handler
+		self._callback_reload_dataloader()
 
 		if st.sidebar.button("Load Selected Table", key="load_button") and _check_table_selection():
 
@@ -876,7 +875,7 @@ class MIMICDashboardApp:
 		else:
 			st.title("Cohort Filtering Configuration")
 			# Ensure necessary components are passed if FilteringTab needs them
-			FilteringTab(current_file_path=self.current_file_path).render(data_handler=self.data_handler, feature_engineer=self.feature_engineer)
+			# FilteringTab(current_file_path=self.current_file_path).render(data_handler=self.data_handler, feature_engineer=self.feature_engineer)
 
 		logger.info("MIMICDashboardApp run finished.")
 
