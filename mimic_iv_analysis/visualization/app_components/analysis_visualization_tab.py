@@ -1,5 +1,6 @@
 # Standard library imports
 import logging
+from typing import Tuple
 
 # Data processing imports
 import numpy as np
@@ -60,10 +61,8 @@ class AnalysisVisualizationTab:
 			st.warning("No clustering or topic modeling results found in the current session. Please run an algorithm in the 'Clustering Analysis' tab first.")
 			return
 
-		selected_clustering_name = st.selectbox(
-			"Select Clustering/Topic Result to Analyze",
-			list(available_labels.keys())
-		)
+		selected_clustering_name = st.selectbox( label="Select Clustering/Topic Result to Analyze", options=list(available_labels.keys()) )
+
 		cluster_labels = available_labels[selected_clustering_name]
 
 		# --- Get Data for Analysis ---
@@ -299,6 +298,24 @@ class AnalysisVisualizationTab:
 			# 4. LOS / Outcome Analysis Tab
 			with analysis_tabs[3]:
 
+				def _find_indices_intersection(df: pd.DataFrame, cluster_labels: pd.Series) -> Tuple[pd.Index, pd.Index]:
+        
+					# Handle index alignment for both Dask and pandas DataFrames
+					original_index = df.index.compute() if isinstance(df, dd.DataFrame) else df.index
+
+					# Find common indices between original data and cluster labels
+					common_index_outcome = original_index.intersection(cluster_labels.index)
+					
+					if len(common_index_outcome) > 0:
+						# Use the common indices to filter both DataFrames
+						original_df_aligned    = df.loc[common_index_outcome]
+						cluster_labels_aligned = cluster_labels.loc[common_index_outcome]
+						return original_df_aligned, cluster_labels_aligned, common_index_outcome
+
+					st.error("No common indices found between original data and cluster labels.")
+					return pd.Index([]), pd.Index([]), pd.Index([])
+
+
 				st.markdown("<h3>Length of Stay (LOS) or Outcome Analysis by Cluster</h3>", unsafe_allow_html=True)
 				st.info("Compare clinical outcomes like Length of Stay across the identified clusters. Requires appropriate columns in the *original* loaded table.")
 
@@ -307,31 +324,22 @@ class AnalysisVisualizationTab:
 				else:
 					original_df = st.session_state.df
 
-					# TODO: check this code made by Trae AI and make sure it is correct. 
-					# Handle index alignment for both Dask and pandas DataFrames
-					if isinstance(original_df, dd.DataFrame):
-						# For Dask DataFrames, use loc with cluster_labels index directly
-						# This avoids loading the entire dataset into memory
+					try:
+						original_df_aligned, cluster_labels_aligned, common_index_outcome = _find_indices_intersection(df=original_df, cluster_labels=cluster_labels)
+
+					except Exception as e:
+						st.error(f"Error aligning Dask DataFrame indices: {str(e)}")
+						st.warning("Fallback: Using sample data for outcome analysis due to index alignment issues.")
+
+						# Fallback: compute a sample of the original DataFrame
 						try:
-							original_df_aligned = original_df.loc[cluster_labels.index]
-							cluster_labels_aligned = cluster_labels
-							common_index_outcome = cluster_labels.index  # Use cluster labels index as reference
-						except KeyError:
-							# If direct indexing fails, we need to find intersection differently
-							# Convert only the index to pandas for intersection operation
-							original_index = original_df.index.to_series().compute() if hasattr(original_df.index, 'to_series') else pd.Index(original_df.index.compute())
-							common_index_outcome = original_index.intersection(cluster_labels.index)
-							if len(common_index_outcome) > 0:
-								original_df_aligned = original_df.loc[common_index_outcome]
-								cluster_labels_aligned = cluster_labels.loc[common_index_outcome]
-							else:
-								common_index_outcome = pd.Index([])
-					else:
-						# For pandas DataFrames, use the original approach
-						common_index_outcome = original_df.index.intersection(cluster_labels.index)
-						if len(common_index_outcome) > 0:
-							original_df_aligned = original_df.loc[common_index_outcome]
-							cluster_labels_aligned = cluster_labels.loc[common_index_outcome]
+							original_sample = original_df.head(min(1000, len(cluster_labels)), compute=True)
+							original_df_aligned, cluster_labels_aligned, common_index_outcome = _find_indices_intersection(df=original_sample, cluster_labels=cluster_labels)
+        
+						except Exception as fallback_error:
+							st.error(f"Fallback failed: {str(fallback_error)}")
+							common_index_outcome = pd.Index([])
+
 
 					if len(common_index_outcome) == 0:
 						st.error("Index mismatch between original data and cluster labels. Cannot perform outcome analysis.")
@@ -357,18 +365,18 @@ class AnalysisVisualizationTab:
 							col1, col2, col3 = st.columns(3)
 							with col1:
 								# Try to guess admission column
-								admit_guess = [c for c in time_columns if 'admit' in c.lower()]
-								admit_idx = time_columns.index(admit_guess[0]) if admit_guess else 0
+								admit_guess   = [c for c in time_columns if 'admit' in c.lower()]
+								admit_idx     = time_columns.index(admit_guess[0]) if admit_guess else 0
 								admission_col = st.selectbox("Admission Time Column", time_columns, index=admit_idx, key="los_admit")
 							with col2:
 								# Try to guess discharge column
-								disch_guess = [c for c in time_columns if 'disch' in c.lower()]
-								disch_idx = time_columns.index(disch_guess[0]) if disch_guess else (1 if len(time_columns)>1 else 0)
+								disch_guess   = [c for c in time_columns if 'disch' in c.lower()]
+								disch_idx     = time_columns.index(disch_guess[0]) if disch_guess else (1 if len(time_columns)>1 else 0)
 								discharge_col = st.selectbox("Discharge Time Column", time_columns, index=disch_idx, key="los_disch")
 							with col3:
 								# Try to guess patient ID
-								id_guess = [c for c in original_df_aligned.columns if 'subject_id' in c.lower() or 'patient_id' in c.lower()]
-								id_idx = original_df_aligned.columns.tolist().index(id_guess[0]) if id_guess else 0
+								id_guess       = [c for c in original_df_aligned.columns if 'subject_id' in c.lower() or 'patient_id' in c.lower()]
+								id_idx         = original_df_aligned.columns.tolist().index(id_guess[0]) if id_guess else 0
 								patient_id_col = st.selectbox("Patient ID Column (for grouping)", original_df_aligned.columns.tolist(), index=id_idx, key="los_id")
 
 
