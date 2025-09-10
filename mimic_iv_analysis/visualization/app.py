@@ -329,7 +329,7 @@ class MIMICDashboardApp:
 				max_value = total_unique_subjects if total_unique_subjects > 0 else 1,
 				disabled  = self.has_no_subject_id_column,
 				key       = "num_subjects_to_load",
-				step      = 20,
+				step      = 10,
 				value     = st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS),
 				help      = help_text_num_subjects
 			)

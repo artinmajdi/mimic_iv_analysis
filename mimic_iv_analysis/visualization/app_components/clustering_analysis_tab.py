@@ -875,6 +875,14 @@ class ClusteringAnalysisTab:
 					key     = "dbscan_metric"
 				)
 
+			# --- Number of Samples ---
+			n_samples = st.number_input(
+				label     = "Number of Samples",
+				min_value = 2,
+				max_value = 10000,
+				value     = 1000,
+				help      = "Number of samples to use for estimation" ) 
+
 
 			# --- Optimal Epsilon (k-distance plot) ---
 			st.markdown("<h4>Find Optimal Epsilon (ε) using k-distance plot</h4>", unsafe_allow_html=True)
@@ -894,16 +902,17 @@ class ClusteringAnalysisTab:
 				help      = "Number of neighbors to consider (k = MinPts is common)"
 			)
 
-			return eps, min_samples, metric_dbscan, k_dist
+			return eps, min_samples, metric_dbscan, k_dist, n_samples
 
 
-		def calculate_k_distance_plot(k_dist: int, metric_dbscan: str, data_for_clustering: pd.DataFrame):
+		def calculate_k_distance_plot(k_dist: int, n_samples: int, data_for_clustering: pd.DataFrame):
 			"""
 			Calculate the k-distance plot to find the optimal epsilon.
 
 			Args:
 				k_dist             : The number of neighbors to consider (k = MinPts is common).
-				metric_dbscan      : The distance metric to use.
+				n_samples          : The number of samples to use for estimation.
+				metric_dbscan      : The distance metric to use.	
 				data_for_clustering: The data to use for clustering.
 			"""
 
@@ -917,7 +926,7 @@ class ClusteringAnalysisTab:
 					with st.spinner(f"Calculating {k_dist}-distance graph..."):
 
 						# Find optimal epsilon using the analyzer method
-						suggested_eps, k_distances_sorted = self.clustering_analyzer.find_optimal_eps_for_dbscan( data=data_for_clustering, k_dist=k_dist, metric=metric_dbscan )
+						suggested_eps, k_distances_sorted = self.clustering_analyzer.find_optimal_eps_for_dbscan( data=data_for_clustering, k_dist=k_dist, n_samples=n_samples )
 
 						# Store the suggested eps
 						st.session_state.optimal_eps = suggested_eps
@@ -1146,10 +1155,10 @@ class ClusteringAnalysisTab:
 
 
 		# --- DBSCAN parameters ---
-		eps, min_samples, metric_dbscan, k_dist = dbscan_parameters()
+		eps, min_samples, metric_dbscan, k_dist,n_samples = dbscan_parameters()
 
 		# --- Calculate k-distance plot ---
-		calculate_k_distance_plot(k_dist=k_dist, metric_dbscan=metric_dbscan, data_for_clustering=data_for_clustering)
+		calculate_k_distance_plot(k_dist=k_dist, n_samples=n_samples, data_for_clustering=data_for_clustering)
 
 
 		# --- Run DBSCAN Section ---
