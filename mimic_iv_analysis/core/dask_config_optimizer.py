@@ -30,11 +30,11 @@ class DaskConfigOptimizer:
     def get_system_info(self) -> Dict[str, Any]:
         """Get detailed system information."""
         return {
-            'cpu_count': self.cpu_count,
-            'total_memory_gb': round(self.total_memory_gb, 1),
+            'cpu_count'          : self.cpu_count,
+            'total_memory_gb'    : round(self.total_memory_gb, 1),
             'available_memory_gb': round(self.available_memory_gb, 1),
             'memory_percent_used': round(self.memory_percent_used, 1),
-            'free_memory_gb': round(self.total_memory_gb - (self.total_memory_gb * self.memory_percent_used / 100), 1)
+            'free_memory_gb'     : round(self.total_memory_gb - (self.total_memory_gb * self.memory_percent_used / 100), 1)
         }
     
     def get_optimal_balanced_config(self) -> Dict[str, Any]:
@@ -74,40 +74,40 @@ class DaskConfigOptimizer:
         
         recommendations = {
             'development': {
-                'description': 'Safe for development and testing with small datasets',
-                'use_case': 'Small MIMIC-IV subsets, code testing, debugging',
-                'n_workers': 1,
+                'description'       : 'Safe for development and testing with small datasets',
+                'use_case'          : 'Small MIMIC-IV subsets, code testing, debugging',
+                'n_workers'         : 1,
                 'threads_per_worker': 4,
-                'memory_limit': '4GB',
+                'memory_limit'      : '4GB',
                 'total_memory_usage': '4GB',
-                'recommended_for': 'Systems with < 16GB RAM or small datasets'
+                'recommended_for'   : 'Systems with < 16GB RAM or small datasets'
             },
             'conservative': {
-                'description': 'Stable configuration with low resource usage',
-                'use_case': 'Standard MIMIC-IV analysis, single table operations',
-                'n_workers': conservative_workers,
+                'description'       : 'Stable configuration with low resource usage',
+                'use_case'          : 'Standard MIMIC-IV analysis, single table operations',
+                'n_workers'         : conservative_workers,
                 'threads_per_worker': 8,
-                'memory_limit': f"{max(4, int(usable_memory / conservative_workers))}GB",
+                'memory_limit'      : f"{max(4, int(usable_memory / conservative_workers))}GB",
                 'total_memory_usage': f"{max(4, int(usable_memory / conservative_workers)) * conservative_workers}GB",
-                'recommended_for': 'Most users, production environments'
+                'recommended_for'   : 'Most users, production environments'
             },
             'balanced': {
-                'description': 'Good balance between performance and stability',
-                'use_case': 'Multi-table merging, feature engineering, clustering',
-                'n_workers': balanced_workers,
+                'description'       : 'Good balance between performance and stability',
+                'use_case'          : 'Multi-table merging, feature engineering, clustering',
+                'n_workers'         : balanced_workers,
                 'threads_per_worker': 6,
-                'memory_limit': f"{max(6, int(usable_memory / balanced_workers))}GB",
+                'memory_limit'      : f"{max(6, int(usable_memory / balanced_workers))}GB",
                 'total_memory_usage': f"{max(6, int(usable_memory / balanced_workers)) * balanced_workers}GB",
-                'recommended_for': 'Systems with 16-32GB RAM'
+                'recommended_for'   : 'Systems with 16-32GB RAM'
             },
             'aggressive': {
-                'description': 'Maximum performance for large datasets',
-                'use_case': 'Full MIMIC-IV dataset, intensive computations',
-                'n_workers': aggressive_workers,
+                'description'       : 'Maximum performance for large datasets',
+                'use_case'          : 'Full MIMIC-IV dataset, intensive computations',
+                'n_workers'         : aggressive_workers,
                 'threads_per_worker': 2,
-                'memory_limit': f"{max(8, int(usable_memory / aggressive_workers))}GB",
+                'memory_limit'      : f"{max(8, int(usable_memory / aggressive_workers))}GB",
                 'total_memory_usage': f"{max(8, int(usable_memory / aggressive_workers)) * aggressive_workers}GB",
-                'recommended_for': 'High-end systems with 32GB+ RAM'
+                'recommended_for'   : 'High-end systems with 32GB+ RAM'
             }
         }
         
@@ -120,32 +120,32 @@ class DaskConfigOptimizer:
         
         return {
             'data_loading': {
-                'description': 'Optimized for reading large CSV/Parquet files',
-                'n_workers': max(1, self.cpu_count // 3),
+                'description'       : 'Optimized for reading large CSV/Parquet files',
+                'n_workers'         : max(1, self.cpu_count // 3),
                 'threads_per_worker': 16,
-                'memory_limit': f"{base_memory}GB",
-                'notes': 'High thread count for I/O operations'
+                'memory_limit'      : f"{base_memory}GB",
+                'notes'             : 'High thread count for I/O operations'
             },
             'table_merging': {
-                'description': 'Optimized for joining multiple MIMIC-IV tables',
-                'n_workers': max(2, self.cpu_count // 2),
+                'description'       : 'Optimized for joining multiple MIMIC-IV tables',
+                'n_workers'         : max(2, self.cpu_count // 2),
                 'threads_per_worker': 4,
-                'memory_limit': f"{base_memory * 2}GB",
-                'notes': 'Balanced for shuffle-heavy operations'
+                'memory_limit'      : f"{base_memory * 2}GB",
+                'notes'             : 'Balanced for shuffle-heavy operations'
             },
             'feature_engineering': {
-                'description': 'Optimized for complex transformations and calculations',
-                'n_workers': max(2, self.cpu_count - 1),
+                'description'       : 'Optimized for complex transformations and calculations',
+                'n_workers'         : max(2, self.cpu_count - 1),
                 'threads_per_worker': 2,
-                'memory_limit': f"{base_memory}GB",
-                'notes': 'CPU-optimized for computational tasks'
+                'memory_limit'      : f"{base_memory}GB",
+                'notes'             : 'CPU-optimized for computational tasks'
             },
             'clustering_analysis': {
-                'description': 'Optimized for machine learning and clustering',
-                'n_workers': max(1, self.cpu_count // 2),
+                'description'       : 'Optimized for machine learning and clustering',
+                'n_workers'         : max(1, self.cpu_count // 2),
                 'threads_per_worker': 4,
-                'memory_limit': f"{base_memory * 3}GB",
-                'notes': 'High memory for algorithm requirements'
+                'memory_limit'      : f"{base_memory * 3}GB",
+                'notes'             : 'High memory for algorithm requirements'
             }
         }
     
@@ -153,12 +153,12 @@ class DaskConfigOptimizer:
         """Validate a Dask configuration against system resources."""
         
         # Parse memory limit
-        memory_gb = float(memory_limit.replace('GB', '').replace('gb', ''))
+        memory_gb          = float(memory_limit.replace('GB', '').replace('gb', ''))
         total_memory_usage = n_workers * memory_gb
-        total_threads = n_workers * threads_per_worker
+        total_threads      = n_workers * threads_per_worker
         
         warnings = []
-        errors = []
+        errors   = []
         
         # Memory validation
         if total_memory_usage > self.available_memory_gb * 0.8:
