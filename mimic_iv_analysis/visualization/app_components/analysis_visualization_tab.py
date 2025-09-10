@@ -4,6 +4,7 @@ import logging
 # Data processing imports
 import numpy as np
 import pandas as pd
+import dask.dataframe as dd
 
 # Visualization imports
 import plotly.express as px
@@ -306,14 +307,35 @@ class AnalysisVisualizationTab:
 				else:
 					original_df = st.session_state.df
 
-					# Ensure original_df index aligns with cluster_labels index
-					common_index_outcome = original_df.index.intersection(cluster_labels.index)
+					# TODO: check this code made by Trae AI and make sure it is correct. 
+					# Handle index alignment for both Dask and pandas DataFrames
+					if isinstance(original_df, dd.DataFrame):
+						# For Dask DataFrames, use loc with cluster_labels index directly
+						# This avoids loading the entire dataset into memory
+						try:
+							original_df_aligned = original_df.loc[cluster_labels.index]
+							cluster_labels_aligned = cluster_labels
+							common_index_outcome = cluster_labels.index  # Use cluster labels index as reference
+						except KeyError:
+							# If direct indexing fails, we need to find intersection differently
+							# Convert only the index to pandas for intersection operation
+							original_index = original_df.index.to_series().compute() if hasattr(original_df.index, 'to_series') else pd.Index(original_df.index.compute())
+							common_index_outcome = original_index.intersection(cluster_labels.index)
+							if len(common_index_outcome) > 0:
+								original_df_aligned = original_df.loc[common_index_outcome]
+								cluster_labels_aligned = cluster_labels.loc[common_index_outcome]
+							else:
+								common_index_outcome = pd.Index([])
+					else:
+						# For pandas DataFrames, use the original approach
+						common_index_outcome = original_df.index.intersection(cluster_labels.index)
+						if len(common_index_outcome) > 0:
+							original_df_aligned = original_df.loc[common_index_outcome]
+							cluster_labels_aligned = cluster_labels.loc[common_index_outcome]
 
 					if len(common_index_outcome) == 0:
 						st.error("Index mismatch between original data and cluster labels. Cannot perform outcome analysis.")
 					else:
-						original_df_aligned = original_df.loc[common_index_outcome]
-						cluster_labels_aligned = cluster_labels.loc[common_index_outcome]
 
 						# --- LOS Calculation ---
 						st.markdown("#### Length of Stay (LOS)")

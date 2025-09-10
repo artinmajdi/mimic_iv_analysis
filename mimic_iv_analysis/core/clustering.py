@@ -41,6 +41,7 @@ class ClusteringAnalyzer:
 		self.preprocessed_data = {}
 		self.cluster_results = {}
 		self.cluster_metrics = {}
+		self._persisted_resources = {}
 
 
 	def preprocess_data(self, data: Union[pd.DataFrame, dd.DataFrame], method: str = 'standard', handle_missing: str = 'drop', use_dask: bool = False) -> pd.DataFrame:

@@ -56,6 +56,7 @@ def setup_logging(level: int = logging.INFO) -> None:
     logging.getLogger('ucimlrepo').setLevel(logging.WARNING)
     logging.getLogger('streamlit').setLevel(logging.WARNING)
     logging.getLogger('crowdkit').setLevel(logging.WARNING)
+    logging.getLogger('distributed.shuffle._scheduler_plugin').setLevel(logging.ERROR)
 
 # Default configuration dictionary
 DEFAULT_CONFIG_DICT = {

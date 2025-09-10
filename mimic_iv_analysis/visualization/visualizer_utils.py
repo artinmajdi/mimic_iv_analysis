@@ -102,6 +102,7 @@ class MIMICVisualizerUtils:
 			df: DataFrame to visualize (can be pandas DataFrame or Dask DataFrame)
 			use_dask: If True, df is treated as a Dask DataFrame and computed when needed
 		"""
+		# TODO: add the option in the UI for user to select the number of subjects to visualize instead of top 20 rows.
 		if df is not None:
 			st.markdown("<h2 class='sub-header'>Data Visualization</h2>", unsafe_allow_html=True)
 

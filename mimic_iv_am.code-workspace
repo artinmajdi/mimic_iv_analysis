@@ -10,6 +10,6 @@
 		}
 	],
 	"settings": {
-		"basedpyright.disableLanguageServices": false
+		"basedpyright.disableLanguageServices": true
 	},
 }
