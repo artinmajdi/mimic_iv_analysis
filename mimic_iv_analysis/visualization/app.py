@@ -30,7 +30,8 @@ from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtil
 # TODO: Generate a sphinx documentation for this.
 # TODO: Can i show the dask dashboard inside streamlit UI?
 # TODO: Make sure the UI doesn't reload the table everytime user changes a setting. 
-
+# TODO: Add the option to save the Full merged table and load it when available instead of re-merging the tables. Use a hash system using the table names that are used in that merge
+# TODO: check if I can load the merge table with the m4 pro laptop. If so, maybe I need to return the m3 max laptop. 
 class MIMICDashboardApp:
 
 	def __init__(self):
