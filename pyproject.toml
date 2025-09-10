@@ -61,6 +61,7 @@ dependencies = [
     "sphinx-rtd-theme",
     "pydantic>=2.11.5",
     "rich>=14.0.0",
+    "psutil>=7.0.0",
 ]
 
 [project.optional-dependencies]

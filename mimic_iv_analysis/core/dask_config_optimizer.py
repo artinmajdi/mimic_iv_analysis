@@ -37,6 +37,30 @@ class DaskConfigOptimizer:
             'free_memory_gb': round(self.total_memory_gb - (self.total_memory_gb * self.memory_percent_used / 100), 1)
         }
     
+    def get_optimal_balanced_config(self) -> Dict[str, Any]:
+        """Get a single optimized configuration that balances all MIMIC-IV workloads."""
+        
+        # Calculate optimal workers based on system resources
+        # Use 50-75% of CPU cores for balanced performance
+        optimal_workers = max(2, min(self.cpu_count // 2, 6))
+        
+        # Calculate optimal threads per worker
+        # Balance between I/O and CPU-bound tasks
+        optimal_threads = max(4, min(8, 32 // optimal_workers))
+        
+        # Calculate memory per worker (leave 25% system memory free)
+        usable_memory = self.available_memory_gb * 0.75
+        memory_per_worker = max(4, int(usable_memory / optimal_workers))
+        
+        return {
+            'n_workers'         : optimal_workers,
+            'threads_per_worker': optimal_threads,
+            'memory_limit'      : f"{memory_per_worker}GB",
+            'total_memory_usage': f"{memory_per_worker * optimal_workers}GB",
+            'description'       : 'Optimized balanced configuration for all MIMIC-IV workloads',
+            'optimized_for'     : ['data_loading', 'table_merging', 'feature_engineering', 'clustering']
+        }
+    
     def get_recommendations(self) -> Dict[str, Dict[str, Any]]:
         """Generate Dask configuration recommendations."""
         
@@ -238,18 +262,30 @@ class DaskConfigOptimizer:
         
         config = recommendations[profile]
         
-        code = f"""
-# Add this to your Streamlit app configuration
-# In mimic_iv_analysis/visualization/app.py, update the _dask_configuration method defaults:
+        return f"""
+            # Add this to your Streamlit app configuration
+            # In mimic_iv_analysis/visualization/app.py, update the _dask_configuration method defaults:
 
-if 'dask_n_workers' not in st.session_state:
-    st.session_state.dask_n_workers = {config['n_workers']}
-if 'dask_threads_per_worker' not in st.session_state:
-    st.session_state.dask_threads_per_worker = {config['threads_per_worker']}
-if 'dask_memory_limit' not in st.session_state:
-    st.session_state.dask_memory_limit = '{config['memory_limit']}'
-"""
-        return code
+            if 'dask_n_workers' not in st.session_state:
+                st.session_state.dask_n_workers = {config['n_workers']}
+            if 'dask_threads_per_worker' not in st.session_state:
+                st.session_state.dask_threads_per_worker = {config['threads_per_worker']}
+            if 'dask_memory_limit' not in st.session_state:
+                st.session_state.dask_memory_limit = '{config['memory_limit']}'
+            """
+    
+    @staticmethod
+    def get_optimized_config_for_streamlit() -> Dict[str, Any]:
+        """Static method to get optimized configuration for Streamlit integration."""
+        optimizer = DaskConfigOptimizer()
+        config = optimizer.get_optimal_balanced_config()
+        
+        return {
+            'n_workers'         : config['n_workers'],
+            'threads_per_worker': config['threads_per_worker'],
+            'memory_limit'      : config['memory_limit'],
+            'description'       : config['description']
+        }
 
 
 def main():

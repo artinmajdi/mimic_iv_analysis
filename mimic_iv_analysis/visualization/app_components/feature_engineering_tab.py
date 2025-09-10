@@ -59,39 +59,35 @@ class FeatureEngineeringTab:
 		# Get available columns
 		all_columns = st.session_state.df.columns.tolist()
 
-
 		st.markdown("### Create Order Frequency Matrix")
 		st.info("This creates a matrix where rows are patients and columns are order types, with cells showing frequency of each order type per patient.")
 
 		# Column selection
-		col1, col2 = st.columns(2)
-		with col1:
+		cols = st.columns(3)
+		with cols[0]:
 			# Suggest patient ID column but allow selection from all columns
 			patient_id_col = st.selectbox(
 				label   = "Select Patient ID Column",
 				options = all_columns,
 				index   = all_columns.index('subject_id') if 'subject_id' in all_columns else 0,
 				key     = "freq_patient_id_col",
-				help    = "Column containing unique patient identifiers"
-			)
+				help    = "Column containing unique patient identifiers" )
 
-		with col2:
+		with cols[1]:
 			# Suggest order column but allow selection from all columns
-
 			order_col = st.selectbox(
 				label   = "Select Order Type Column",
 				options = all_columns,
 				index   = all_columns.index('order_type') if 'order_type' in all_columns else 0,
 				key     = "freq_order_col",
-				help    = "Column containing order types/names"
-			)
+				help    = "Column containing order types/names" )
 
-		# Options
-		col1, col2, col3 = st.columns(3)
-		with col1:
-			normalize = st.checkbox("Normalize by Patient", value=False, help="Convert frequencies to percentages of total orders per patient")
-		with col2:
+		with cols[2]:
 			top_n = st.number_input("Top N Order Types", min_value=0, max_value=100, value=20, help="Limit to most frequent order types (0 = include all)")
+
+		cols = st.columns(3)
+		with cols[0]:
+			normalize = st.checkbox("Normalize by Patient", value=False, help="Convert frequencies to percentages of total orders per patient")
 
 		# Generate button
 		if st.button("Generate Order Frequency Matrix"):

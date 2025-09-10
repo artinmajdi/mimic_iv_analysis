@@ -19,6 +19,7 @@ import humanize
 # Local application imports
 from mimic_iv_analysis import logger
 from mimic_iv_analysis.core import FeatureEngineerUtils
+from mimic_iv_analysis.core.dask_config_optimizer import DaskConfigOptimizer
 from mimic_iv_analysis.io import DataLoader, ParquetConverter
 from mimic_iv_analysis.configurations import TableNames, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS, DEFAULT_STUDY_TABLES_LIST
 
@@ -26,7 +27,7 @@ from mimic_iv_analysis.visualization.app_components import FilteringTab, Feature
 
 from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtils
 
-
+# TODO: can i show the dask dashboard inside streamlit UI?
 # TODO: Make sure the UI doesn't reload the table everytime user changes a setting. 
 # TODO: fix the Order Timing Analysis tab. I am getting an error when i run "generate timing features" inside the "order timing analysis" tab , which itself is under "feature engineering" tab.
 class MIMICDashboardApp:
@@ -45,8 +46,6 @@ class MIMICDashboardApp:
 		logger.info("Initializing FeatureEngineerUtils...")
 		self.feature_engineer  = FeatureEngineerUtils()
 
-		self.__init_dask_client()
-
 		# Initialize UI components for tabs
 		self.feature_engineering_ui    = None
 		self.clustering_analysis_ui    = None
@@ -58,6 +57,8 @@ class MIMICDashboardApp:
 		# self.init_session_state()
 		logger.info("MIMICDashboardApp initialized.")
 
+		self.__init_dask_client()
+
 
 	def __init_dask_client(self):
 		# ----------------------------------------
@@ -68,19 +69,29 @@ class MIMICDashboardApp:
 		@st.cache_resource(show_spinner=False)
 		def _get_dask_client(n_workers, threads_per_worker, memory_limit, dashboard_port):
 			cluster = LocalCluster(
-			n_workers          = n_workers,
-			threads_per_worker = threads_per_worker,
-			processes          = True,
-			memory_limit       = memory_limit,
-			dashboard_address  = f":{dashboard_port}",
-			)
+								n_workers          = n_workers,
+								threads_per_worker = threads_per_worker,
+								processes          = True,
+								memory_limit       = memory_limit,
+								dashboard_address  = f":{dashboard_port}", )
 			return Client(cluster)
 
+		# Initialize default values if not in session state
+		if 'dask_n_workers' not in st.session_state:
+			st.session_state.dask_n_workers = 1
+		if 'dask_threads_per_worker' not in st.session_state:
+			st.session_state.dask_threads_per_worker = 16
+		if 'dask_memory_limit' not in st.session_state:
+			st.session_state.dask_memory_limit = '20GB'
+		if 'dask_dashboard_port' not in st.session_state:
+			st.session_state.dask_dashboard_port = 8787
+
+
 		# Get Dask configuration from session state
-		n_workers          = st.session_state.get('dask_n_workers', 1)
-		threads_per_worker = st.session_state.get('dask_threads_per_worker', 16)
-		memory_limit       = st.session_state.get('dask_memory_limit', '20GB')
-		dashboard_port     = st.session_state.get('dask_dashboard_port', 8787)
+		n_workers          = st.session_state.dask_n_workers
+		threads_per_worker = st.session_state.dask_threads_per_worker
+		memory_limit       = st.session_state.dask_memory_limit
+		dashboard_port     = st.session_state.dask_dashboard_port
 
 		# Create a unique key based on configuration to force recreation when settings change
 		config_key = f"{n_workers}_{threads_per_worker}_{memory_limit}_{dashboard_port}"
@@ -145,20 +156,41 @@ class MIMICDashboardApp:
 	def _dask_configuration(self):
 		"""Display Dask configuration options in the sidebar."""
 		
-		# Initialize default values if not in session state
-		if 'dask_n_workers' not in st.session_state:
-			st.session_state.dask_n_workers = 1
-		if 'dask_threads_per_worker' not in st.session_state:
-			st.session_state.dask_threads_per_worker = 16
-		if 'dask_memory_limit' not in st.session_state:
-			st.session_state.dask_memory_limit = '20GB'
-		if 'dask_dashboard_port' not in st.session_state:
-			st.session_state.dask_dashboard_port = 8787
+		def _optimize_button():
 
-		# st.sidebar.markdown("---")  # Separator
+			if st.button(
+				"Find Optimum Parameters",
+				help="Automatically optimize Dask configuration based on your system resources for MIMIC-IV workloads",
+				use_container_width=True,
+				type="primary",
+				icon="🔧" ):
+				try:
+					# Get optimized configuration
+					optimized_config = DaskConfigOptimizer.get_optimized_config_for_streamlit()
+					
+					# Update session state with optimized values
+					st.session_state.dask_n_workers          = optimized_config['n_workers']
+					st.session_state.dask_threads_per_worker = optimized_config['threads_per_worker']
+					st.session_state.dask_memory_limit       = optimized_config['memory_limit']
+					
+					# Show success message with details
+					st.success(f"✅ Configuration optimized!\n\n"
+								f"**Workers:** {optimized_config['n_workers']}\n"
+								f"**Threads per Worker:** {optimized_config['threads_per_worker']}\n"
+								f"**Memory Limit:** {optimized_config['memory_limit']}\n\n"
+								f"*{optimized_config['description']}*")
+					
+					# Force UI refresh to show new values
+					st.rerun()
+					
+				except Exception as e:
+					st.error(f"❌ Failed to optimize configuration: {str(e)}")
+					logger.error(f"Dask optimization error: {e}")
 
 		with st.sidebar.expander(label="Dask Configuration", expanded=False):
 			
+			_optimize_button()
+
 			# Number of workers
 			n_workers = st.number_input(
 				label="Number of Workers",
@@ -193,6 +225,7 @@ class MIMICDashboardApp:
 				help="Port for Dask dashboard. Access at http://localhost:[port] to monitor Dask performance."
 			)
 			
+
 		# Check if any values changed and update session state
 		config_changed = False
 		if n_workers != st.session_state.dask_n_workers:
@@ -296,7 +329,7 @@ class MIMICDashboardApp:
 				max_value = total_unique_subjects if total_unique_subjects > 0 else 1,
 				disabled  = self.has_no_subject_id_column,
 				key       = "num_subjects_to_load",
-				step      = 10,
+				step      = 20,
 				value     = st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS),
 				help      = help_text_num_subjects
 			)
@@ -508,7 +541,7 @@ class MIMICDashboardApp:
 				_select_table(module=module)
 
 				if st.session_state.selected_table == "merged_table":
-					st.sidebar.checkbox('Include Transfers Table', value=False, key='include_transfers', on_change=self._callback_reload_dataloader)
+					st.sidebar.checkbox('Include Transfers Table', value=True, key='include_transfers', on_change=self._callback_reload_dataloader)
 			else:
 				st.session_state.selected_table_name_w_size = None
 
@@ -877,19 +910,21 @@ class MIMICDashboardApp:
 			# Tab 1: Exploration & Visualization
 			with tab1:
 				st.markdown("<h2 class='sub-header'>Data Exploration & Visualization</h2>", unsafe_allow_html=True)
-				# Check if Dask was used to load the data
-				use_dask = st.session_state.get('use_dask', False)
+				
+				MIMICVisualizerUtils.display_dataset_statistics(st.session_state.df)
 
-				# Pass the use_dask parameter to all visualizer methods
-				MIMICVisualizerUtils.display_data_preview(st.session_state.df, use_dask=use_dask)
-				MIMICVisualizerUtils.display_dataset_statistics(st.session_state.df, use_dask=use_dask)
+				cols = st.columns([1, 3])
+				with cols[0]:
+					st.session_state.sample_size = st.number_input("Number of Rows for Visualization", min_value=1, max_value=len(st.session_state.df), value=30)
 
-				try:
-					st.info(f'dataframe size: {st.session_state.df.size / len(st.session_state.df.columns)}')
-				except Exception as e:
-					st.error(f"Error calculating dataframe size: {e}")
+				preview_df = MIMICVisualizerUtils._compute_dataframe_sample(df=st.session_state.df, sample_size=st.session_state.sample_size)
+		
+				if preview_df is None:
+					return
+ 
+				MIMICVisualizerUtils.display_data_preview(preview_df)
 
-				MIMICVisualizerUtils.display_visualizations(st.session_state.df, use_dask=use_dask)
+				MIMICVisualizerUtils.display_visualizations(preview_df)
 
 			with tab2:
 				FeatureEngineeringTab().render()
