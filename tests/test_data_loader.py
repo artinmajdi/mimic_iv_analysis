@@ -123,7 +123,6 @@ class TestDataLoader:
         loader = DataLoader()
         assert loader.mimic_path == DEFAULT_MIMIC_PATH
         assert loader.study_table_list == DEFAULT_STUDY_TABLES_LIST
-        assert loader._all_subject_ids == []
         assert loader.tables_info_df is None
         assert loader.tables_info_dict is None
 
@@ -194,32 +193,6 @@ class TestDataLoader:
         assert path.name == 'icustays.csv'
         assert 'icu' in str(path)
 
-    def test__load_unfiltered_csv_table(self, mock_mimic_dir):
-        """Test loading CSV with correct datatypes."""
-        loader = DataLoader(mimic_path=mock_mimic_dir)
-        file_path = mock_mimic_dir / "hosp" / "patients.csv"
-
-        # Test with use_dask=True (default)
-        result = loader._load_unfiltered_csv_table(file_path)
-        assert isinstance(result, dd.DataFrame)
-
-        # Test with use_dask=False
-        result = loader._load_unfiltered_csv_table(file_path, use_dask=False)
-        assert isinstance(result, pd.DataFrame)
-
-        # Test file not found
-        with pytest.raises(FileNotFoundError):
-            loader._load_unfiltered_csv_table(Path("/nonexistent/file.csv"))
-
-        # Test non-CSV file
-        non_csv = mock_mimic_dir / "not_a_csv.txt"
-        with open(non_csv, 'w') as f:
-            f.write("not a csv")
-
-        # Using logger.warning instead of warnings.warn
-        result = loader._load_unfiltered_csv_table(non_csv)
-        assert result.empty
-
     @patch(FILTERING_PATH)
     def test_load_unique_subject_ids_for_table(self, mock_filtering, mock_mimic_dir):
         """Test loading unique subject IDs from a table."""
@@ -243,64 +216,6 @@ class TestDataLoader:
             assert result == [1, 2, 3]
             mock_load_table.assert_called_with(table_name=TableNames.ADMISSIONS, partial_loading=False)
 
-    @patch(FILTERING_PATH)
-    def test_all_subject_ids(self, mock_mimic_dir):
-        """Test all_subject_ids property."""
-        loader = DataLoader(mimic_path=mock_mimic_dir)
-        loader.scan_mimic_directory()
-
-        # Delete the cached property to force it to recalculate
-        # This is needed because cached_property caches the result
-        try:
-            del loader.__dict__['all_subject_ids']
-        except KeyError:
-            pass  # Property hasn't been accessed yet
-
-        # Clear the _all_subject_ids list to ensure the property runs
-        loader._all_subject_ids = []
-
-        # Mock the _load_unique_subject_ids_for_table method
-        # According to the implementation, this method should populate the _all_subject_ids list
-        def mock_load_ids_for_table():
-            loader._all_subject_ids = [1, 2, 3]
-            return loader._all_subject_ids
-
-        with patch.object(loader, '_load_unique_subject_ids_for_table', side_effect=mock_load_ids_for_table) as mock_load_method:
-            # Test that the property loads IDs
-            result = loader.all_subject_ids
-            assert result == [1, 2, 3]
-            mock_load_method.assert_called_once_with()
-
-        # Test caching behavior by changing the internal list
-        loader._all_subject_ids = [4, 5, 6]
-
-        # Since all_subject_ids uses cached_property, it should still return the cached value
-        # But we're directly modifying the internal list, so we test the internal list
-        assert loader._all_subject_ids == [4, 5, 6]
-
-    def test_get_partial_subject_id_list(self):
-        """Test getting partial subject ID list."""
-        loader = DataLoader()
-        loader._all_subject_ids = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-
-        # Test with num_subjects = 0
-        result = loader.get_partial_subject_id_list_for_partial_loading(num_subjects=0)
-        assert result == []
-
-        # Test with num_subjects > len(all_subject_ids)
-        result = loader.get_partial_subject_id_list_for_partial_loading(num_subjects=20)
-        assert result == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-
-        # Test with non-random selection
-        result = loader.get_partial_subject_id_list_for_partial_loading(num_subjects=3, random_selection=False)
-        assert result == [1, 2, 3]
-
-        # Test with random selection
-        with patch('numpy.random.choice') as mock_choice:
-            mock_choice.return_value = np.array([3, 1, 7])
-            result = loader.get_partial_subject_id_list_for_partial_loading(num_subjects=3, random_selection=True)
-            assert result == [3, 1, 7]
-            mock_choice.assert_called_with(a=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10], size=3)
 
     @patch(FILTERING_PATH)
     def test_load_all_study_tables(self, mock_filtering, mock_mimic_dir):
@@ -327,7 +242,7 @@ class TestDataLoader:
                 npartitions=1
             )
 
-            result = loader.load_all_study_tables_full(partial_loading=False)
+            result = loader.fetch_complete_study_tables(partial_loading=False)
             assert 'patients' in result
             assert 'admissions' in result
             mock_load_table.assert_any_call(
@@ -345,7 +260,7 @@ class TestDataLoader:
 
         # Test partial loading
         with patch.object(loader, 'load_table') as mock_load_table, \
-             patch.object(loader, 'get_partial_subject_id_list_for_partial_loading') as mock_get_ids:
+            patch.object(loader, 'get_partial_subject_id_list_for_partial_loading') as mock_get_ids:
 
             mock_load_table.return_value = dd.from_pandas(
                 pd.DataFrame({'subject_id': [1, 2], 'data': ['a', 'b']}),
@@ -353,7 +268,7 @@ class TestDataLoader:
             )
             mock_get_ids.return_value = [1, 2]
 
-            result = loader.load_all_study_tables_full(partial_loading=True, num_subjects=2)
+            result = loader.fetch_complete_study_tables(partial_loading=True, num_subjects=2)
             assert 'patients' in result
             assert 'admissions' in result
             mock_get_ids.assert_called_with(num_subjects=2, random_selection=False)
@@ -373,7 +288,7 @@ class TestDataLoader:
 
         # Mock _get_file_path to return an actual file
         with patch.object(loader, '_get_file_path') as mock_get_path, \
-            patch.object(loader, '_load_unfiltered_csv_table') as mock_load_csv:
+            patch.object(loader, 'fetch_table') as mock_load_csv:
 
             # Setup mock for file path
             file_path = mock_mimic_dir / "hosp" / "patients.csv"
@@ -608,8 +523,8 @@ class TestParquetConverter:
 
         # Mock the to_parquet method
         with patch.object(dd.DataFrame, 'to_parquet') as mock_to_parquet, \
-             patch.object(converter, '_get_csv_file_path') as mock_get_path, \
-             patch.object(data_loader, '_load_unfiltered_csv_table') as mock_load:
+            patch.object(converter, '_get_csv_file_path') as mock_get_path, \
+            patch.object(data_loader, 'fetch_table') as mock_load:
 
             # Set up mocks
             mock_get_path.return_value = (mock_mimic_dir / "hosp" / "patients.csv", ".csv")
@@ -882,21 +797,4 @@ class TestExampleDataLoader:
         result = example_loader.load_all_study_tables()
         assert result == tables_dict
 
-    def test_load_merged_tables(self):
-        """Test load_merged_tables method."""
-        # Create mock DataLoader
-        mock_loader = MagicMock()
 
-        # Create specific return value to match with equality check
-        return_value = {'merged_table': 'test_value'}
-        mock_loader.load_merged_tables.return_value = return_value
-
-        # Create ExampleDataLoader directly with mocks
-        example_loader = ExampleDataLoader.__new__(ExampleDataLoader)
-        example_loader.data_loader = mock_loader
-
-        # Test load_merged_tables
-        result = example_loader.load_merged_tables()
-        mock_loader.load_merged_tables.assert_called_once()
-        # Use a more specific comparison
-        assert result == return_value

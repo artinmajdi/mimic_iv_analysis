@@ -130,6 +130,18 @@ RANDOM_STATE         = 42
 SUBJECT_ID_COL       = 'subject_id'
 
 
+# Tables Details for Filtering
+ADMISSION_LOCATIONS = ['TRANSFER FROM HOSPITAL', 'EMERGENCY ROOM', 'WALK-IN/SELF REFERRAL', 'PHYSICIAN REFERRAL']
+ADMISSION_TYPES     = ['EMERGENCY', 'URGENT', 'ELECTIVE', 'NEWBORN', 'OBSERVATION']
+ADMISSION_COLUMNS   = ["subject_id", "hadm_id", "admittime", "dischtime", "deathtime", "admission_type", "admit_provider_id", "admission_location", "discharge_location", "insurance", "language", "marital_status", "race", "edregtime", "edouttime", "hospital_expire_flag"]
+
+POE_COLUMNS = ['poe_id', 'poe_seq', 'subject_id', 'hadm_id', 'ordertime', 'order_type', 'order_subtype', 'transaction_type', 'discontinue_of_poe_id', 'discontinued_by_poe_id', 'order_provider_id', 'order_status']
+POE_ORDER_TYPES = ['Medications', 'General Care', 'Nutrition', 'Blood Bank', 'Lab', 'Respiratory', 'ADT orders', 'Radiology', 'IV therapy', 'Consults']
+POE_TRANSACTION_TYPES = ['NEW', 'D/C', 'Change']
+
+
+
+# Type aliases
 DataFrameType = pd.DataFrame | dd.DataFrame
 
 # Updated dictionary for better Parquet compatibility
@@ -146,14 +158,21 @@ COLUMN_TYPES = {
     'anchor_year'           : 'int64',
     'anchor_age'            : 'int64',
     'seq_num'               : 'int64',
+    
+    'ab_name'               : 'string',
+    'dilution_comparison'   : 'string',
+    'dilution_text'         : 'string',
+
+    
     'pharmacy_id'           : 'string',
     'poe_id'                : 'string',
     'order_provider_id'     : 'string',
     'enter_provider_id'     : 'string',
     'leave_provider_id'     : 'string',
-    'discontinued_by_poe_id': 'string',
     'dod'                   : 'string',
-
+    'discontinued_by_poe_id': 'string',
+    'discontinue_of_poe_id' : 'string',
+    
     # Categorical columns
 	'gender'              : 'category',
 	'race'                : 'category',
@@ -237,7 +256,6 @@ TABLE_CATEGORICAL_COLUMNS = {
 
 # Default dtypes for pandas loading
 dtypes_all = {
-    'discontinued_by_poe_id': 'object',
     'long_description'      : 'string',
     'icd_code'              : 'string',
     'drg_type'              : 'category',

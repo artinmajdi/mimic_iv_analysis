@@ -27,6 +27,8 @@ from mimic_iv_analysis.visualization.app_components import FilteringTab, Feature
 
 from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtils
 
+# TODO: add a button to save the merged table in csv format. 
+# TODO: save the merged csv
 # TODO: Generate a sphinx documentation for this.
 # TODO: Can i show the dask dashboard inside streamlit UI?
 # TODO: Make sure the UI doesn't reload the table everytime user changes a setting. 
@@ -78,13 +80,13 @@ class MIMICDashboardApp:
 								dashboard_address  = f":{dashboard_port}", )
 			return Client(cluster)
 
-		# Initialize default values if not in session state
+		# Initialize default values if not in session state with conservative settings
 		if 'dask_n_workers' not in st.session_state:
-			st.session_state.dask_n_workers = 1
+			st.session_state.dask_n_workers = 2  # Reduced from 1 to 2 for better parallelism
 		if 'dask_threads_per_worker' not in st.session_state:
-			st.session_state.dask_threads_per_worker = 16
+			st.session_state.dask_threads_per_worker = 4  # Reduced from 16 to 4 to prevent memory overload
 		if 'dask_memory_limit' not in st.session_state:
-			st.session_state.dask_memory_limit = '20GB'
+			st.session_state.dask_memory_limit = '8GB'  # Reduced from 20GB to 8GB for safer memory usage
 		if 'dask_dashboard_port' not in st.session_state:
 			st.session_state.dask_dashboard_port = 8787
 
@@ -285,25 +287,6 @@ class MIMICDashboardApp:
 	def _display_sidebar(self):
 		"""Handles the display and logic of the sidebar components."""
 
-		def _select_view():
-
-			# View selection
-			st.sidebar.markdown("## Navigation")
-			view_options = ["Data Explorer & Analysis", "Cohort Filtering"]
-
-			# Get current index based on session state
-			current_view_index = 0 if st.session_state.current_view == 'data_explorer' else 1
-
-			selected_view = st.sidebar.radio("Select View", view_options, index=current_view_index, key="view_selector")
-
-			# Update session state based on selection
-			if selected_view == "Data Explorer & Analysis":
-				st.session_state.current_view = 'data_explorer'
-			else:
-				st.session_state.current_view = 'filtering'
-
-			return selected_view
-
 		def _select_sampling_parameters():
 
 			if st.session_state.selected_table == 'merged_table' or self.has_no_subject_id_column:
@@ -311,7 +294,7 @@ class MIMICDashboardApp:
 			else:
 				table_name = TableNames(st.session_state.selected_table)
 
-			total_unique_subjects = len(self.data_handler.all_subject_ids(table_name=table_name))
+			total_unique_subjects = len(self.data_handler.get_unique_subject_ids(table_name=table_name))
 
 			help_text_num_subjects = f"Number of subjects to load. Max: {total_unique_subjects}."
 
@@ -513,7 +496,6 @@ class MIMICDashboardApp:
 					if table_info:
 						st.sidebar.markdown( f"**Description:** {table_info}", help="Table description from MIMIC-IV documentation." )
 
-
 				# Get sorted table options for the selected module
 				tables_list_w_size_info, display_to_table_map = _get_table_options_list()
 
@@ -533,6 +515,10 @@ class MIMICDashboardApp:
 					st.session_state.selected_table = table
 					st.session_state.df = None  # Clear dataframe when table changes
 
+				# Show table filters
+				with st.sidebar.expander("Inclusion/Exclusion Criteria", expanded=True):
+					FilteringTab(table_name=TableNames(table))
+
 				# Show table description if a regular table is selected
 				if st.session_state.selected_table != "merged_table":
 					_display_table_info(st.session_state.selected_table)
@@ -548,11 +534,7 @@ class MIMICDashboardApp:
 				st.session_state.selected_table_name_w_size = None
 
 		st.sidebar.title("MIMIC-IV Navigator")
-
-		_select_view()
-
 		self._dask_configuration()
-
 		self._dataset_configuration()
 
 		# Module and table selection
@@ -573,13 +555,15 @@ class MIMICDashboardApp:
 		self.data_handler = DataLoader(
 						mimic_path        = st.session_state.get('mimic_path', Path(DEFAULT_MIMIC_PATH)),
 						apply_filtering   = st.session_state.apply_filtering,
-						include_transfers = st.session_state.include_transfers )
+						include_transfers = st.session_state.include_transfers,
+						filter_params     = st.session_state.filter_params)
 
 		self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
 
 	def _load_table(self, selected_table_name_w_size: str = None) -> Tuple[Optional[pd.DataFrame], int]:
 		"""Load a specific MIMIC-IV table, handling large files and sampling."""
 
+		
 		def _get_total_rows(df):
 			if df is None:
 				return 0
@@ -628,17 +612,17 @@ class MIMICDashboardApp:
 
 					# If loading full dataset, keep previous behavior
 					if st.session_state.load_full:
-						st.session_state.connected_tables = self.data_handler.load_all_study_tables_full(use_dask=st.session_state.use_dask)
-						# Merge without partial filtering (tables already fully loaded)
+						st.session_state.connected_tables = self.data_handler.fetch_complete_study_tables(use_dask=st.session_state.use_dask)
 						return _load_and_return()
 
 					# Optimized path: 1) choose subject_ids via intersection, 2) load only those rows, 3) merge
-					selected_ids = self.data_handler.get_merged_table_subject_id_intersection(
-								num_subjects=st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS) )
+					selected_ids = self.data_handler.get_sample_subject_ids(
+										table_name=TableNames.MERGED,
+										num_subjects=st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS) )
 
 					# Fallback to full load if no subject_ids found
 					if not selected_ids:
-						st.session_state.connected_tables = self.data_handler.load_all_study_tables_full(use_dask=st.session_state.use_dask)
+						st.session_state.connected_tables = self.data_handler.fetch_complete_study_tables(use_dask=st.session_state.use_dask)
 					else:
 						st.session_state.connected_tables = self.data_handler.load_filtered_study_tables_by_subjects( subject_ids=selected_ids, use_dask=st.session_state.use_dask )
 
@@ -849,6 +833,8 @@ class MIMICDashboardApp:
 				# elif file_size_mb < 1024: size_str = f"{file_size_mb:.1f} MB"
 				# else: size_str = f"{file_size_mb/1024:.1f} GB"
 				st.metric("File Size (Full)", humanize.naturalsize(file_size_mb))
+    
+				# TODO: Show the actual total rows instead of the filtered total rows in the UI
 				st.metric("Total Rows (Full)", f"{st.session_state.total_row_count:,}")
 
 			with col3:
@@ -917,7 +903,7 @@ class MIMICDashboardApp:
 
 				cols = st.columns([1, 3])
 				with cols[0]:
-					st.session_state.sample_size = st.number_input("Number of Rows for Visualization", min_value=1, max_value=len(st.session_state.df), value=30)
+					st.session_state.sample_size = st.number_input("Number of Rows for Visualization", min_value=1, max_value=len(st.session_state.df), value=min(30, len(st.session_state.df)))
 
 				preview_df = MIMICVisualizerUtils._compute_dataframe_sample(df=st.session_state.df, sample_size=st.session_state.sample_size)
 		
@@ -999,14 +985,7 @@ class MIMICDashboardApp:
 		self._display_sidebar()
 
 		# Display the selected view (Data Explorer or Filtering)
-		if st.session_state.current_view == 'data_explorer':
-			self._show_data_explorer_view()
-
-		else:
-			st.title("Cohort Filtering Configuration")
-			# Ensure necessary components are passed if FilteringTab needs them
-			# FilteringTab(current_file_path=self.current_file_path).render(data_handler=self.data_handler, feature_engineer=self.feature_engineer)
-
+		self._show_data_explorer_view()
 		logger.info("MIMICDashboardApp run finished.")
 
 
@@ -1031,7 +1010,7 @@ class MIMICDashboardApp:
 		st.session_state.mimic_path = DEFAULT_MIMIC_PATH
 		st.session_state.total_row_count = 0
 		st.session_state.use_dask = True
-		st.session_state.current_view = 'data_explorer'
+		st.session_state.apply_filtering = True
 
 		# Feature engineering states
 		st.session_state.detected_order_cols = []
@@ -1061,14 +1040,25 @@ class MIMICDashboardApp:
 
 		# Filtering states
 		st.session_state.filter_params = {
-			'apply_encounter_timeframe' : False, 'encounter_timeframe'            : [],    # Default to off
-			'apply_age_range'           : False, 'min_age'                        : 18,    'max_age': 90, # Default to off
-			'apply_t2dm_diagnosis'      : False, 'apply_valid_admission_discharge': False,
-			'apply_inpatient_stay'      : False, 'admission_types'                : [],
-			'require_inpatient_transfer': False, 'required_inpatient_units'       : [],
-			'exclude_in_hospital_death' : False
-		}
 
+			TableNames.POE.value: {
+				'selected_columns'      : ["poe_id", "poe_seq", "subject_id", "hadm_id", "ordertime", "order_type"],
+				'apply_order_type'      : False,
+				'order_type'            : [],
+				'apply_transaction_type': False,
+				'transaction_type'      : []},
+
+			TableNames.ADMISSIONS.value: {
+				'selected_columns'         : ["subject_id", "hadm_id", "admittime", "dischtime", "deathtime", "admission_type", "admit_provider_id", "admission_location", "discharge_location", "hospital_expire_flag"],
+				'valid_admission_discharge': True,
+				'exclude_in_hospital_death': True,
+				'discharge_after_admission': True,
+				'apply_admission_type'     : False,
+				'admission_type'           : [],
+				'apply_admission_location' : False,
+				'admission_location'       : []}
+		}
+		
 		st.session_state.app_initialized = True # Mark as initialized
 		logger.info("Session state initialized.")
 
@@ -1106,7 +1096,7 @@ class MIMICDashboardApp:
 	def _convert_table_to_parquet(self, tables_to_process: Optional[List[TableNames]] = None):
 		"""Callback to convert the selected table to Parquet format."""
 
-		selected_table = st.session_state.selected_table
+		selected_table  = st.session_state.selected_table
 		selected_module = st.session_state.selected_module
 
 		if tables_to_process is None:
@@ -1118,18 +1108,34 @@ class MIMICDashboardApp:
 
 		try:
 			with st.spinner(f"Converting {len(tables_to_process)} table(s) to Parquet..."):
+				success_count = 0
+				failed_tables = []
+				
 				for table_enum in tables_to_process:
-					self.parquet_converter.save_as_parquet(table_name=table_enum)
+					try:
+						logger.info(f"Starting conversion of {table_enum.value}")
+						self.parquet_converter.save_as_parquet(table_name=table_enum)
+						success_count += 1
+						logger.info(f"Successfully converted {table_enum.value}")
+					except Exception as table_error:
+						logger.error(f"Failed to convert {table_enum.value}: {str(table_error)}")
+						failed_tables.append(table_enum.value)
+						continue
 
 			if self._rescan_and_update_state():
-				st.session_state.conversion_status = {'type': 'success', 'message': f"Successfully converted {len(tables_to_process)} table(s)!"}
+				if success_count == len(tables_to_process):
+					st.session_state.conversion_status = {'type': 'success', 'message': f"Successfully converted all {success_count} table(s)!"}
+				elif success_count > 0:
+					st.session_state.conversion_status = {'type': 'warning', 'message': f"Converted {success_count}/{len(tables_to_process)} table(s). Failed: {', '.join(failed_tables)}"}
+				else:
+					st.session_state.conversion_status = {'type': 'error', 'message': f"Failed to convert any tables. Failed: {', '.join(failed_tables)}"}
 			else:
 				st.session_state.conversion_status = {'type': 'error', 'message': "Conversion might have failed. Could not find updated tables."}
 
 
 		except Exception as e:
 			logger.error(f"Parquet conversion job failed: {e}", exc_info=True)
-			st.session_state.conversion_status = {'type': 'exception', 'message': e}
+			st.session_state.conversion_status = {'type': 'exception', 'message': f"Critical error during conversion: {str(e)}. Try reducing Dask memory settings or processing smaller tables."}
 
 		st.session_state.selected_table = selected_table
 		st.session_state.selected_module = selected_module
