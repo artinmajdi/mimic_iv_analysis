@@ -27,13 +27,11 @@ from mimic_iv_analysis.visualization.app_components import FilteringTab, Feature
 
 from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtils
 
-# TODO: add a button to save the merged table in csv format. 
-# TODO: save the merged csv
 # TODO: Generate a sphinx documentation for this.
 # TODO: Can i show the dask dashboard inside streamlit UI?
-# TODO: Make sure the UI doesn't reload the table everytime user changes a setting. 
 # TODO: Add the option to save the Full merged table and load it when available instead of re-merging the tables. Use a hash system using the table names that are used in that merge
-# TODO: check if I can load the merge table with the m4 pro laptop. If so, maybe I need to return the m3 max laptop. 
+# TODO: the partial loading is not working for poe table.
+# TODO: also need to check the convert to parquet again to see if it still works. 
 class MIMICDashboardApp:
 
 	def __init__(self):
@@ -516,7 +514,7 @@ class MIMICDashboardApp:
 					st.session_state.df = None  # Clear dataframe when table changes
 
 				# Show table filters
-				with st.sidebar.expander("Inclusion/Exclusion Criteria", expanded=True):
+				with st.sidebar.expander("Inclusion/Exclusion Criteria", expanded=False):
 					FilteringTab(table_name=TableNames(table))
 
 				# Show table description if a regular table is selected
@@ -742,75 +740,123 @@ class MIMICDashboardApp:
 		# Analysis
 		st.session_state.length_of_stay = None
 
+	def _prepare_csv_download(self):
+		"""Prepare CSV data on-demand with progress tracking."""
+		try:
+			use_dask = st.session_state.get('use_dask', False)
+			
+			if use_dask and isinstance(st.session_state.df, dd.DataFrame):
+				# Create progress bar
+				progress_bar = st.progress(0)
+				status_text = st.empty()
+				
+				status_text.text('Initializing CSV export...')
+				progress_bar.progress(10)
+				
+				# Calculate row count during preparation
+				status_text.text('Calculating data size...')
+				progress_bar.progress(20)
+				try:
+					row_count = len(st.session_state.df)
+				except:
+					row_count = "Unknown"
+				
+				status_text.text(f'Preparing {row_count} rows for export...')
+				progress_bar.progress(30)
+				
+				# Use Dask's native to_csv with temporary file
+				import tempfile
+				with tempfile.NamedTemporaryFile(mode='w+', suffix='.csv', delete=False) as tmp_file:
+					tmp_path = tmp_file.name
+				
+				status_text.text('Writing data to temporary file...')
+				progress_bar.progress(50)
+				
+				# Dask writes directly to file without computing entire DataFrame
+				st.session_state.df.to_csv(tmp_path, index=False, single_file=True)
+				
+				status_text.text('Reading file content...')
+				progress_bar.progress(80)
+				
+				# Read the file content and clean up
+				with open(tmp_path, 'r', encoding='utf-8') as f:
+					csv_data = f.read().encode('utf-8')
+				
+				status_text.text('Cleaning up temporary files...')
+				progress_bar.progress(90)
+				
+				# Clean up temporary file
+				Path(tmp_path).unlink(missing_ok=True)
+				
+				status_text.text(f'CSV export completed! ({row_count} rows)')
+				progress_bar.progress(100)
+				
+				# Clear progress indicators after a short delay
+				import time
+				time.sleep(2)
+				status_text.empty()
+				progress_bar.empty()
+				
+				return csv_data
+			else:
+				# For pandas DataFrames, show simple progress
+				progress_bar = st.progress(0)
+				status_text = st.empty()
+				
+				status_text.text('Calculating data size...')
+				progress_bar.progress(20)
+				
+				row_count = len(st.session_state.df)
+				
+				status_text.text(f'Preparing CSV export for {row_count} rows...')
+				progress_bar.progress(50)
+				
+				csv_data = st.session_state.df.to_csv(index=False).encode('utf-8')
+				
+				status_text.text(f'CSV export completed! ({row_count} rows)')
+				progress_bar.progress(100)
+				
+				# Clear progress indicators
+				import time
+				time.sleep(2)
+				status_text.empty()
+				progress_bar.empty()
+				
+				return csv_data
+				
+		except Exception as e:
+			st.error(f"Error preparing CSV download: {e}")
+			return b""  # Return empty bytes on error
+
 	def _export_options(self):
 		st.markdown("<h2 class='sub-header'>Export Loaded Data</h2>", unsafe_allow_html=True)
 		st.info("Export the currently loaded (and potentially sampled) data shown in the 'Exploration' tab.")
-		export_col1, export_col2 = st.columns(2)
 
-		with export_col1:
-			export_format        = st.radio("Export Format", ["CSV", "Parquet"], index=0, key="export_main_format")
-			export_filename_base = f"mimic_data_{st.session_state.selected_module}_{st.session_state.selected_table}"
-			export_filename      = f"{export_filename_base}.{export_format.lower()}"
+		export_filename = f"mimic_data_{st.session_state.get('selected_table', 'table')}.csv"
 
-			if export_format == "CSV":
-				try:
-					# Check if Dask was used to load the data
-					use_dask = st.session_state.get('use_dask', False)
+		# CSV Download button without pre-calculating row count
+		if st.button("Prepare CSV Download", key="download_csv_button"):
+			# csv_data = self._prepare_csv_download()
+			# if csv_data:
+			# 	st.download_button(
+			# 		label="Click to download CSV file",
+			# 		data=csv_data,
+			# 		file_name=export_filename,
+			# 		mime="text/csv",
+			# 		key="download_csv_final"
+			# 	)
+							
+			# Create download button that prepares data on-demand
+			if st.download_button(
+					label=f"Click to download CSV file",
+					data=self._prepare_csv_download(),
+					file_name=export_filename,
+					mime="text/csv",
+					key="download_complete_csv",
+					help="Download the complete dataset as CSV file (memory optimized with Dask)" ):
 
-					# Only compute if it's actually a Dask DataFrame
-					if use_dask and isinstance(st.session_state.df, dd.DataFrame):
-						with st.spinner('Computing data for CSV export...'):
-							# Convert Dask DataFrame to pandas for export
-							df_export = st.session_state.df.compute()
-							csv_data = df_export.to_csv(index=False).encode('utf-8')
-							row_count = len(df_export)
+				st.success(f"CSV export completed! ({row_count:,} rows)")
 
-					else:
-						csv_data = st.session_state.df.to_csv(index=False).encode('utf-8')
-						row_count = len(st.session_state.df)
-
-					st.download_button(
-						label=f"Download as CSV ({row_count} rows)",
-						data=csv_data,
-						file_name=export_filename,
-						mime="text/csv",
-						key="download_csv"
-					)
-				except Exception as e:
-					st.error(f"Error preparing CSV for download: {e}")
-
-
-			elif export_format == "Parquet":
-				try:
-					# Use BytesIO to create an in-memory parquet file
-					buffer = BytesIO()
-
-					# Check if Dask was used to load the data
-					use_dask = st.session_state.get('use_dask', False)
-
-					# Only compute if it's actually a Dask DataFrame
-					if use_dask and isinstance(st.session_state.df, dd.DataFrame):
-						with st.spinner('Computing data for Parquet export...'):
-							# Convert Dask DataFrame to pandas for export
-							df_export = st.session_state.df.compute()
-							df_export.to_parquet(buffer, index=False)
-							row_count = len(df_export)
-
-					else:
-						st.session_state.df.to_parquet(buffer, index=False)
-						row_count = len(st.session_state.df)
-
-					buffer.seek(0)
-					st.download_button(
-						label=f"Download as Parquet ({row_count} rows)",
-						data=buffer,
-						file_name=export_filename,
-						mime="application/octet-stream", # Generic binary stream
-						key="download_parquet"
-					)
-
-				except Exception as e:
-					st.error(f"Error preparing Parquet for download: {e}")
 
 	def _show_data_explorer_view(self):
 		"""Handles the display of the main content area with tabs for data exploration and analysis."""
@@ -833,7 +879,7 @@ class MIMICDashboardApp:
 				# elif file_size_mb < 1024: size_str = f"{file_size_mb:.1f} MB"
 				# else: size_str = f"{file_size_mb/1024:.1f} GB"
 				st.metric("File Size (Full)", humanize.naturalsize(file_size_mb))
-    
+	
 				# TODO: Show the actual total rows instead of the filtered total rows in the UI
 				st.metric("Total Rows (Full)", f"{st.session_state.total_row_count:,}")
 
@@ -843,7 +889,7 @@ class MIMICDashboardApp:
 
 			# Display filename
 			if st.session_state.current_file_path:
-				st.caption(f"Source File: {os.path.basename(st.session_state.current_file_path)}")
+				st.caption(f"Source File: {Path(st.session_state.current_file_path).name}")
 
 			st.markdown("</div>", unsafe_allow_html=True)
 
@@ -904,6 +950,8 @@ class MIMICDashboardApp:
 				cols = st.columns([1, 3])
 				with cols[0]:
 					st.session_state.sample_size = st.number_input("Number of Rows for Visualization", min_value=1, max_value=len(st.session_state.df), value=min(30, len(st.session_state.df)))
+
+				st.divider()
 
 				preview_df = MIMICVisualizerUtils._compute_dataframe_sample(df=st.session_state.df, sample_size=st.session_state.sample_size)
 		
@@ -1143,9 +1191,9 @@ class MIMICDashboardApp:
 
 
 def main():
-    app = MIMICDashboardApp()
-    app.run()
+	app = MIMICDashboardApp()
+	app.run()
 
 
 if __name__ == "__main__":
-    main()
+	main()
