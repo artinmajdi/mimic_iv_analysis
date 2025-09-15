@@ -31,7 +31,7 @@ from mimic_iv_analysis.visualization.visualizer_utils import MIMICVisualizerUtil
 # TODO: Can i show the dask dashboard inside streamlit UI?
 # TODO: Add the option to save the Full merged table and load it when available instead of re-merging the tables. Use a hash system using the table names that are used in that merge
 # TODO: the partial loading is not working for poe table.
-# TODO: also need to check the convert to parquet again to see if it still works. 
+# TODO: also need to check the convert to parquet again to see if it still works.
 class MIMICDashboardApp:
 
 	def __init__(self):
@@ -97,14 +97,14 @@ class MIMICDashboardApp:
 
 		# Create a unique key based on configuration to force recreation when settings change
 		config_key = f"{n_workers}_{threads_per_worker}_{memory_limit}_{dashboard_port}"
-		
+
 		# Store the client in session_state so that a new one
 		# is not spawned on every rerun, but recreate if config changed
 		if "dask_client" not in st.session_state or st.session_state.get('dask_config_key') != config_key:
 			# Close existing client if it exists
 			if "dask_client" in st.session_state:
 				st.session_state.dask_client.close()
-				
+
 			st.session_state.dask_client = _get_dask_client(n_workers, threads_per_worker, memory_limit, dashboard_port)
 			st.session_state.dask_config_key = config_key
 			logger.info("Dask client initialised with config %s: %s", config_key, st.session_state.dask_client)
@@ -157,7 +157,7 @@ class MIMICDashboardApp:
 
 	def _dask_configuration(self):
 		"""Display Dask configuration options in the sidebar."""
-		
+
 		def _optimize_button():
 
 			if st.button(
@@ -169,28 +169,28 @@ class MIMICDashboardApp:
 				try:
 					# Get optimized configuration
 					optimized_config = DaskConfigOptimizer.get_optimized_config_for_streamlit()
-					
+
 					# Update session state with optimized values
 					st.session_state.dask_n_workers          = optimized_config['n_workers']
 					st.session_state.dask_threads_per_worker = optimized_config['threads_per_worker']
 					st.session_state.dask_memory_limit       = optimized_config['memory_limit']
-					
+
 					# Show success message with details
 					st.success(f"✅ Configuration optimized!\n\n"
 								f"**Workers:** {optimized_config['n_workers']}\n"
 								f"**Threads per Worker:** {optimized_config['threads_per_worker']}\n"
 								f"**Memory Limit:** {optimized_config['memory_limit']}\n\n"
 								f"*{optimized_config['description']}*")
-					
+
 					# Force UI refresh to show new values
 					st.rerun()
-					
+
 				except Exception as e:
 					st.error(f"❌ Failed to optimize configuration: {str(e)}")
 					logger.error(f"Dask optimization error: {e}")
 
 		with st.sidebar.expander(label="Dask Configuration", expanded=False):
-			
+
 			_optimize_button()
 
 			# Number of workers
@@ -201,7 +201,7 @@ class MIMICDashboardApp:
 				value=st.session_state.dask_n_workers,
 				help="Number of Dask worker processes. More workers can improve parallel processing but use more memory."
 			)
-			
+
 			# Threads per worker
 			threads_per_worker = st.number_input(
 				label="Threads per Worker",
@@ -210,14 +210,14 @@ class MIMICDashboardApp:
 				value=st.session_state.dask_threads_per_worker,
 				help="Number of threads per worker. Higher values can improve CPU-bound tasks."
 			)
-			
+
 			# Memory limit
 			memory_limit = st.text_input(
 				label="Memory Limit per Worker",
 				value=st.session_state.dask_memory_limit,
 				help="Memory limit per worker (e.g., '4GB', '8GB', '20GB'). Total memory usage will be this value × number of workers."
 			)
-			
+
 			# Dashboard port
 			dashboard_port = st.number_input(
 				label="Dashboard Port",
@@ -226,26 +226,26 @@ class MIMICDashboardApp:
 				value=st.session_state.dask_dashboard_port,
 				help="Port for Dask dashboard. Access at http://localhost:[port] to monitor Dask performance."
 			)
-			
+
 
 		# Check if any values changed and update session state
 		config_changed = False
 		if n_workers != st.session_state.dask_n_workers:
 			st.session_state.dask_n_workers = n_workers
 			config_changed = True
-			
+
 		if threads_per_worker != st.session_state.dask_threads_per_worker:
 			st.session_state.dask_threads_per_worker = threads_per_worker
 			config_changed = True
-			
+
 		if memory_limit != st.session_state.dask_memory_limit:
 			st.session_state.dask_memory_limit = memory_limit
 			config_changed = True
-			
+
 		if dashboard_port != st.session_state.dask_dashboard_port:
 			st.session_state.dask_dashboard_port = dashboard_port
 			config_changed = True
-		
+
 		# If configuration changed, reinitialize Dask client
 		if config_changed:
 			st.sidebar.success("Dask configuration updated! Client will be reinitialized.")
@@ -561,7 +561,7 @@ class MIMICDashboardApp:
 	def _load_table(self, selected_table_name_w_size: str = None) -> Tuple[Optional[pd.DataFrame], int]:
 		"""Load a specific MIMIC-IV table, handling large files and sampling."""
 
-		
+
 		def _get_total_rows(df):
 			if df is None:
 				return 0
@@ -604,7 +604,7 @@ class MIMICDashboardApp:
 						partial_loading = False,
 						use_dask        = st.session_state.use_dask,
 						num_subjects    = st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS)
-					) 
+					)
 
 				with st.spinner("Loading and merging connected tables..."):
 
@@ -744,15 +744,15 @@ class MIMICDashboardApp:
 		"""Prepare CSV data on-demand with progress tracking."""
 		try:
 			use_dask = st.session_state.get('use_dask', False)
-			
+
 			if use_dask and isinstance(st.session_state.df, dd.DataFrame):
 				# Create progress bar
 				progress_bar = st.progress(0)
 				status_text = st.empty()
-				
+
 				status_text.text('Initializing CSV export...')
 				progress_bar.progress(10)
-				
+
 				# Calculate row count during preparation
 				status_text.text('Calculating data size...')
 				progress_bar.progress(20)
@@ -760,70 +760,70 @@ class MIMICDashboardApp:
 					row_count = len(st.session_state.df)
 				except:
 					row_count = "Unknown"
-				
+
 				status_text.text(f'Preparing {row_count} rows for export...')
 				progress_bar.progress(30)
-				
+
 				# Use Dask's native to_csv with temporary file
 				import tempfile
 				with tempfile.NamedTemporaryFile(mode='w+', suffix='.csv', delete=False) as tmp_file:
 					tmp_path = tmp_file.name
-				
+
 				status_text.text('Writing data to temporary file...')
 				progress_bar.progress(50)
-				
+
 				# Dask writes directly to file without computing entire DataFrame
 				st.session_state.df.to_csv(tmp_path, index=False, single_file=True)
-				
+
 				status_text.text('Reading file content...')
 				progress_bar.progress(80)
-				
+
 				# Read the file content and clean up
 				with open(tmp_path, 'r', encoding='utf-8') as f:
 					csv_data = f.read().encode('utf-8')
-				
+
 				status_text.text('Cleaning up temporary files...')
 				progress_bar.progress(90)
-				
+
 				# Clean up temporary file
 				Path(tmp_path).unlink(missing_ok=True)
-				
+
 				status_text.text(f'CSV export completed! ({row_count} rows)')
 				progress_bar.progress(100)
-				
+
 				# Clear progress indicators after a short delay
 				import time
 				time.sleep(2)
 				status_text.empty()
 				progress_bar.empty()
-				
+
 				return csv_data
 			else:
 				# For pandas DataFrames, show simple progress
 				progress_bar = st.progress(0)
 				status_text = st.empty()
-				
+
 				status_text.text('Calculating data size...')
 				progress_bar.progress(20)
-				
+
 				row_count = len(st.session_state.df)
-				
+
 				status_text.text(f'Preparing CSV export for {row_count} rows...')
 				progress_bar.progress(50)
-				
+
 				csv_data = st.session_state.df.to_csv(index=False).encode('utf-8')
-				
+
 				status_text.text(f'CSV export completed! ({row_count} rows)')
 				progress_bar.progress(100)
-				
+
 				# Clear progress indicators
 				import time
 				time.sleep(2)
 				status_text.empty()
 				progress_bar.empty()
-				
+
 				return csv_data
-				
+
 		except Exception as e:
 			st.error(f"Error preparing CSV download: {e}")
 			return b""  # Return empty bytes on error
@@ -836,17 +836,6 @@ class MIMICDashboardApp:
 
 		# CSV Download button without pre-calculating row count
 		if st.button("Prepare CSV Download", key="download_csv_button"):
-			# csv_data = self._prepare_csv_download()
-			# if csv_data:
-			# 	st.download_button(
-			# 		label="Click to download CSV file",
-			# 		data=csv_data,
-			# 		file_name=export_filename,
-			# 		mime="text/csv",
-			# 		key="download_csv_final"
-			# 	)
-							
-			# Create download button that prepares data on-demand
 			if st.download_button(
 					label=f"Click to download CSV file",
 					data=self._prepare_csv_download(),
@@ -879,7 +868,7 @@ class MIMICDashboardApp:
 				# elif file_size_mb < 1024: size_str = f"{file_size_mb:.1f} MB"
 				# else: size_str = f"{file_size_mb/1024:.1f} GB"
 				st.metric("File Size (Full)", humanize.naturalsize(file_size_mb))
-	
+
 				# TODO: Show the actual total rows instead of the filtered total rows in the UI
 				st.metric("Total Rows (Full)", f"{st.session_state.total_row_count:,}")
 
@@ -892,7 +881,6 @@ class MIMICDashboardApp:
 				st.caption(f"Source File: {Path(st.session_state.current_file_path).name}")
 
 			st.markdown("</div>", unsafe_allow_html=True)
-
 
 		# Welcome message or Data Info
 		if st.session_state.df is None:
@@ -944,7 +932,7 @@ class MIMICDashboardApp:
 			# Tab 1: Exploration & Visualization
 			with tab1:
 				st.markdown("<h2 class='sub-header'>Data Exploration & Visualization</h2>", unsafe_allow_html=True)
-				
+
 				MIMICVisualizerUtils.display_dataset_statistics(st.session_state.df)
 
 				cols = st.columns([1, 3])
@@ -954,10 +942,10 @@ class MIMICDashboardApp:
 				st.divider()
 
 				preview_df = MIMICVisualizerUtils._compute_dataframe_sample(df=st.session_state.df, sample_size=st.session_state.sample_size)
-		
+
 				if preview_df is None:
 					return
- 
+
 				MIMICVisualizerUtils.display_data_preview(preview_df)
 
 				MIMICVisualizerUtils.display_visualizations(preview_df)
@@ -1096,6 +1084,7 @@ class MIMICDashboardApp:
 				'apply_transaction_type': False,
 				'transaction_type'      : []},
 
+
 			TableNames.ADMISSIONS.value: {
 				'selected_columns'         : ["subject_id", "hadm_id", "admittime", "dischtime", "deathtime", "admission_type", "admit_provider_id", "admission_location", "discharge_location", "hospital_expire_flag"],
 				'valid_admission_discharge': True,
@@ -1106,7 +1095,7 @@ class MIMICDashboardApp:
 				'apply_admission_location' : False,
 				'admission_location'       : []}
 		}
-		
+
 		st.session_state.app_initialized = True # Mark as initialized
 		logger.info("Session state initialized.")
 
@@ -1158,7 +1147,7 @@ class MIMICDashboardApp:
 			with st.spinner(f"Converting {len(tables_to_process)} table(s) to Parquet..."):
 				success_count = 0
 				failed_tables = []
-				
+
 				for table_enum in tables_to_process:
 					try:
 						logger.info(f"Starting conversion of {table_enum.value}")

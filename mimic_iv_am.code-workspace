@@ -9,8 +9,5 @@
 			"path": "../dataset"
 		}
 	],
-	"settings": {
-		"basedpyright.disableLanguageServices": false,
-		"hide-files.files": []
-	},
+	"settings": {}
 }

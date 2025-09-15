@@ -121,7 +121,7 @@ DEFAULT_STUDY_TABLES_LIST = [
 
 
 # Constants
-# TODO: Remove all dependencies on DEFAULT_MIMIC_PATH path except for UI path selection default value. 
+# TODO: Remove all dependencies on DEFAULT_MIMIC_PATH path except for UI path selection default value.
 # DEFAULT_MIMIC_PATH   = Path("/Users/artinmajdi/Documents/GitHubs/RAP/mimic__pankaj/dataset/mimic-iv-3.1")
 DEFAULT_MIMIC_PATH   = Path("/Users/artinmajdi/Library/CloudStorage/GoogleDrive-msm2024@gmail.com/My Drive/MIMIC_IV_Dataset")
 # DEFAULT_MIMIC_PATH   = Path("/Users/pankajvyas/MIMIC_Project/MIMIC-IV-Raw Data")
@@ -157,13 +157,12 @@ COLUMN_TYPES = {
     'poe_seq'               : 'int64',
     'anchor_year'           : 'int64',
     'anchor_age'            : 'int64',
-    'seq_num'               : 'int64',
-    
+
     'ab_name'               : 'string',
     'dilution_comparison'   : 'string',
     'dilution_text'         : 'string',
 
-    
+
     'pharmacy_id'           : 'string',
     'poe_id'                : 'string',
     'order_provider_id'     : 'string',
@@ -172,7 +171,7 @@ COLUMN_TYPES = {
     'dod'                   : 'string',
     'discontinued_by_poe_id': 'string',
     'discontinue_of_poe_id' : 'string',
-    
+
     # Categorical columns
 	'gender'              : 'category',
 	'race'                : 'category',
@@ -192,9 +191,10 @@ COLUMN_TYPES = {
 	'duration_interval'   : 'category',
 	'dispensation'        : 'category',
 	'drg_type'            : 'category',
-	'icd_version'         : 'category',
 	'hospital_expire_flag': 'category',
     'anchor_year_group'   : 'category',
+    'icd_version'         : 'category',
+    'seq_num'             : 'category',
 
     # Text/String columns
     'icd_code'   : 'string',

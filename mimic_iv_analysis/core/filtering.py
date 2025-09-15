@@ -32,48 +32,42 @@ class Filtering:
 	def render(self) -> pd.DataFrame | dd.DataFrame:
 
 		if self.table_name == TableNames.PATIENTS:
-			df_pre = self.df.compute()
-   
-			self.df = self.df[(self.df.anchor_age >= 18.0) & (self.df.anchor_age <= 75.0)]
-			self.df = self.df[self.df.anchor_year_group == '2017 - 2019']
-			self.df = self.df[ self.df.dod.isnull() ]
-   
-			df_post = self.df.compute()
 
-			logger.info(f"Filtered {df_pre.shape[0]} rows to {df_post.shape[0]} rows")
+			anchor_age        = (self.df.anchor_age >= 18.0) & (self.df.anchor_age <= 75.0)
+			anchor_year_group = self.df.anchor_year_group.isin(['2017 - 2019'])
+			dod               = self.df.dod.isnull()
+			self.df           = self.df[anchor_age & anchor_year_group & dod]
+
+
+			# Exclude admission types like “Emergency”, “Urgent”, or “Elective”
+			# ADMISSION_TYPES     = ['EMERGENCY', 'URGENT', 'ELECTIVE', 'NEWBORN', 'OBSERVATION']
+			# self.df = self.df[ ~self.df.admission_type.isin(['EMERGENCY', 'URGENT', 'ELECTIVE']) ]
 
 		elif self.table_name == TableNames.DIAGNOSES_ICD:
-			# Filter for rows where icd_version is 10
-			self.df = self.df[self.df.icd_version.isin([10,'10'])]
 
-			# TODO: add this filter.
-			# Filter for rows where seq_num is 1, 2, or 3
-			# self.df = self.df[self.df.seq_num.astype(int).isin([1, 2, 3])]
-
-			# Filter for rows where the value in the column icd_code starts with "E11"
-			self.df = self.df[self.df.icd_code.str.startswith('E11')]
-
+			icd_version = self.df.icd_version.isin(['10'])
+			seq_num     = self.df.seq_num.isin(['1', '2', '3'])
+			icd_code    = self.df.icd_code.str.startswith('E11')
+			self.df     = self.df[icd_version & seq_num & icd_code]
 
 		elif self.table_name == TableNames.D_ICD_DIAGNOSES:
-			self.df = self.df[self.df.icd_version.isin([10,'10'])]
+			self.df = self.df[ self.df.icd_version.isin([10,'10']) ]
 
 
 		elif self.table_name == TableNames.POE:
-			
+
 			if self.table_name.value in self.filter_params:
 
-				poe_filters = self.filter_params[self.table_name.value]
+				poe_filters_params = self.filter_params[self.table_name.value]
 
 				# Filter columns
-				self.df = self.df[ poe_filters['selected_columns'] ]
+				self.df = self.df[ poe_filters_params['selected_columns'] ]
 
-				# Filter order types
-				if poe_filters['apply_order_type']:
-					self.df = self.df[ self.df.order_type.isin(poe_filters['order_type']) ]
+				if poe_filters_params['apply_order_type']:
+					self.df = self.df[ self.df.order_type.isin(poe_filters_params['order_type']) ]
 
-				# Filter transaction types
-				if poe_filters['apply_transaction_type']:
-					self.df = self.df[ self.df.transaction_type.isin(poe_filters['transaction_type']) ]
+				if poe_filters_params['apply_transaction_type']:
+					self.df = self.df[ self.df.transaction_type.isin(poe_filters_params['transaction_type']) ]
 
 
 		elif self.table_name == TableNames.ADMISSIONS:
@@ -84,17 +78,17 @@ class Filtering:
 
 				# Filter columns
 				self.df = self.df[ admissions_filters['selected_columns'] ]
-    
-    
+
+
 				# Valid admission and discharge times
 				if admissions_filters['valid_admission_discharge']:
 					self.df = self.df.dropna(subset=['admittime', 'dischtime'])
 
 
 				# Patient is alive
-				if admissions_filters['exclude_in_hospital_death']:  
+				if admissions_filters['exclude_in_hospital_death']:
 					self.df = self.df[ (self.df.deathtime.isnull()) | (self.df.hospital_expire_flag == 0) ]
-     
+
 
 				# Discharge time is after admission time
 				if admissions_filters['discharge_after_admission']:
@@ -104,7 +98,7 @@ class Filtering:
 				# Apply admission types
 				if admissions_filters['apply_admission_type']:
 					self.df = self.df[ self.df.admission_type.isin(admissions_filters['admission_type']) ]
-     
+
 				# Apply admission location
 				if admissions_filters['apply_admission_location']:
 					self.df = self.df[ self.df.admission_location.isin(admissions_filters['admission_location']) ]
@@ -118,6 +112,9 @@ class Filtering:
 			self.df = self.df[self.df.hadm_id != '']
 			# if 'hadm_id' in self.df.columns:
 			# 	self.df['hadm_id'] = self.df['hadm_id'].astype('int64')
+
+
+			# Identify inpatient locations using transfers table and careunit column (to find “Med”, “Surg”, “Ortho”, “Card”, “GU”, “MICU”, “SICU”, “CSRU”
 
 
 		self.df = self.df.reset_index(drop=True)

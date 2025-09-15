@@ -198,7 +198,7 @@ class DataLoader:
 
 				# Get available tables info
 				_get_available_tables_info(available_tables_dict, module)
-    
+
 		if self.mimic_path is None or not self.mimic_path.exists():
 			self.tables_info_dict = None
 			self.tables_info_df = None
@@ -300,16 +300,16 @@ class DataLoader:
 
 		return _sample_subject_ids(list(unique_subject_ids))
 
-	def get_unique_subject_ids(self, table_name: TableNames) -> set:
+	def get_unique_subject_ids(self, table_name: TableNames, recalculate_subject_ids: bool = False) -> set:
 
 		def get_for_one_table(table_name: TableNames) -> set:
 			"""Returns a list of unique subject_ids found in a table."""
 
-			def _fetch() -> set:
-				"""Returns a list of unique subject_ids found in a table."""
-				
+			def _fetch_full_table_subject_ids() -> set:
+				"""Returns the list of unique subject_ids found in a full table, without applying filters."""
+
 				file_path = self._get_file_path(table_name=table_name)
-    
+
 				if file_path.suffix == '.parquet':
 					df_subject_id_column = dd.read_parquet(file_path, columns=['subject_id'], split_row_groups=True)
 
@@ -321,17 +321,25 @@ class DataLoader:
 						dtype          = {'subject_id': 'int64'},
 						assume_missing = True,
 						blocksize      = None if str(file_path).endswith('.gz') else '200MB' )
-			
+
 				# Get unique subject_ids for this table
 				unique_subject_ids = set(df_subject_id_column['subject_id'].unique().compute())
-				
+
 				return unique_subject_ids
+
+			def _fetch_filtered_table_subject_ids(table_name: TableNames) -> set:
+				""" Returns a list of unique subject_ids found in the table after applying filters. """
+				df = self.fetch_table(table_name=table_name, apply_filtering=self.apply_filtering)
+				return set(df['subject_id'].unique())
 
 			def get_table_subject_ids_path(table_name: TableNames) -> Path:
 
 				csv_tag = table_name.value
 				if table_name == TableNames.MERGED and self.include_transfers:
 					csv_tag += '_w_transfers'
+
+				if self.apply_filtering:
+					csv_tag += '_filtered'
 
 				subject_ids_path = self.mimic_path / 'subject_ids' / f'{csv_tag}_subject_ids.csv'
 				subject_ids_path.parent.mkdir(parents=True, exist_ok=True)
@@ -340,50 +348,54 @@ class DataLoader:
 
 			subject_ids_path = get_table_subject_ids_path(table_name=table_name)
 
-			if subject_ids_path.exists():
+			if subject_ids_path.exists() and not recalculate_subject_ids:
 				df_unique_subject_ids = pd.read_csv(subject_ids_path)
 				return set(df_unique_subject_ids['subject_id'].values.tolist())
 
-			unique_subject_ids = _fetch()
-			unique_subject_ids.to_csv(subject_ids_path, index=False)
-	
+			if self.apply_filtering:
+				unique_subject_ids = _fetch_filtered_table_subject_ids(table_name=table_name)
+			else:
+				unique_subject_ids = _fetch_full_table_subject_ids()
+
+			pd.DataFrame({'subject_id': list(unique_subject_ids)}).to_csv(subject_ids_path, index=False)
+
 			return unique_subject_ids
 
 		def get_merged_table_subject_ids() -> list[int]:
 			"""Find the intersection of subject_ids across all merged table components and return a subset."""
-			
+
 			def _looping_tables(tables_with_subject_id):
 
 				logger.info(f"Finding subject_id intersection across {len(tables_with_subject_id)} tables")
 
 				intersection_set = None
-				
+
 				for table_name in tables_with_subject_id:
 
-					unique_subject_ids , _ = get_for_one_table(table_name=table_name)
+					unique_subject_ids = get_for_one_table(table_name=table_name)
 
 					if intersection_set is None:
 						intersection_set = unique_subject_ids
 					else:
 						intersection_set = intersection_set.intersection(unique_subject_ids)
-					
+
 					logger.info(f"After {table_name.value}: {len(intersection_set)} subject_ids in intersection")
-				
+
 				return intersection_set
 
 			# Get all tables that have subject_id column and are part of merged table
 			tables_with_subject_id = [table for table in self.merged_table_components if table in self.tables_w_subject_id_column]
-			
+
 			if not tables_with_subject_id:
 				logger.warning("No tables with subject_id found in merged table components")
 				return []
-			
+
 			intersection_set = _looping_tables(tables_with_subject_id)
 
 			if not intersection_set:
 				logger.warning("No common subject_ids found across all tables")
 				raise ValueError("No common subject_ids found across all tables")
-			
+
 			# Convert to sorted list and take the requested number
 			common_subject_ids_list = sorted(list(intersection_set))
 
@@ -401,7 +413,7 @@ class DataLoader:
 
 		tables_dict = {}
 		persisted_tables = {}  # Track persisted DataFrames for cleanup
-		
+
 		try:
 			for _, row in self.study_tables_info.iterrows():
 				table_name = TableNames(row.table_name)
@@ -410,7 +422,7 @@ class DataLoader:
 					raise ValueError("merged table can not be part of the merged table")
 
 				df = self.fetch_table(table_name=table_name, use_dask=use_dask, apply_filtering=self.apply_filtering)
-				
+
 				# Persist Dask DataFrames for efficient reuse
 				if use_dask and isinstance(df, dd.DataFrame):
 					df_persisted                       = df.persist()
@@ -422,7 +434,7 @@ class DataLoader:
 
 			# Store persisted tables for potential cleanup
 			self._persisted_resources.update(persisted_tables)
-			
+
 		except Exception as e:
 			logger.error(f"Error in fetch_complete_study_tables: {str(e)}")
 			# Cleanup on error
@@ -436,7 +448,7 @@ class DataLoader:
 		try:
 			if resources_dict is None:
 				resources_dict = self._persisted_resources
-			
+
 			for name, df in resources_dict.items():
 				if isinstance(df, dd.DataFrame):
 					try:
@@ -445,11 +457,11 @@ class DataLoader:
 						logger.info(f"Cleaned up persisted table: {name}")
 					except Exception as cleanup_error:
 						logger.warning(f"Error cleaning up {name}: {str(cleanup_error)}")
-			
+
 			# Clear the tracking dictionary
 			if resources_dict is self._persisted_resources:
 				self._persisted_resources.clear()
-				
+
 		except Exception as e:
 			logger.error(f"Error in cleanup_persisted_resources: {str(e)}")
 
@@ -458,19 +470,19 @@ class DataLoader:
 
 		def _load(file_path: Path) -> pd.DataFrame | dd.DataFrame:
 			"""Load a table from a file path, handling parquet and csv formats."""
-			
+
 			if file_path.suffix == '.parquet':
 
 				if use_dask:
 					return dd.read_parquet(file_path, split_row_groups=True)
-		
+
 				return pd.read_parquet(file_path)
 
 			elif file_path.suffix in ['.csv', '.gz', '.csv.gz']:
 
 				# First read a small sample to get column names without type conversion
 				dtypes, parse_dates = self._get_column_dtype(file_path=file_path)
-		
+
 				if use_dask:
 					return dd.read_csv(
 						urlpath        = file_path,
@@ -483,7 +495,7 @@ class DataLoader:
 					filepath_or_buffer = file_path,
 					dtype       = dtypes,
 					parse_dates = parse_dates if parse_dates else None )
-		
+
 			raise ValueError(f"Unsupported file type: {file_path.suffix}")
 
 		def _get_file_path_and_table_name(file_path, table_name):
@@ -498,9 +510,8 @@ class DataLoader:
 
 			if table_name is None:
 				table_name = TableNames(file_path.name)
-	
-			return file_path, table_name
 
+			return file_path, table_name
 
 		if self.tables_info_df is None:
 			self.scan_mimic_directory()
@@ -537,10 +548,10 @@ class DataLoader:
 		if table_name is TableNames.MERGED:
 			# Use optimized path when partial loading is requested (select subject_ids first, then load only needed rows)
 			if partial_loading and tables_dict is None:
-				return self._load_full_tables_merged_optimized(num_subjects=num_subjects, use_dask=use_dask)
-				
+				return self.load_filtered_merged_table_by_subjects(num_subjects=num_subjects, use_dask=use_dask)
+
 			# Fall back to regular merge (uses provided tables_dict when available)
-			df = self.load_merged_table(tables_dict=tables_dict, use_dask=use_dask)
+			df = self.merge_tables(tables_dict=tables_dict, use_dask=use_dask)
 		else:
 			df = self.fetch_table(table_name=table_name, use_dask=use_dask, apply_filtering=self.apply_filtering)
 
@@ -551,7 +562,7 @@ class DataLoader:
 		return df
 
 
-	def load_merged_table(self, tables_dict: Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
+	def merge_tables(self, tables_dict: Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
 		""" Load and merge tables. """
 
 		if tables_dict is None:
@@ -567,20 +578,20 @@ class DataLoader:
 		transfers_df = tables_dict.get(TableNames.TRANSFERS.value, None) # 46MB
 
 		persisted_intermediates = {}  # Track intermediate results for cleanup
-		
+
 		try:
 			# Merge tables with persist() for intermediate results
 			df12 = patients_df.merge(admissions_df, on='subject_id', how='inner')
-			
+
 			# Persist intermediate result if using Dask
 			if isinstance(df12, dd.DataFrame):
 				df12 = df12.persist()
 				persisted_intermediates['patients_admissions'] = df12
 
 			if transfers_df is not None:
-				
+
 				df123 = df12.merge(transfers_df, on=['subject_id', 'hadm_id'], how='inner')
-				
+
 				# Persist intermediate result
 				if isinstance(df123, dd.DataFrame):
 					df123 = df123.persist()
@@ -589,14 +600,14 @@ class DataLoader:
 				df123 = df12
 
 			diagnoses_merged = diagnoses_icd_df.merge(d_icd_diagnoses_df, on=['icd_code', 'icd_version'], how='inner')
-			
+
 			# Persist diagnoses merge result
 			if isinstance(diagnoses_merged, dd.DataFrame):
 				diagnoses_merged = diagnoses_merged.persist()
 				persisted_intermediates['diagnoses_merged'] = diagnoses_merged
-			
+
 			merged_wo_poe = df123.merge(diagnoses_merged, on=['subject_id', 'hadm_id'], how='inner')
-			
+
 			# Persist before final merge
 			if isinstance(merged_wo_poe, dd.DataFrame):
 				merged_wo_poe = merged_wo_poe.persist()
@@ -605,19 +616,19 @@ class DataLoader:
 			# The reason for 'left' is that we want to keep all the rows from poe table.
 			# The poe_detail table for unknown reasons, has fewer rows than poe table.
 			poe_and_details = poe_df.merge(poe_detail_df, on=['poe_id', 'poe_seq', 'subject_id'], how='inner')
-			
+
 			# Persist POE merge result
 			if isinstance(poe_and_details, dd.DataFrame):
 				poe_and_details = poe_and_details.persist()
 				persisted_intermediates['poe_and_details'] = poe_and_details
-			
+
 			merged_full_study = merged_wo_poe.merge(poe_and_details, on=['subject_id', 'hadm_id'], how='inner')
 
 			# Store intermediate persisted results for potential cleanup
 			self._persisted_resources.update(persisted_intermediates)
-			
+
 		except Exception as e:
-			logger.error(f"Error in load_merged_table: {str(e)}")
+			logger.error(f"Error in merge_tables: {str(e)}")
 			# Cleanup intermediate results on error
 			self._cleanup_persisted_resources(persisted_intermediates)
 			raise
@@ -654,21 +665,21 @@ class DataLoader:
 
 		return tables_dict
 
-	def _load_full_tables_merged_optimized(self, num_subjects: int = DEFAULT_NUM_SUBJECTS, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
+	def load_filtered_merged_table_by_subjects(self, num_subjects: int = DEFAULT_NUM_SUBJECTS, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
 		"""Optimized merged loading: select subject_ids first, load filtered tables, then merge."""
 
 		# 1) Compute intersection and select N subject_ids
-		_, common_subject_ids_sample_list = self.get_unique_subject_ids(table_name=TableNames.MERGED, num_subjects=num_subjects)
+		common_subject_ids_sample_list = self.get_sample_subject_ids(table_name=TableNames.MERGED, num_subjects=num_subjects)
 
 		if not common_subject_ids_sample_list:
 			logger.warning("No subject_ids selected for optimized merged loading; falling back to full merged load")
-			return self.load_merged_table(use_dask=use_dask)
+			return self.merge_tables(use_dask=use_dask)
 
 		# 2) Load only rows for selected subject_ids across component tables
 		filtered_tables = self.load_filtered_study_tables_by_subjects(subject_ids=common_subject_ids_sample_list, use_dask=use_dask)
 
 		# 3) Merge filtered tables using the same logic as the regular merger
-		merged = self.load_merged_table(tables_dict=filtered_tables, use_dask=use_dask)
+		merged = self.merge_tables(tables_dict=filtered_tables, use_dask=use_dask)
 
 		return merged
 
@@ -789,6 +800,7 @@ class ExampleDataLoader(DataLoader):
 		poe_df             = self.ensure_compatible_types(poe_df, ['subject_id', 'hadm_id', 'poe_id', 'poe_seq'])
 		poe_detail_df      = self.ensure_compatible_types(poe_detail_df, ['subject_id', 'poe_id', 'poe_seq'])
 
+		# Merge tables
 		df12              = patients_df.merge(admissions_df, on='subject_id', how='inner')
 		df34              = diagnoses_icd_df.merge(d_icd_diagnoses_df, on=('icd_code', 'icd_version'), how='inner')
 		poe_and_details   = poe_df.merge(poe_detail_df, on=('poe_id', 'poe_seq', 'subject_id'), how='left')
@@ -817,6 +829,7 @@ class ExampleDataLoader(DataLoader):
 
 # TODO: currently when i try from the .parquet folder. if the folder is empty, the code gives me an error. fix the code so that if this happens it would fallback to loading the csv.gz or csv file
 # TODO: check the _create_table_schema() function to save all columns even if they are not in the COLUMN_TYPES or DATETIME_COLUMNS
+
 class ParquetConverter:
 	"""Handles conversion of CSV/CSV.GZ files to Parquet format with appropriate schemas."""
 
@@ -934,7 +947,7 @@ class ParquetConverter:
 
 			# Load the CSV file
 			if df is None:
-				df = self.data_loader.fetch_table(file_path=csv_file_path, table_name=table_name, use_dask=use_dask, apply_filtering=False)	
+				df = self.data_loader.fetch_table(file_path=csv_file_path, table_name=table_name, use_dask=use_dask, apply_filtering=False)
 
 			# Get parquet directory
 			if target_parquet_path is None:
@@ -954,17 +967,17 @@ class ParquetConverter:
 			if isinstance(df, dd.DataFrame):
 				# For Dask DataFrames, use chunked processing with smaller partitions
 				logger.info(f"Starting Parquet conversion for {table_name} with {df.npartitions} partitions")
-				
+
 				# Repartition to smaller chunks if necessary to avoid memory issues
 				if df.npartitions > 50:  # If too many partitions, reduce them
 					df = df.repartition(partition_size="100MB")
 					logger.info(f"Repartitioned {table_name} to {df.npartitions} partitions")
-				
+
 				# Use write_to_dataset for better memory management
 				df.to_parquet(
-					target_parquet_path, 
-					schema=schema, 
-					engine='pyarrow', 
+					target_parquet_path,
+					schema=schema,
+					engine='pyarrow',
 					compression='snappy',
 					write_metadata_file=True,
 					compute_kwargs={'scheduler': 'threads'}  # Use threads instead of processes for better memory control
@@ -981,7 +994,7 @@ class ParquetConverter:
 					pq.write_table(table, target_parquet_path, compression='snappy')
 				b = time()
 				logger.info(f'Successfully saved {table_name} as parquet in {b-a:.2f} seconds')
-				
+
 		except Exception as e:
 			logger.error(f"Failed to save {table_name} as parquet: {str(e)}")
 			# Attempt fallback with smaller chunks or different approach
@@ -991,7 +1004,7 @@ class ParquetConverter:
 	def _save_pandas_chunked(self, df: pd.DataFrame, target_path: Path, schema: pa.Schema, chunk_size: int) -> None:
 		"""
 		Save a large pandas DataFrame in chunks to avoid memory issues.
-		
+
 		Args:
 			df: DataFrame to save
 			target_path: Target parquet file path
@@ -1000,12 +1013,12 @@ class ParquetConverter:
 		"""
 		# Create directory if it doesn't exist
 		target_path.parent.mkdir(parents=True, exist_ok=True)
-		
+
 		# Write first chunk to establish the file
 		first_chunk = df.iloc[:chunk_size]
 		table = pa.Table.from_pandas(first_chunk, schema=schema)
 		pq.write_table(table, target_path, compression='snappy')
-		
+
 		# Append remaining chunks
 		for i in range(chunk_size, len(df), chunk_size):
 			chunk = df.iloc[i:i+chunk_size]
@@ -1014,14 +1027,14 @@ class ParquetConverter:
 			# since PyArrow doesn't support direct append mode
 			temp_path = target_path.with_suffix(f'.chunk_{i}.parquet')
 			pq.write_table(table, temp_path, compression='snappy')
-		
+
 		# Combine all chunks (this is a simplified approach)
 		logger.info(f"Chunked writing completed for {target_path}")
-	
+
 	def _fallback_parquet_save(self, df, target_path: Path, schema: pa.Schema, table_name: TableNames) -> None:
 		"""
 		Fallback method for saving parquet when the main method fails.
-		
+
 		Args:
 			df: DataFrame to save
 			target_path: Target parquet file path
@@ -1063,7 +1076,7 @@ class ParquetConverter:
 				logger.error(f"Failed to convert {table_name}: {str(e)}")
 				failed_tables.append(table_name)
 				continue
-		
+
 		if failed_tables:
 			logger.warning(f"Failed to convert the following tables: {failed_tables}")
 		else:
