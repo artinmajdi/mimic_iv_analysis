@@ -10,6 +10,7 @@ import plotly.express as px
 
 # Streamlit import
 import streamlit as st
+from mimic_iv_analysis.configurations.params import TableNames
 
 class ExplorationAndViz:
 	""" Handles the UI and logic for the Exploration & Visualization tab. """
@@ -19,6 +20,19 @@ class ExplorationAndViz:
 
 	def render(self):
 		""" Renders the content of the Exploration & Visualization tab. """
+
+		def _poe_preview_exception_handling():
+			""" Handles preview exception for POE table. """
+
+			n_rows = st.session_state.df.shape[0].compute() if isinstance(st.session_state.df, dd.DataFrame) else len(st.session_state.df)
+
+			if (st.session_state.selected_table == TableNames.POE.value) and (not st.session_state.load_full):
+				if n_rows > 5000:
+					st.warning("For POE table preview, please either load the full table or reduce subject selection to have fewer than 5,000 rows. Current preview is limited due to implementation considerations.")
+					return False
+				return True
+			return False
+
 
 		st.markdown("<h2 class='sub-header'>Exploration & Visualization</h2>", unsafe_allow_html=True)
 
@@ -34,9 +48,8 @@ class ExplorationAndViz:
 		with cols[0]:
 			st.session_state.n_rows_for_visualization = st.number_input("Number of Rows for Visualization", min_value=1, max_value=len(st.session_state.df), value=min(30, len(st.session_state.df)))
 
-		size = st.session_state.df.shape[0].compute() if isinstance(st.session_state.df, dd.DataFrame) else len(st.session_state.df)
-
-		preview_df = ExplorationAndViz.compute_dataframe_sample(df=st.session_state.df)
+		# Compute a sample from the DataFrame
+		preview_df = ExplorationAndViz.compute_dataframe_sample(df=st.session_state.df, exception_flag=_poe_preview_exception_handling() )
 
 		if preview_df is None:
 			return
@@ -63,10 +76,14 @@ class ExplorationAndViz:
 			ExplorationAndViz.display_pandas_statistics(df)
 
 	@staticmethod
-	def compute_dataframe_sample(df: pd.DataFrame | dd.DataFrame) -> pd.DataFrame:
+	def compute_dataframe_sample(df: pd.DataFrame | dd.DataFrame, exception_flag: bool = False) -> pd.DataFrame:
 		"""Helper method to compute a sample from DataFrame (Dask or pandas). """
 
 		if isinstance(df, dd.DataFrame):
+
+			if exception_flag:
+				df2 = df.compute()
+				return df2.head(st.session_state.n_rows_for_visualization)
 
 			# Get sample using the most reliable Dask method
 			n_rows = st.session_state.n_rows_for_visualization

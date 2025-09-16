@@ -240,7 +240,7 @@ class MIMICDashboardApp:
 			st.markdown("</div>", unsafe_allow_html=True)
 
 		# Display the sidebar
-		SideBar()._display_sidebar()
+		SideBar().render()
 
 		# Welcome message or Data Info
 		if st.session_state.df is None:

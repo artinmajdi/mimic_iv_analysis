@@ -30,7 +30,7 @@ class SideBar:
 		logger.info("Initializing ParquetConverter...")
 		self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
 		
-	def _display_sidebar(self):
+	def render(self):
 		"""Handles the display and logic of the sidebar components."""
 
 		def _select_sampling_parameters():
