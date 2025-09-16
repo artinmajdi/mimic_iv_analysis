@@ -190,7 +190,7 @@ class ClusteringAnalysisTab:
 					else:
 						st.markdown(f"Uploaded data shape: {input_data.shape[0]} rows × {input_data.shape[1]} columns")
 						display_dataframe_head(input_data)
-      
+
 						# Select only numeric columns
 						input_data = input_data.select_dtypes(include=np.number)
 						st.info(f"Using {input_data.shape[1]} numeric columns for clustering.")
@@ -881,7 +881,7 @@ class ClusteringAnalysisTab:
 				min_value = 2,
 				max_value = 10000,
 				value     = 1000,
-				help      = "Number of samples to use for estimation" ) 
+				help      = "Number of samples to use for estimation" )
 
 
 			# --- Optimal Epsilon (k-distance plot) ---
@@ -912,7 +912,7 @@ class ClusteringAnalysisTab:
 			Args:
 				k_dist             : The number of neighbors to consider (k = MinPts is common).
 				n_samples          : The number of samples to use for estimation.
-				metric_dbscan      : The distance metric to use.	
+				metric_dbscan      : The distance metric to use.
 				data_for_clustering: The data to use for clustering.
 			"""
 
@@ -1256,7 +1256,7 @@ class ClusteringAnalysisTab:
 						vectorizer_map = {"CountVectorizer": "count", "TfidfVectorizer": "tfidf"}
 
 						# Run LDA using the analyzer
-						lda_model, doc_topic_matrix, topic_term_matrix, feature_names = self.clustering_analyzer.run_lda_topic_modeling(
+						lda_model, doc_topic_matrix, topic_term_matrix = self.clustering_analyzer.run_lda_topic_modeling(
 							documents       = documents,
 							n_topics        = n_topics,
 							vectorizer_type = vectorizer_map[vectorizer_type],
@@ -1264,6 +1264,9 @@ class ClusteringAnalysisTab:
 							max_iter        = max_iter_lda,
 							# learning_method = learning_method # Sklearn LDA defaults usually fine
 						)
+
+						# Get feature names from the stored vectorizer
+						feature_names = self.clustering_analyzer.models['lda']['vectorizer'].get_feature_names_out()
 
 						# Store results in session state
 						st.session_state.lda_results = {
@@ -1315,11 +1318,18 @@ class ClusteringAnalysisTab:
 
 				dominant_topics = doc_topic_df.idxmax(axis=1).value_counts().sort_index()
 
+				# Create a proper DataFrame for the bar chart
+				topic_dist_df = pd.DataFrame({
+					'Topic'              : dominant_topics.index,
+					'Number_of_Documents': dominant_topics.values
+				})
+
 				fig_dist = px.bar(
-									x      = dominant_topics.index,
-									y      = dominant_topics.values,
-									labels = {'x': 'Topic', 'y': 'Number of Documents'},
-									title  = "Number of Documents Primarily Assigned to Each Topic"
+									data_frame = topic_dist_df,
+									x          = 'Topic',
+									y          = 'Number_of_Documents',
+									labels     = {'Topic': 'Topic', 'Number_of_Documents': 'Number of Documents'},
+									title      = "Number of Documents Primarily Assigned to Each Topic"
 								)
 				st.plotly_chart(fig_dist, use_container_width=True)
 
@@ -1436,7 +1446,7 @@ class ClusteringAnalysisTab:
 			metrics_summary.append({
 				'Algorithm'              : name,
 				'Num Clusters'           : n_clusters,
-				'Noise Points (%)'       : f"{n_noise_ / len(labels) * 100:.1f}%" if name == 'DBSCAN' else "N/A",
+				'Noise Points (%)'       : f"{n_noise / len(labels) * 100:.1f}%" if name == 'DBSCAN' else "N/A",
 				'Silhouette Score'       : metrics.get('silhouette_score', None),
 				'Davies-Bouldin Index'   : metrics.get('davies_bouldin_score', None),
 				'Calinski-Harabasz Index': metrics.get('calinski_harabasz_score', None),

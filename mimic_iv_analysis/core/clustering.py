@@ -375,10 +375,14 @@ class ClusteringAnalyzer:
 			}
 
 		# Convert to DataFrame for easier visualization
-		result = pd.DataFrame(columns=range(1, n_terms+1))
+		# Create column names that match the number of terms
+		column_names = [f"Term_{i+1}" for i in range(n_terms)]
+		result = pd.DataFrame(columns=column_names)
 
 		for topic, data in top_terms.items():
-			result.loc[topic] = data['terms']
+			# Ensure we have exactly n_terms by padding with empty strings if needed
+			terms_padded = data['terms'] + [''] * (n_terms - len(data['terms']))
+			result.loc[topic] = terms_padded[:n_terms]
 
 		return result
 
