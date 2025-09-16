@@ -27,6 +27,7 @@ from mimic_iv_analysis.visualization.app_components import FilteringTab, Feature
 
 from mimic_iv_analysis.visualization.app_components.exploration_and_viz import ExplorationAndViz
 
+# TODO: make sure when i run the merged table in full, it still goes the same way as with subject_ids filtering (first apply the subject ids to each table and then merging the tables).
 # TODO: Generate a sphinx documentation for this.
 # TODO: Can i show the dask dashboard inside streamlit UI?
 # TODO: Add the option to save the Full merged table and load it when available instead of re-merging the tables. Use a hash system using the table names that are used in that merge
@@ -48,57 +49,10 @@ class MIMICDashboardApp:
 
 		# self.init_session_state()
 		logger.info("MIMICDashboardApp initialized.")
+		
+  
+		SideBar.init_dask_client()
 
-		self.__init_dask_client()
-
-	def __init_dask_client(self):
-		# ----------------------------------------
-		# Initialize (or reuse) a Dask client so heavy
-		# computations can run on worker processes and
-		# the Streamlit script thread remains responsive
-		# ----------------------------------------
-		@st.cache_resource(show_spinner=False)
-		def _get_dask_client(n_workers, threads_per_worker, memory_limit, dashboard_port):
-			cluster = LocalCluster(
-								n_workers          = n_workers,
-								threads_per_worker = threads_per_worker,
-								processes          = True,
-								memory_limit       = memory_limit,
-								dashboard_address  = f":{dashboard_port}", )
-			return Client(cluster)
-
-		# Initialize default values if not in session state with conservative settings
-		if 'dask_n_workers' not in st.session_state:
-			st.session_state.dask_n_workers = 2  # Reduced from 1 to 2 for better parallelism
-		if 'dask_threads_per_worker' not in st.session_state:
-			st.session_state.dask_threads_per_worker = 4  # Reduced from 16 to 4 to prevent memory overload
-		if 'dask_memory_limit' not in st.session_state:
-			st.session_state.dask_memory_limit = '8GB'  # Reduced from 20GB to 8GB for safer memory usage
-		if 'dask_dashboard_port' not in st.session_state:
-			st.session_state.dask_dashboard_port = 8787
-
-
-		# Get Dask configuration from session state
-		n_workers          = st.session_state.dask_n_workers
-		threads_per_worker = st.session_state.dask_threads_per_worker
-		memory_limit       = st.session_state.dask_memory_limit
-		dashboard_port     = st.session_state.dask_dashboard_port
-
-		# Create a unique key based on configuration to force recreation when settings change
-		config_key = f"{n_workers}_{threads_per_worker}_{memory_limit}_{dashboard_port}"
-
-		# Store the client in session_state so that a new one
-		# is not spawned on every rerun, but recreate if config changed
-		if "dask_client" not in st.session_state or st.session_state.get('dask_config_key') != config_key:
-			# Close existing client if it exists
-			if "dask_client" in st.session_state:
-				st.session_state.dask_client.close()
-
-			st.session_state.dask_client = _get_dask_client(n_workers, threads_per_worker, memory_limit, dashboard_port)
-			st.session_state.dask_config_key = config_key
-			logger.info("Dask client initialised with config %s: %s", config_key, st.session_state.dask_client)
-
-		self.dask_client = st.session_state.dask_client
 
 	def _prepare_csv_download(self):
 		"""Prepare CSV data on-demand with progress tracking."""
@@ -159,29 +113,7 @@ class MIMICDashboardApp:
 
 				return csv_data
 			else:
-				# For pandas DataFrames, show simple progress
-				progress_bar = st.progress(0)
-				status_text = st.empty()
-
-				status_text.text('Calculating data size...')
-				progress_bar.progress(20)
-
-				row_count = len(st.session_state.df)
-
-				status_text.text(f'Preparing CSV export for {row_count} rows...')
-				progress_bar.progress(50)
-
 				csv_data = st.session_state.df.to_csv(index=False).encode('utf-8')
-
-				status_text.text(f'CSV export completed! ({row_count} rows)')
-				progress_bar.progress(100)
-
-				# Clear progress indicators
-				import time
-				time.sleep(2)
-				status_text.empty()
-				progress_bar.empty()
-
 				return csv_data
 
 		except Exception as e:
@@ -192,19 +124,34 @@ class MIMICDashboardApp:
 		st.markdown("<h2 class='sub-header'>Export Loaded Data</h2>", unsafe_allow_html=True)
 		st.info("Export the currently loaded (and potentially sampled) data shown in the 'Exploration' tab.")
 
-		export_filename = f"mimic_data_{st.session_state.get('selected_table', 'table')}.csv"
+
+		export_filename = f"mimic_data_{st.session_state.get('selected_table', 'table')}"
 
 		# CSV Download button without pre-calculating row count
 		if st.button("Prepare CSV Download", key="download_csv_button"):
+			filename = f"{export_filename}.csv"
+			# csv_data = st.session_state.df.to_csv(Path(st.session_state.mimic_path) / filename, index=False)#.encode('utf-8')
+
 			if st.download_button(
 					label=f"Click to download CSV file",
 					data=self._prepare_csv_download(),
-					file_name=export_filename,
+					file_name=filename,	
 					mime="text/csv",
 					key="download_complete_csv",
 					help="Download the complete dataset as CSV file (memory optimized with Dask)" ):
 
 				st.success(f"CSV export completed!")
+    
+		if st.button("Prepare Saving as Parquet", key="save_as_parquet_button"):
+
+
+			filename = f"{export_filename}.parquet"
+			filepath = Path(st.session_state.mimic_path) / filename
+
+			# TODO: Make sure this works
+			self.sidebar.parquet_converter.save_as_parquet(table_name=TableNames(st.session_state.selected_table) , target_parquet_path=filepath, df=st.session_state.df)	
+			# st.session_state.df.to_parquet(filepath)
+			st.success(f"Parquet export completed! ({filename})")
 
 	def _show_tabs(self):
 		"""Handles the display of the main content area with tabs for data exploration and analysis."""
@@ -240,7 +187,8 @@ class MIMICDashboardApp:
 			st.markdown("</div>", unsafe_allow_html=True)
 
 		# Display the sidebar
-		SideBar().render()
+		self.sidebar = SideBar()	
+		self.sidebar.render()
 
 		# Welcome message or Data Info
 		if st.session_state.df is None:

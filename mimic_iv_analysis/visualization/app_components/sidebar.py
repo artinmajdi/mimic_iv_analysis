@@ -7,6 +7,9 @@ from typing import Tuple, Optional, List
 import pandas as pd
 import dask.dataframe as dd
 
+# Dask distributed for background computation
+from dask.distributed import Client, LocalCluster
+
 # Streamlit import
 import streamlit as st
 
@@ -391,7 +394,7 @@ class SideBar:
 		# If configuration changed, reinitialize Dask client
 		if config_changed:
 			st.sidebar.success("Dask configuration updated! Client will be reinitialized.")
-			self.__init_dask_client()  # Reinitialize with new settings
+			SideBar.init_dask_client()  # Reinitialize with new settings
 			st.rerun()  # Refresh the UI
 
 	def _dataset_configuration(self):
@@ -732,3 +735,54 @@ class SideBar:
 		if file_path and isinstance(file_path, Path) and file_path.suffix == '.parquet':
 			return True
 		return False
+
+
+	@staticmethod
+	def init_dask_client():
+		# ----------------------------------------
+		# Initialize (or reuse) a Dask client so heavy
+		# computations can run on worker processes and
+		# the Streamlit script thread remains responsive
+		# ----------------------------------------
+		@st.cache_resource(show_spinner=False)
+		def _get_dask_client(n_workers, threads_per_worker, memory_limit, dashboard_port):
+			cluster = LocalCluster(
+								n_workers          = n_workers,
+								threads_per_worker = threads_per_worker,
+								processes          = True,
+								memory_limit       = memory_limit,
+								dashboard_address  = f":{dashboard_port}", )
+			return Client(cluster)
+
+		# Initialize default values if not in session state with conservative settings
+		if 'dask_n_workers' not in st.session_state:
+			st.session_state.dask_n_workers = 2  # Reduced from 1 to 2 for better parallelism
+		if 'dask_threads_per_worker' not in st.session_state:
+			st.session_state.dask_threads_per_worker = 4  # Reduced from 16 to 4 to prevent memory overload
+		if 'dask_memory_limit' not in st.session_state:
+			st.session_state.dask_memory_limit = '8GB'  # Reduced from 20GB to 8GB for safer memory usage
+		if 'dask_dashboard_port' not in st.session_state:
+			st.session_state.dask_dashboard_port = 8787
+
+
+		# Get Dask configuration from session state
+		n_workers          = st.session_state.dask_n_workers
+		threads_per_worker = st.session_state.dask_threads_per_worker
+		memory_limit       = st.session_state.dask_memory_limit
+		dashboard_port     = st.session_state.dask_dashboard_port
+
+		# Create a unique key based on configuration to force recreation when settings change
+		config_key = f"{n_workers}_{threads_per_worker}_{memory_limit}_{dashboard_port}"
+
+		# Store the client in session_state so that a new one
+		# is not spawned on every rerun, but recreate if config changed
+		if "dask_client" not in st.session_state or st.session_state.get('dask_config_key') != config_key:
+			# Close existing client if it exists
+			if "dask_client" in st.session_state:
+				st.session_state.dask_client.close()
+
+			st.session_state.dask_client = _get_dask_client(n_workers, threads_per_worker, memory_limit, dashboard_port)
+			st.session_state.dask_config_key = config_key
+			logger.info("Dask client initialised with config %s: %s", config_key, st.session_state.dask_client)
+
+		# self.dask_client = st.session_state.dask_client

@@ -954,7 +954,7 @@ class ParquetConverter:
 				logger.info(f"Starting Parquet conversion for {table_name} with {df.npartitions} partitions")
 
 				# Repartition to smaller chunks if necessary to avoid memory issues
-				if df.npartitions > 50:  # If too many partitions, reduce them
+				if df.npartitions > 50 or table_name == TableNames.MERGED:  # If too many partitions, reduce them
 					df = df.repartition(partition_size="100MB")
 					logger.info(f"Repartitioned {table_name} to {df.npartitions} partitions")
 
@@ -973,17 +973,17 @@ class ParquetConverter:
 				# For pandas DataFrames, use chunked writing for large datasets
 				if len(df) > chunk_size:
 					logger.info(f"Large dataset detected ({len(df)} rows). Using chunked processing with {chunk_size} rows per chunk.")
-					self._save_pandas_chunked(df, target_parquet_path, schema, chunk_size)
+					self._save_pandas_chunked(df=df, target_path=target_parquet_path.with_suffix('.csv'), schema=schema, chunk_size=chunk_size)
 				else:
 					table = pa.Table.from_pandas(df, schema=schema)
-					pq.write_table(table, target_parquet_path, compression='snappy')
+					pq.write_table(table, target_parquet_path.with_suffix('.csv'), compression='snappy')
 				b = time()
 				logger.info(f'Successfully saved {table_name} as parquet in {b-a:.2f} seconds')
 
 		except Exception as e:
 			logger.error(f"Failed to save {table_name} as parquet: {str(e)}")
 			# Attempt fallback with smaller chunks or different approach
-			self._fallback_parquet_save(df, target_parquet_path, schema, table_name)
+			# self._fallback_parquet_save(df, target_path=target_parquet_path.with_suffix('.csv'), schema=schema, table_name=table_name)
 			raise
 
 	def _save_pandas_chunked(self, df: pd.DataFrame, target_path: Path, schema: pa.Schema, chunk_size: int) -> None:
