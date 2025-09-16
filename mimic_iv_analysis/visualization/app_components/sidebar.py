@@ -565,6 +565,9 @@ class SideBar:
 				st.sidebar.caption(f"Patient ID: {st.session_state.detected_patient_id_col}, Order: {st.session_state.detected_order_cols}, Time: {st.session_state.detected_time_cols}")
 
 		def _load_merged_table():
+
+			st.session_state.current_file_path = self.data_handler.merged_table_parquet_path
+
 			df = self.data_handler.fetch_table(table_name=TableNames.MERGED, use_dask=st.session_state.use_dask, apply_filtering=st.session_state.apply_filtering)
 
 			if not st.session_state.load_full:

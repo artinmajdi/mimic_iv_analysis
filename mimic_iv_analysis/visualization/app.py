@@ -34,7 +34,7 @@ class MIMICDashboardApp:
 
 		# self.init_session_state()
 		logger.info("MIMICDashboardApp initialized.")
-		
+
 		SideBar.init_dask_client()
 
 	def _show_tabs(self):
@@ -55,6 +55,10 @@ class MIMICDashboardApp:
 				st.metric("File Size (Full)", humanize.naturalsize(file_size_mb))
 
 			with col2:
+				if st.session_state.get('total_subjects_count', None) is None:
+					unique_subject_ids = self.sidebar.data_handler.get_unique_subject_ids(table_name=TableNames(st.session_state.selected_table), recalculate_subject_ids=False)
+					st.session_state.total_subjects_count =  len(unique_subject_ids)
+
 				st.metric("Total Subjects", f"{st.session_state.total_subjects_count:,}")
 
 				loaded_subjects = st.session_state.df.subject_id.nunique().compute() if isinstance(st.session_state.df, dd.DataFrame) else len(st.session_state.df.subject_id.unique()) if st.session_state.df is not None else 0
@@ -71,7 +75,7 @@ class MIMICDashboardApp:
 			st.markdown("</div>", unsafe_allow_html=True)
 
 		# Display the sidebar
-		self.sidebar = SideBar()	
+		self.sidebar = SideBar()
 		self.sidebar.render()
 
 		# Welcome message or Data Info
