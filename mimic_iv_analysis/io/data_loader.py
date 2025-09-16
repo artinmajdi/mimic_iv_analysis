@@ -32,7 +32,7 @@ from time import time
 class DataLoader:
 	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
 
-	def __init__(self, mimic_path: Path = DEFAULT_MIMIC_PATH, study_tables_list: Optional[List[TableNames]] = None, apply_filtering: bool = True, include_transfers: bool = False, filter_params: Optional[dict[str, dict[str, Any]]] = {}):
+	def __init__(self, mimic_path: Path = DEFAULT_MIMIC_PATH, study_tables_list: Optional[List[TableNames]] = None, apply_filtering: bool = True, filter_params: Optional[dict[str, dict[str, Any]]] = {}):
 		# Initialize persisted resources tracking
 		self._persisted_resources = {}
 
@@ -40,13 +40,9 @@ class DataLoader:
 		self.mimic_path      = Path(mimic_path)
 		self.apply_filtering = apply_filtering
 		self.filter_params         = filter_params
-		self.include_transfers = include_transfers
 
 		# Tables to load. Use list provided by user or default list
 		self.study_table_list = set(study_tables_list or DEFAULT_STUDY_TABLES_LIST)
-
-		if not include_transfers:
-			self.study_table_list -= {TableNames.TRANSFERS}
 
 		# Class variables
 		self.tables_info_df         : Optional[pd.DataFrame]  = None
@@ -255,12 +251,6 @@ class DataLoader:
 		dtypes      = {col: dtype for col, dtype in COLUMN_TYPES.items() if col in columns_list}
 		parse_dates = [col for col in DATETIME_COLUMNS if col in columns_list]
 
-		# Check if the file being loaded is the transfers table
-		# if file_path is not None and TableNames.TRANSFERS.value in file_path.name:
-		# 	# If so, remove hadm_id from the dtypes to avoid type error on load
-		# 	if 'hadm_id' in dtypes:
-		# 		del dtypes['hadm_id']
-
 		return dtypes, parse_dates
 
 
@@ -330,13 +320,11 @@ class DataLoader:
 			def _fetch_filtered_table_subject_ids(table_name: TableNames) -> set:
 				""" Returns a list of unique subject_ids found in the table after applying filters. """
 				df = self.fetch_table(table_name=table_name, apply_filtering=self.apply_filtering)
-				return set(df['subject_id'].unique())
+				return set(df['subject_id'].unique().compute())
 
 			def get_table_subject_ids_path(table_name: TableNames) -> Path:
 
 				csv_tag = table_name.value
-				if table_name == TableNames.MERGED and self.include_transfers:
-					csv_tag += '_w_transfers'
 
 				if self.apply_filtering:
 					csv_tag += '_filtered'
@@ -348,6 +336,7 @@ class DataLoader:
 
 			subject_ids_path = get_table_subject_ids_path(table_name=table_name)
 
+			# TODO: need to add the option to recalculate_subject_ids in the UI for user to select
 			if subject_ids_path.exists() and not recalculate_subject_ids:
 				df_unique_subject_ids = pd.read_csv(subject_ids_path)
 				return set(df_unique_subject_ids['subject_id'].values.tolist())
@@ -399,7 +388,7 @@ class DataLoader:
 			# Convert to sorted list and take the requested number
 			common_subject_ids_list = sorted(list(intersection_set))
 
-			logger.info(f"Found {len(common_subject_ids_list)} common subject_ids in intersection of selected tables. Sampling {num_subjects} subject_ids.")
+			logger.info(f"Found {len(common_subject_ids_list)} common subject_ids in intersection of selected tables.")
 
 			return common_subject_ids_list
 
@@ -555,9 +544,8 @@ class DataLoader:
 		else:
 			df = self.fetch_table(table_name=table_name, use_dask=use_dask, apply_filtering=self.apply_filtering)
 
-		# Apply legacy row-level filtering only for non-merged tables
-		if partial_loading and table_name is not TableNames.MERGED:
-			df = self.partial_loading(df=df, table_name=table_name, num_subjects=num_subjects)
+			if partial_loading:
+				df = self.partial_loading(df=df, table_name=table_name, num_subjects=num_subjects)
 
 		return df
 
@@ -575,7 +563,7 @@ class DataLoader:
 		d_icd_diagnoses_df = tables_dict[TableNames.D_ICD_DIAGNOSES.value] # 876KB
 		poe_df             = tables_dict[TableNames.POE.value] # 606MB
 		poe_detail_df      = tables_dict[TableNames.POE_DETAIL.value] # 55MB
-		transfers_df = tables_dict.get(TableNames.TRANSFERS.value, None) # 46MB
+		transfers_df       = tables_dict.get(TableNames.TRANSFERS.value) # 46MB
 
 		persisted_intermediates = {}  # Track intermediate results for cleanup
 
@@ -588,14 +576,12 @@ class DataLoader:
 				df12 = df12.persist()
 				persisted_intermediates['patients_admissions'] = df12
 
-			if transfers_df is not None:
+			df123 = df12.merge(transfers_df, on=['subject_id', 'hadm_id'], how='inner')
 
-				df123 = df12.merge(transfers_df, on=['subject_id', 'hadm_id'], how='inner')
-
-				# Persist intermediate result
-				if isinstance(df123, dd.DataFrame):
-					df123 = df123.persist()
-					persisted_intermediates['with_transfers'] = df123
+			# Persist intermediate result
+			if isinstance(df123, dd.DataFrame):
+				df123 = df123.persist()
+				persisted_intermediates['with_transfers'] = df123
 			else:
 				df123 = df12
 
@@ -671,17 +657,17 @@ class DataLoader:
 		# 1) Compute intersection and select N subject_ids
 		common_subject_ids_sample_list = self.get_sample_subject_ids(table_name=TableNames.MERGED, num_subjects=num_subjects)
 
-		if not common_subject_ids_sample_list:
-			logger.warning("No subject_ids selected for optimized merged loading; falling back to full merged load")
-			return self.merge_tables(use_dask=use_dask)
+		if common_subject_ids_sample_list:
+			# 2) Load only rows for selected subject_ids across component tables
+			tables_dict = self.load_filtered_study_tables_by_subjects(subject_ids=common_subject_ids_sample_list, use_dask=use_dask)
 
-		# 2) Load only rows for selected subject_ids across component tables
-		filtered_tables = self.load_filtered_study_tables_by_subjects(subject_ids=common_subject_ids_sample_list, use_dask=use_dask)
+		else:
+			logger.warning("No subject_ids selected for optimized merged loading; falling back to full merged load")
+			tables_dict = self.fetch_complete_study_tables(use_dask=use_dask)
 
 		# 3) Merge filtered tables using the same logic as the regular merger
-		merged = self.merge_tables(tables_dict=filtered_tables, use_dask=use_dask)
+		return self.merge_tables(tables_dict=tables_dict, use_dask=use_dask)
 
-		return merged
 
 
 	@property
@@ -1086,7 +1072,7 @@ class ParquetConverter:
 
 if __name__ == '__main__':
 
-	loader = DataLoader(mimic_path=DEFAULT_MIMIC_PATH, apply_filtering=True, include_transfers=True, filter_params={})
+	loader = DataLoader(mimic_path=DEFAULT_MIMIC_PATH, apply_filtering=True, filter_params={})
 	df_merged = loader.load(table_name=TableNames.MERGED, partial_loading=False)
 	subject_ids = loader.get_unique_subject_ids(table_name=TableNames.ADMISSIONS)
 

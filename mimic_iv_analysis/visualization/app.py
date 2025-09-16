@@ -363,7 +363,6 @@ class MIMICDashboardApp:
 							if file_path.suffix != '.parquet':
 								tables_to_convert.append(table_enum)
 						except (ValueError, IndexError):
-							# This can happen if a component table (e.g., transfers) is not present
 							logger.warning(f"Component table {table_enum.value} not found, skipping for conversion check.")
 							continue
 					return tables_to_convert
@@ -526,8 +525,6 @@ class MIMICDashboardApp:
 			if module in st.session_state.available_tables:
 				_select_table(module=module)
 
-				if st.session_state.selected_table == "merged_table":
-					st.sidebar.checkbox('Include Transfers Table', value=True, key='include_transfers', on_change=self._callback_reload_dataloader)
 			else:
 				st.session_state.selected_table_name_w_size = None
 
@@ -553,7 +550,6 @@ class MIMICDashboardApp:
 		self.data_handler = DataLoader(
 						mimic_path        = st.session_state.get('mimic_path', Path(DEFAULT_MIMIC_PATH)),
 						apply_filtering   = st.session_state.apply_filtering,
-						include_transfers = st.session_state.include_transfers,
 						filter_params     = st.session_state.filter_params)
 
 		self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
@@ -561,22 +557,16 @@ class MIMICDashboardApp:
 	def _load_table(self, selected_table_name_w_size: str = None) -> Tuple[Optional[pd.DataFrame], int]:
 		"""Load a specific MIMIC-IV table, handling large files and sampling."""
 
-
-		def _get_total_rows(df):
-			if df is None:
-				return 0
-			if isinstance(df, dd.DataFrame):
-				st.session_state.total_row_count = df.shape[0].compute()
-			else:
-				st.session_state.total_row_count = df.shape[0]
-
-			return st.session_state.total_row_count
+		def _get_total_subjects(table_name: TableNames) -> int:
+			unique_subject_ids = self.data_handler.get_unique_subject_ids(table_name=table_name, recalculate_subject_ids=False)
+			st.session_state.total_subjects_count =  len(unique_subject_ids)
+			return st.session_state.total_subjects_count
 
 		def _load_merged_table() -> pd.DataFrame:
 
-			def _merged_df_is_valid(merged_df, total_rows):
+			def _merged_df_is_valid(merged_df, total_subjects):
 
-				if isinstance(merged_df, dd.DataFrame) and total_rows == 0:
+				if isinstance(merged_df, dd.DataFrame) and total_subjects == 0:
 					st.sidebar.error("Failed to load connected tables.")
 					return False
 
@@ -633,9 +623,9 @@ class MIMICDashboardApp:
 
 				merged_df = _load_connected_tables()
 
-				total_rows = _get_total_rows(merged_df)
+				total_subjects = _get_total_subjects(table_name=TableNames.MERGED)
 
-				if _merged_df_is_valid(merged_df=merged_df, total_rows=total_rows):
+				if _merged_df_is_valid(merged_df=merged_df, total_subjects=total_subjects):
 
 					st.session_state.df                 = merged_df
 					st.session_state.current_file_path  = "merged_tables"
@@ -643,11 +633,11 @@ class MIMICDashboardApp:
 
 					self._clear_analysis_states()
 
-					st.sidebar.success(f"Successfully merged {len(st.session_state.connected_tables)} tables with {len(merged_df.columns)} columns and {total_rows} rows!")
+					st.sidebar.success(f"Successfully merged {len(st.session_state.connected_tables)} tables with {len(merged_df.columns)} columns and {total_subjects} rows!")
 
 		def _load_single_table():
 
-			def _df_is_valid(df, total_rows):
+			def _df_is_valid(df, total_subjects):
 				# Check if DataFrame is not None
 				if df is None:
 					st.sidebar.error("Failed to load table. Check logs or file format.")
@@ -655,7 +645,7 @@ class MIMICDashboardApp:
 					return False
 
 				# check shape
-				if (isinstance(df, dd.DataFrame) and total_rows == 0) or (isinstance(df, pd.DataFrame) and df.empty):
+				if (isinstance(df, dd.DataFrame) and total_subjects == 0) or (isinstance(df, pd.DataFrame) and df.empty):
 					st.sidebar.warning("Loaded table is empty.")
 					st.session_state.df = None
 					return False
@@ -683,12 +673,14 @@ class MIMICDashboardApp:
 					use_dask        = st.session_state.use_dask
 					)
 
-				total_rows = _get_total_rows(df)
 
-			if _df_is_valid(df, total_rows):
+				# Get total number of rows
+				total_subjects = _get_total_subjects(table_name=table_name)
+
+			if _df_is_valid(df, total_subjects):
 
 				st.session_state.df = df
-				st.sidebar.success(f"Loaded {total_rows} rows.")
+				st.sidebar.success(f"Loaded {total_subjects} rows.")
 
 				# Clear previous analysis results when new data is loaded
 				self._clear_analysis_states()
@@ -844,7 +836,7 @@ class MIMICDashboardApp:
 					key="download_complete_csv",
 					help="Download the complete dataset as CSV file (memory optimized with Dask)" ):
 
-				st.success(f"CSV export completed! ({row_count:,} rows)")
+				st.success(f"CSV export completed!")
 
 
 	def _show_data_explorer_view(self):
@@ -859,22 +851,22 @@ class MIMICDashboardApp:
 			col1, col2, col3 = st.columns(3)
 			with col1:
 				st.metric("Module", st.session_state.selected_module or "N/A")
-				st.metric("Table", st.session_state.selected_table or "N/A")
 
-			with col2:
 				# Format file size
 				file_size_mb = st.session_state.file_sizes.get((st.session_state.selected_module, st.session_state.selected_table), 0)
-				# if file_size_mb < 0.1: size_str = f"{file_size_mb*1024:.0f} KB"
-				# elif file_size_mb < 1024: size_str = f"{file_size_mb:.1f} MB"
-				# else: size_str = f"{file_size_mb/1024:.1f} GB"
 				st.metric("File Size (Full)", humanize.naturalsize(file_size_mb))
 
-				# TODO: Show the actual total rows instead of the filtered total rows in the UI
-				st.metric("Total Rows (Full)", f"{st.session_state.total_row_count:,}")
+			with col2:
+				st.metric("Total Subjects", f"{st.session_state.total_subjects_count:,}")
+
+				loaded_subjects = st.session_state.df.subject_id.nunique().compute() if isinstance(st.session_state.df, dd.DataFrame) else len(st.session_state.df.subject_id.unique()) if st.session_state.df is not None else 0
+				st.metric("Subjects Loaded", f"{loaded_subjects:,}")
 
 			with col3:
+				# Fix the total_row_count
+				st.metric("Total Rows", f"{st.session_state.total_row_count:,}")
 				st.metric("Rows Loaded", f"{len(st.session_state.df):,}")
-				st.metric("Columns Loaded", f"{len(st.session_state.df.columns)}")
+				# st.metric("Columns Loaded", f"{len(st.session_state.df.columns)}")
 
 			# Display filename
 			if st.session_state.current_file_path:
@@ -935,11 +927,9 @@ class MIMICDashboardApp:
 
 				MIMICVisualizerUtils.display_dataset_statistics(st.session_state.df)
 
-				cols = st.columns([1, 3])
+				cols = st.columns([1, 2])
 				with cols[0]:
 					st.session_state.sample_size = st.number_input("Number of Rows for Visualization", min_value=1, max_value=len(st.session_state.df), value=min(30, len(st.session_state.df)))
-
-				st.divider()
 
 				preview_df = MIMICVisualizerUtils._compute_dataframe_sample(df=st.session_state.df, sample_size=st.session_state.sample_size)
 
@@ -1058,7 +1048,6 @@ class MIMICDashboardApp:
 		st.session_state.order_dist = None
 		st.session_state.patient_order_dist = None
 		st.session_state.transition_matrix = None
-		st.session_state.include_transfers = False
 
 		# Clustering states
 		st.session_state.clustering_input_data = None # Holds the final data used for clustering (post-preprocessing)
