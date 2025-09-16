@@ -260,7 +260,7 @@ class FilteringTab:
         if 'order_type' in st.session_state.filter_params[poe]['selected_columns']:
             st.session_state.filter_params[poe]['apply_order_type'] = st.checkbox( "Filter by Order Types", value=st.session_state.filter_params[poe]['apply_order_type'] )
 
-            st.session_state.filter_params[poe]['order_types'] = st.multiselect(
+            st.session_state.filter_params[poe]['order_type'] = st.multiselect(
                 "Order Types to Include",
                 options=POE_ORDER_TYPES,
                 default=st.session_state.filter_params[poe]['order_type'],
