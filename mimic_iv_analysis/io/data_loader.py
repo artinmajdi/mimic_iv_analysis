@@ -392,7 +392,6 @@ class DataLoader:
 
 			return common_subject_ids_list
 
-
 		if table_name == TableNames.MERGED:
 			return get_merged_table_subject_ids()
 
@@ -669,7 +668,6 @@ class DataLoader:
 		return self.merge_tables(tables_dict=tables_dict, use_dask=use_dask)
 
 
-
 	@property
 	def tables_w_subject_id_column(self) -> List[TableNames]:
 		"""Tables that have a subject_id column."""
@@ -678,7 +676,8 @@ class DataLoader:
 					TableNames.TRANSFERS,
 					TableNames.DIAGNOSES_ICD,
 					TableNames.POE,
-					TableNames.POE_DETAIL]
+					TableNames.POE_DETAIL,
+					TableNames.MICROBIOLOGYEVENTS]
 
 	@property
 	def merged_table_components(self) -> List[TableNames]:

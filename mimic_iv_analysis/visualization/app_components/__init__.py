@@ -8,5 +8,7 @@ from mimic_iv_analysis.visualization.app_components.filtering_tab import Filteri
 from mimic_iv_analysis.visualization.app_components.feature_engineering_tab import FeatureEngineeringTab
 from mimic_iv_analysis.visualization.app_components.clustering_analysis_tab import ClusteringAnalysisTab
 from mimic_iv_analysis.visualization.app_components.analysis_visualization_tab import AnalysisVisualizationTab
+from mimic_iv_analysis.visualization.app_components.sidebar import SideBar
+from mimic_iv_analysis.visualization.app_components.exploration_and_viz import ExplorationAndViz
 
-__all__ = ['FilteringTab', 'FeatureEngineeringTab', 'ClusteringAnalysisTab', 'AnalysisVisualizationTab']
+__all__ = ['FilteringTab', 'FeatureEngineeringTab', 'ClusteringAnalysisTab', 'AnalysisVisualizationTab', 'SideBar', 'ExplorationAndViz']

@@ -117,5 +117,8 @@ class Filtering:
 			# Identify inpatient locations using transfers table and careunit column (to find “Med”, “Surg”, “Ortho”, “Card”, “GU”, “MICU”, “SICU”, “CSRU”
 
 
+		elif self.table_name == TableNames.MICROBIOLOGYEVENTS:
+			self.df = self.df.drop(columns=['comments'])
+    
 		self.df = self.df.reset_index(drop=True)
 		return self.df
