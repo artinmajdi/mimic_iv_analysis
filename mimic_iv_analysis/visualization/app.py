@@ -1,14 +1,7 @@
 # Standard library imports
-import os
-from io import BytesIO
 from pathlib import Path
-from typing import Tuple, Optional, List
-
-# Dask distributed for background computation
-from dask.distributed import Client, LocalCluster
 
 # Data processing imports
-import pandas as pd
 import dask.dataframe as dd
 
 # Streamlit import
@@ -18,28 +11,20 @@ import humanize
 
 # Local application imports
 from mimic_iv_analysis import logger
-from mimic_iv_analysis.core import FeatureEngineerUtils
-from mimic_iv_analysis.core.dask_config_optimizer import DaskConfigOptimizer
-from mimic_iv_analysis.io import DataLoader, ParquetConverter
-from mimic_iv_analysis.configurations import TableNames, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS, DEFAULT_STUDY_TABLES_LIST
+from mimic_iv_analysis.configurations import TableNames, DEFAULT_MIMIC_PATH
 
-from mimic_iv_analysis.visualization.app_components import FilteringTab, FeatureEngineeringTab, AnalysisVisualizationTab, ClusteringAnalysisTab, SideBar
+from mimic_iv_analysis.visualization.app_components import FeatureEngineeringTab, AnalysisVisualizationTab, ClusteringAnalysisTab, SideBar
 
 from mimic_iv_analysis.visualization.app_components.exploration_and_viz import ExplorationAndViz
 
 # TODO: make sure when i run the merged table in full, it still goes the same way as with subject_ids filtering (first apply the subject ids to each table and then merging the tables).
 # TODO: Generate a sphinx documentation for this.
-# TODO: Can i show the dask dashboard inside streamlit UI?
 # TODO: Add the option to save the Full merged table and load it when available instead of re-merging the tables. Use a hash system using the table names that are used in that merge
-# TODO: the partial loading is not working for poe table.
-# TODO: also need to check the convert to parquet again to see if it still works.
 class MIMICDashboardApp:
 
 	def __init__(self):
 		logger.info("Initializing MIMICDashboardApp...")
 		self.init_session_state()
-
-
 
 		logger.info("Initializing FeatureEngineerUtils...")
 		# self.feature_engineer  = FeatureEngineerUtils()
@@ -50,108 +35,7 @@ class MIMICDashboardApp:
 		# self.init_session_state()
 		logger.info("MIMICDashboardApp initialized.")
 		
-  
 		SideBar.init_dask_client()
-
-
-	def _prepare_csv_download(self):
-		"""Prepare CSV data on-demand with progress tracking."""
-		try:
-			use_dask = st.session_state.get('use_dask', False)
-
-			if use_dask and isinstance(st.session_state.df, dd.DataFrame):
-				# Create progress bar
-				progress_bar = st.progress(0)
-				status_text = st.empty()
-
-				status_text.text('Initializing CSV export...')
-				progress_bar.progress(10)
-
-				# Calculate row count during preparation
-				status_text.text('Calculating data size...')
-				progress_bar.progress(20)
-				try:
-					row_count = len(st.session_state.df)
-				except:
-					row_count = "Unknown"
-
-				status_text.text(f'Preparing {row_count} rows for export...')
-				progress_bar.progress(30)
-
-				# Use Dask's native to_csv with temporary file
-				import tempfile
-				with tempfile.NamedTemporaryFile(mode='w+', suffix='.csv', delete=False) as tmp_file:
-					tmp_path = tmp_file.name
-
-				status_text.text('Writing data to temporary file...')
-				progress_bar.progress(50)
-
-				# Dask writes directly to file without computing entire DataFrame
-				st.session_state.df.to_csv(tmp_path, index=False, single_file=True)
-
-				status_text.text('Reading file content...')
-				progress_bar.progress(80)
-
-				# Read the file content and clean up
-				with open(tmp_path, 'r', encoding='utf-8') as f:
-					csv_data = f.read().encode('utf-8')
-
-				status_text.text('Cleaning up temporary files...')
-				progress_bar.progress(90)
-
-				# Clean up temporary file
-				Path(tmp_path).unlink(missing_ok=True)
-
-				status_text.text(f'CSV export completed! ({row_count} rows)')
-				progress_bar.progress(100)
-
-				# Clear progress indicators after a short delay
-				import time
-				time.sleep(2)
-				status_text.empty()
-				progress_bar.empty()
-
-				return csv_data
-			else:
-				csv_data = st.session_state.df.to_csv(index=False).encode('utf-8')
-				return csv_data
-
-		except Exception as e:
-			st.error(f"Error preparing CSV download: {e}")
-			return b""  # Return empty bytes on error
-
-	def _export_options(self):
-		st.markdown("<h2 class='sub-header'>Export Loaded Data</h2>", unsafe_allow_html=True)
-		st.info("Export the currently loaded (and potentially sampled) data shown in the 'Exploration' tab.")
-
-
-		export_filename = f"mimic_data_{st.session_state.get('selected_table', 'table')}"
-
-		# CSV Download button without pre-calculating row count
-		if st.button("Prepare CSV Download", key="download_csv_button"):
-			filename = f"{export_filename}.csv"
-			# csv_data = st.session_state.df.to_csv(Path(st.session_state.mimic_path) / filename, index=False)#.encode('utf-8')
-
-			if st.download_button(
-					label=f"Click to download CSV file",
-					data=self._prepare_csv_download(),
-					file_name=filename,	
-					mime="text/csv",
-					key="download_complete_csv",
-					help="Download the complete dataset as CSV file (memory optimized with Dask)" ):
-
-				st.success(f"CSV export completed!")
-    
-		if st.button("Prepare Saving as Parquet", key="save_as_parquet_button"):
-
-
-			filename = f"{export_filename}.parquet"
-			filepath = Path(st.session_state.mimic_path) / filename
-
-			# TODO: Make sure this works
-			self.sidebar.parquet_converter.save_as_parquet(table_name=TableNames(st.session_state.selected_table) , target_parquet_path=filepath, df=st.session_state.df)	
-			# st.session_state.df.to_parquet(filepath)
-			st.success(f"Parquet export completed! ({filename})")
 
 	def _show_tabs(self):
 		"""Handles the display of the main content area with tabs for data exploration and analysis."""
@@ -232,10 +116,9 @@ class MIMICDashboardApp:
 				"📊 Exploration & Viz",
 				"🛠️ Feature Engineering",
 				"🧩 Clustering Analysis",
-				"💡 Cluster Interpretation", # Renamed for clarity
-				"💾 Export Options"
+				"💡 Cluster Interpretation"
 			]
-			tab1, tab2, tab3, tab4, tab5 = st.tabs(tab_titles)
+			tab1, tab2, tab3, tab4 = st.tabs(tab_titles)
 
 			# Tab 1: Exploration & Visualization
 			with tab1:
@@ -250,9 +133,6 @@ class MIMICDashboardApp:
 			with tab4:
 				AnalysisVisualizationTab().render()
 
-			# Tab 5: Export Options
-			with tab5:
-				self._export_options()
 
 	def run(self):
 		"""Run the main application loop."""

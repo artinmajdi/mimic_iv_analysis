@@ -21,8 +21,6 @@ from mimic_iv_analysis.io import DataLoader, ParquetConverter
 from mimic_iv_analysis.configurations import TableNames, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS
 from mimic_iv_analysis.visualization.app_components import FilteringTab
 
-
-
 class SideBar:
 	def __init__(self):
 
@@ -32,17 +30,11 @@ class SideBar:
 
 		logger.info("Initializing ParquetConverter...")
 		self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
-		
+
 	def render(self):
 		"""Handles the display and logic of the sidebar components."""
 
 		def _select_sampling_parameters():
-
-			# TODO: make sure commenting this didn't cause any issue with loading the merged table partially
-			# if st.session_state.selected_table == 'merged_table' or self.has_no_subject_id_column:
-			# 	table_name = TableNames.ADMISSIONS
-			# else:
-			# 	table_name = TableNames(st.session_state.selected_table)
 
 			total_unique_subjects = len(self.data_handler.get_unique_subject_ids(table_name=TableNames(st.session_state.selected_table)))
 
@@ -300,6 +292,12 @@ class SideBar:
 		if st.session_state.get('selected_table') == 'merged_table' or self.is_selected_table_parquet:
 			self._load_table(selected_table_name_w_size=st.session_state.selected_table_name_w_size)
 
+		if st.session_state.selected_table == "merged_table":
+			with st.sidebar.expander(label="Export Loaded Data", expanded=True):
+				if st.session_state.df is not None:
+					self._export_options()
+
+
 	def _dask_configuration(self):
 		"""Display Dask configuration options in the sidebar."""
 
@@ -435,7 +433,7 @@ class SideBar:
 			st.session_state.total_subjects_count =  len(unique_subject_ids)
 			return st.session_state.total_subjects_count
 
-		def _load_merged_table() -> pd.DataFrame:
+		def _load_study_tables_and_merge() -> pd.DataFrame:
 
 			def _merged_df_is_valid(merged_df, total_subjects):
 
@@ -566,19 +564,42 @@ class SideBar:
 				st.sidebar.write("Detected Columns (for Feature Eng):")
 				st.sidebar.caption(f"Patient ID: {st.session_state.detected_patient_id_col}, Order: {st.session_state.detected_order_cols}, Time: {st.session_state.detected_time_cols}")
 
+		def _load_merged_table():
+			df = self.data_handler.fetch_table(table_name=TableNames.MERGED, use_dask=st.session_state.use_dask, apply_filtering=st.session_state.apply_filtering)
+
+			if not st.session_state.load_full:
+				df = self.data_handler.partial_loading(df=df, table_name=TableNames.MERGED, num_subjects=st.session_state.num_subjects_to_load)
+
+			st.session_state.df = df
+			st.sidebar.success(f"Loaded {len(st.session_state.df)} rows.")
+
 		def _check_table_selection():
 			if selected_table_name_w_size != "merged_table" and (not st.session_state.selected_module or not st.session_state.selected_table):
 				st.sidebar.warning("Please select a module and table first.")
 				return False
 			return True
 
+		def parquet_file_exists_and_not_empty(file_path):
+			"""Check if parquet file exists and is not empty"""
+			path = Path(file_path)
+			return path.exists() and path.stat().st_size > 0
+
 		# Updating self.data_handler
 		self._callback_reload_dataloader()
 
-		if st.sidebar.button("Load Selected Table", key="load_button", type="primary") and _check_table_selection():
+		if selected_table_name_w_size == "merged_table":
+
+			parquet_exist = parquet_file_exists_and_not_empty(self.data_handler.merged_table_parquet_path)
+
+			st.sidebar.checkbox('Load merged table from local parquet file', value=parquet_exist, key="load_merge_from_parquet", disabled=not parquet_exist)
+
+		if st.sidebar.button("Load Table", key="load_button", type="primary") and _check_table_selection():
 
 			if selected_table_name_w_size == "merged_table":
-				_load_merged_table()
+				if st.session_state.load_merge_from_parquet:
+					_load_merged_table()
+				else:
+					_load_study_tables_and_merge()
 			else:
 				_load_single_table()
 
@@ -736,7 +757,6 @@ class SideBar:
 			return True
 		return False
 
-
 	@staticmethod
 	def init_dask_client():
 		# ----------------------------------------
@@ -756,11 +776,11 @@ class SideBar:
 
 		# Initialize default values if not in session state with conservative settings
 		if 'dask_n_workers' not in st.session_state:
-			st.session_state.dask_n_workers = 2  # Reduced from 1 to 2 for better parallelism
+			st.session_state.dask_n_workers = 1  # Reduced from 1 to 2 for better parallelism
 		if 'dask_threads_per_worker' not in st.session_state:
 			st.session_state.dask_threads_per_worker = 4  # Reduced from 16 to 4 to prevent memory overload
 		if 'dask_memory_limit' not in st.session_state:
-			st.session_state.dask_memory_limit = '8GB'  # Reduced from 20GB to 8GB for safer memory usage
+			st.session_state.dask_memory_limit = '25GB'  # Reduced from 20GB to 8GB for safer memory usage
 		if 'dask_dashboard_port' not in st.session_state:
 			st.session_state.dask_dashboard_port = 8787
 
@@ -786,3 +806,30 @@ class SideBar:
 			logger.info("Dask client initialised with config %s: %s", config_key, st.session_state.dask_client)
 
 		# self.dask_client = st.session_state.dask_client
+
+	def _export_options(self):
+
+		# CSV Download button without pre-calculating row count
+		if st.button("Prepare CSV for Download", key="download_csv_button"):
+
+			data = self.parquet_converter.prepare_table_for_download_as_csv(df=st.session_state.df)
+
+			if st.download_button(
+					label     = f"Click to download CSV file",
+					data      = data,
+					file_name = f'{st.session_state.selected_table}.csv',
+					mime      = "text/csv",
+					key       = "download_complete_csv",
+					type      = "primary",
+					help      = "Download the complete dataset as CSV file (memory optimized with Dask)"):
+
+				st.success(f"CSV export completed!")
+
+		if st.session_state.load_full and st.button("Export as Parquet", key="save_as_parquet_button", type="primary"):
+
+			self.parquet_converter.save_as_parquet(
+										table_name          = TableNames(st.session_state.selected_table),
+										target_parquet_path = self.data_handler.merged_table_parquet_path,
+										df                  = st.session_state.df)
+
+			st.success(f"Parquet export completed! ({filename})")

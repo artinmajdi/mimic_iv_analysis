@@ -3,11 +3,10 @@ import os
 import glob
 from pathlib import Path
 from functools import lru_cache, cached_property
+import tempfile
 from typing import Dict, Optional, Tuple, List, Any, Literal
-import warnings
 
 # Data processing imports
-import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -27,7 +26,6 @@ from mimic_iv_analysis.configurations import (  TableNames,
 												DEFAULT_STUDY_TABLES_LIST,
 												DataFrameType)
 
-from time import time
 
 class DataLoader:
 	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
@@ -257,6 +255,9 @@ class DataLoader:
 	def _get_file_path(self, table_name: TableNames) -> Path:
 		"""Get the file path for a table with priority: parquet > csv > csv.gz"""
 
+		if table_name == TableNames.MERGED:
+			return self.merged_table_parquet_path
+
 		if self.tables_info_df is None:
 			self.scan_mimic_directory()
 
@@ -452,6 +453,10 @@ class DataLoader:
 
 		except Exception as e:
 			logger.error(f"Error in cleanup_persisted_resources: {str(e)}")
+
+	@property
+	def merged_table_parquet_path(self) -> Path:
+		return self.mimic_path / f'{TableNames.MERGED.value}.parquet'
 
 
 	def fetch_table(self, table_name: Optional[TableNames] = None, file_path: Optional[Path] = None, use_dask: bool = True, apply_filtering: bool = True) -> pd.DataFrame | dd.DataFrame:
@@ -914,17 +919,48 @@ class ParquetConverter:
 
 		return pa.schema(fields)
 
-	def save_as_parquet(self, table_name: TableNames, df: Optional[pd.DataFrame | dd.DataFrame] = None, target_parquet_path: Optional[Path] = None, use_dask: bool = True, chunk_size: int = 100000) -> None:
+	def save_as_parquet(self, table_name: TableNames, df: Optional[pd.DataFrame | dd.DataFrame] = None, target_parquet_path: Optional[Path] = None, chunk_size: int = 10000) -> None:
 		"""
 		Saves a DataFrame as a Parquet file with improved memory management.
 
 		Args:
-			table_name: Table name to save as parquet
-			df: Optional DataFrame to save (if None, loads from source_path)
+			table_name         : Table name to save as parquet
+			df                 : Optional DataFrame to save (if None, loads from source_path)
 			target_parquet_path: Optional target path for the parquet file
-			use_dask: Whether to use Dask for loading
-			chunk_size: Number of rows per chunk for large datasets
+			use_dask           : Whether to use Dask for loading
+			chunk_size         : Number of rows per chunk for large datasets
 		"""
+		def _save_pandas_chunked(df: pd.DataFrame, target_path: Path, schema: pa.Schema, chunk_size: int) -> None:
+			"""
+			Save a large pandas DataFrame in chunks to avoid memory issues.
+
+			Args:
+				df: DataFrame to save
+				target_path: Target parquet file path
+				schema: PyArrow schema
+				chunk_size: Number of rows per chunk
+			"""
+			# Create directory if it doesn't exist
+			target_path.parent.mkdir(parents=True, exist_ok=True)
+
+			# Write first chunk to establish the file
+			first_chunk = df.iloc[:chunk_size]
+			table = pa.Table.from_pandas(first_chunk, schema=schema)
+			pq.write_table(table, target_path, compression='snappy')
+
+			# Append remaining chunks
+			for i in range(chunk_size, len(df), chunk_size):
+				chunk = df.iloc[i:i+chunk_size]
+				table = pa.Table.from_pandas(chunk, schema=schema)
+				# For subsequent chunks, we need to use a different approach
+				# since PyArrow doesn't support direct append mode
+				temp_path = target_path.with_suffix(f'.chunk_{i}.parquet')
+				pq.write_table(table, temp_path, compression='snappy')
+
+			# Combine all chunks (this is a simplified approach)
+			logger.info(f"Chunked writing completed for {target_path}")
+
+
 		if df is None or target_parquet_path is None:
 
 			# Get csv file path
@@ -932,114 +968,46 @@ class ParquetConverter:
 
 			# Load the CSV file
 			if df is None:
-				df = self.data_loader.fetch_table(file_path=csv_file_path, table_name=table_name, use_dask=use_dask, apply_filtering=False)
+				df = self.data_loader.fetch_table(file_path=csv_file_path, table_name=table_name, apply_filtering=False)
 
 			# Get parquet directory
 			if target_parquet_path is None:
 				target_parquet_path = csv_file_path.parent / csv_file_path.name.replace(suffix, '.parquet')
 
-		# Create schema
 		schema = self._create_table_schema(df)
 
-		# if table_name == TableNames.TRANSFERS:
-		# 	df = df.dropna(subset=['hadm_id'])
-		# 	if 'hadm_id' in df.columns:
-		# 		df['hadm_id'] = df['hadm_id'].astype('int64')
-
-		# Save to parquet with improved memory management
-		a = time()
 		try:
 			if isinstance(df, dd.DataFrame):
-				# For Dask DataFrames, use chunked processing with smaller partitions
-				logger.info(f"Starting Parquet conversion for {table_name} with {df.npartitions} partitions")
 
 				# Repartition to smaller chunks if necessary to avoid memory issues
-				if df.npartitions > 50 or table_name == TableNames.MERGED:  # If too many partitions, reduce them
-					df = df.repartition(partition_size="100MB")
+				if df.npartitions > 50 or table_name == TableNames.MERGED:
+					df = df.repartition(partition_size="30MB")
 					logger.info(f"Repartitioned {table_name} to {df.npartitions} partitions")
 
-				# Use write_to_dataset for better memory management
 				df.to_parquet(
 					target_parquet_path,
-					schema=schema,
-					engine='pyarrow',
-					compression='snappy',
-					write_metadata_file=True,
-					compute_kwargs={'scheduler': 'threads'}  # Use threads instead of processes for better memory control
-				)
-				b = time()
-				logger.info(f'Successfully saved {table_name} as parquet in {b-a:.2f} seconds')
+					schema              = schema,
+					engine              = 'pyarrow',
+					write_metadata_file = True,
+					# compute_kwargs      = {'scheduler': 'threads'},  # Use threads instead of processes for better memory control
+					compression         = 'snappy')
+
+				logger.info(f'Successfully saved {table_name} as parquet')
+
 			else:
-				# For pandas DataFrames, use chunked writing for large datasets
 				if len(df) > chunk_size:
 					logger.info(f"Large dataset detected ({len(df)} rows). Using chunked processing with {chunk_size} rows per chunk.")
-					self._save_pandas_chunked(df=df, target_path=target_parquet_path.with_suffix('.csv'), schema=schema, chunk_size=chunk_size)
+					_save_pandas_chunked(df=df, target_path=target_parquet_path.with_suffix('.csv'), schema=schema, chunk_size=chunk_size)
 				else:
 					table = pa.Table.from_pandas(df, schema=schema)
 					pq.write_table(table, target_parquet_path.with_suffix('.csv'), compression='snappy')
-				b = time()
-				logger.info(f'Successfully saved {table_name} as parquet in {b-a:.2f} seconds')
+
+				logger.info(f'Successfully saved {table_name} as parquet')
 
 		except Exception as e:
 			logger.error(f"Failed to save {table_name} as parquet: {str(e)}")
-			# Attempt fallback with smaller chunks or different approach
-			# self._fallback_parquet_save(df, target_path=target_parquet_path.with_suffix('.csv'), schema=schema, table_name=table_name)
 			raise
 
-	def _save_pandas_chunked(self, df: pd.DataFrame, target_path: Path, schema: pa.Schema, chunk_size: int) -> None:
-		"""
-		Save a large pandas DataFrame in chunks to avoid memory issues.
-
-		Args:
-			df: DataFrame to save
-			target_path: Target parquet file path
-			schema: PyArrow schema
-			chunk_size: Number of rows per chunk
-		"""
-		# Create directory if it doesn't exist
-		target_path.parent.mkdir(parents=True, exist_ok=True)
-
-		# Write first chunk to establish the file
-		first_chunk = df.iloc[:chunk_size]
-		table = pa.Table.from_pandas(first_chunk, schema=schema)
-		pq.write_table(table, target_path, compression='snappy')
-
-		# Append remaining chunks
-		for i in range(chunk_size, len(df), chunk_size):
-			chunk = df.iloc[i:i+chunk_size]
-			table = pa.Table.from_pandas(chunk, schema=schema)
-			# For subsequent chunks, we need to use a different approach
-			# since PyArrow doesn't support direct append mode
-			temp_path = target_path.with_suffix(f'.chunk_{i}.parquet')
-			pq.write_table(table, temp_path, compression='snappy')
-
-		# Combine all chunks (this is a simplified approach)
-		logger.info(f"Chunked writing completed for {target_path}")
-
-	def _fallback_parquet_save(self, df, target_path: Path, schema: pa.Schema, table_name: TableNames) -> None:
-		"""
-		Fallback method for saving parquet when the main method fails.
-
-		Args:
-			df: DataFrame to save
-			target_path: Target parquet file path
-			schema: PyArrow schema
-			table_name: Name of the table being saved
-		"""
-		logger.warning(f"Attempting fallback parquet save for {table_name}")
-		try:
-			if isinstance(df, dd.DataFrame):
-				# Convert to pandas and save in smaller chunks
-				logger.info("Converting Dask DataFrame to pandas for fallback save")
-				pandas_df = df.compute()
-				self._save_pandas_chunked(pandas_df, target_path, schema, chunk_size=50000)
-			else:
-				# Try with smaller chunks
-				self._save_pandas_chunked(df, target_path, schema, chunk_size=50000)
-			logger.info(f"Fallback save successful for {table_name}")
-		except Exception as fallback_error:
-			logger.error(f"Fallback save also failed for {table_name}: {str(fallback_error)}")
-			raise
 
 	def save_all_tables_as_parquet(self, tables_list: Optional[List[TableNames]] = None) -> None:
 		"""
@@ -1067,6 +1035,86 @@ class ParquetConverter:
 		else:
 			logger.info("Successfully converted all tables to Parquet format")
 
+	@staticmethod
+	def save_dask_partitions_separately(df, target_path: Path, schema: pa.Schema, table_name: TableNames) -> None:
+		"""
+		Save Dask DataFrame partition by partition when memory is limited.
+
+		Args:
+			df: Dask DataFrame to save
+			target_path: Target parquet file path
+			schema: PyArrow schema
+			table_name: Name of the table being saved
+		"""
+		logger.info(f"Saving {table_name} partition by partition due to memory constraints")
+
+		# Create temporary directory for partition files
+		with tempfile.TemporaryDirectory() as temp_dir:
+			temp_path = Path(temp_dir)
+			partition_files = []
+
+			try:
+				# Save each partition separately
+				for i in range(df.npartitions):
+					partition = df.get_partition(i).compute()
+					if len(partition) > 0:  # Only save non-empty partitions
+						partition_file = temp_path / f"partition_{i:04d}.parquet"
+						table = pa.Table.from_pandas(partition, schema=schema)
+						pq.write_table(table, partition_file, compression='snappy')
+						partition_files.append(partition_file)
+						logger.debug(f"Saved partition {i} with {len(partition)} rows")
+
+				# Combine all partition files into final parquet file
+				if partition_files:
+					logger.info(f"Combining {len(partition_files)} partitions into final file")
+					combined_table = pq.read_table(partition_files, schema=schema)
+					pq.write_table(combined_table, target_path, compression='snappy')
+					logger.info(f"Successfully combined partitions for {table_name}")
+				else:
+					logger.warning(f"No non-empty partitions found for {table_name}")
+					# Create empty parquet file with schema
+					empty_df = pd.DataFrame()
+					for field in schema:
+						empty_df[field.name] = pd.Series(dtype=field.type.to_pandas_dtype())
+					empty_table = pa.Table.from_pandas(empty_df, schema=schema)
+					pq.write_table(empty_table, target_path, compression='snappy')
+
+			except Exception as e:
+				logger.error(f"Error in partition-by-partition save for {table_name}: {str(e)}")
+				raise
+
+
+	@staticmethod
+	def prepare_table_for_download_as_csv(df: pd.DataFrame | dd.DataFrame):
+		"""Prepare CSV data on-demand with progress tracking."""
+		logger.info("Preparing CSV download...")
+
+		try:
+			if isinstance(df, dd.DataFrame):
+
+				# Use Dask's native to_csv with temporary file
+				import tempfile
+				with tempfile.NamedTemporaryFile(mode='w+', suffix='.csv', delete=False) as tmp_file:
+					tmp_path = tmp_file.name
+
+				# Dask writes directly to file without computing entire DataFrame
+				df.to_csv(tmp_path, index=False, single_file=True)
+
+				# Read the file content and clean up
+				with open(tmp_path, 'r', encoding='utf-8') as f:
+					csv_data = f.read().encode('utf-8')
+
+				# Clean up temporary file
+				Path(tmp_path).unlink(missing_ok=True)
+
+				return csv_data
+			else:
+				csv_data = df.to_csv(index=False).encode('utf-8')
+				return csv_data
+
+		except Exception as e:
+			logger.error(f"Error preparing CSV download: {e}")
+			return b""  # Return empty bytes on error
 
 
 if __name__ == '__main__':
@@ -1074,15 +1122,5 @@ if __name__ == '__main__':
 	loader = DataLoader(mimic_path=DEFAULT_MIMIC_PATH, apply_filtering=True, filter_params={})
 	df_merged = loader.load(table_name=TableNames.MERGED, partial_loading=False)
 	subject_ids = loader.get_unique_subject_ids(table_name=TableNames.ADMISSIONS)
-
-	# Convert admissions table to Parquet
-	# converter = ParquetConverter(data_loader=loader)
-	# converter.save_as_parquet(table_name=TableNames.ADMISSIONS, use_dask=True)
-	# converter.save_all_tables_as_parquet()
-
-	# 1. Load a table fully
-	# logger.info("Loading 'patients' table fully...")
-	# patients_df = loader.load_one_table(TableNames.PATIENTS, partial_loading=False, use_dask=True)
-
 
 	print('done')
