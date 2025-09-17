@@ -705,10 +705,10 @@ class ExampleDataLoader(DataLoader):
 
 		super().__init__(apply_filtering=apply_filtering, filter_params=filter_params)
 
-		self.partial_loading = partial_loading
-		self.num_subjects    = num_subjects
+		self.partial_loading  = partial_loading
+		self.num_subjects     = num_subjects
 		self.random_selection = random_selection
-		self.use_dask        = use_dask
+		self.use_dask         = use_dask
 
 		self.scan_mimic_directory()
 		self.tables_dict = self.fetch_complete_study_tables(use_dask=use_dask)

@@ -17,9 +17,9 @@ from mimic_iv_analysis.visualization.app_components import FeatureEngineeringTab
 
 from mimic_iv_analysis.visualization.app_components.exploration_and_viz import ExplorationAndViz
 
-# TODO: make sure when i run the merged table in full, it still goes the same way as with subject_ids filtering (first apply the subject ids to each table and then merging the tables).
+# TODO: Add the prescriptions , labevents, and d_labitems into the study tables and merging scheme
 # TODO: Generate a sphinx documentation for this.
-# TODO: Add the option to save the Full merged table and load it when available instead of re-merging the tables. Use a hash system using the table names that are used in that merge
+
 class MIMICDashboardApp:
 
 	def __init__(self):
