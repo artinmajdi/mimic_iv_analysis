@@ -835,4 +835,4 @@ class SideBar:
 										target_parquet_path = self.data_handler.merged_table_parquet_path,
 										df                  = st.session_state.df)
 
-			st.success(f"Parquet export completed! ({filename})")
+			st.success(f"Parquet export completed!")

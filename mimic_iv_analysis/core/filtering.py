@@ -108,14 +108,10 @@ class Filtering:
 
 
 		elif self.table_name == TableNames.TRANSFERS:
-			# self.df = self.df.dropna(subset=['hadm_id'])
-			self.df = self.df[self.df.hadm_id != '']
-			# if 'hadm_id' in self.df.columns:
-			# 	self.df['hadm_id'] = self.df['hadm_id'].astype('int64')
 
-
-			# Identify inpatient locations using transfers table and careunit column (to find “Med”, “Surg”, “Ortho”, “Card”, “GU”, “MICU”, “SICU”, “CSRU”
-
+			empty_cells = self.df.hadm_id != ''
+			careunit = self.df.careunit.isin(['Medicine'])
+			self.df = self.df[empty_cells & careunit]
 
 		elif self.table_name == TableNames.MICROBIOLOGYEVENTS:
 			self.df = self.df.drop(columns=['comments'])

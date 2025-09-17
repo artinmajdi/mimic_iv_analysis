@@ -112,14 +112,15 @@ DEFAULT_STUDY_TABLES_LIST = [
 				TableNames.TRANSFERS,
 				TableNames.D_ICD_DIAGNOSES,
 				TableNames.POE,
-				TableNames.POE_DETAIL
+				TableNames.POE_DETAIL,
+                TableNames.PRESCRIPTIONS
 			]
 
 
 # def convert_table_names_to_enum_class(name: str, module: Literal['hosp', 'icu']='hosp') -> TableNames:
 #     return TableNames(name)
 
-
+# TODO: add TableNames.PRESCRIPTIONS.value table
 # Constants
 # TODO: Remove all dependencies on DEFAULT_MIMIC_PATH path except for UI path selection default value.
 # DEFAULT_MIMIC_PATH   = Path("/Users/artinmajdi/Documents/GitHubs/RAP/mimic__pankaj/dataset/mimic-iv-3.1")
@@ -251,7 +252,7 @@ TABLE_CATEGORICAL_COLUMNS = {
 	TableNames.DRGCODES.value       : ['drg_type'],
 	TableNames.D_ICD_DIAGNOSES.value: ['icd_version'],
 	TableNames.DIAGNOSES_ICD.value  : ['icd_version', 'seq_num'],
-	TableNames.POE.value            : ['order_type', 'transaction_type'],
+	TableNames.POE.value            : ['order_type', 'transaction_type']
 }
 
 # Default dtypes for pandas loading

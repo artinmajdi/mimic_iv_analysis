@@ -246,7 +246,7 @@ class MIMICDashboardApp:
 		st.session_state.filter_params = {
 
 			TableNames.POE.value: {
-				'selected_columns'      : ["poe_id", "poe_seq", "subject_id", "hadm_id", "ordertime", "order_type"],
+				'selected_columns'      : ["poe_id", "poe_seq", "subject_id", "hadm_id", "ordertime", "order_type", "order_subtype"],
 				'apply_order_type'      : False,
 				'order_type'            : [],
 				'apply_transaction_type': False,
