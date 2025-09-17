@@ -846,7 +846,7 @@ class ClusteringAnalysisTab:
 			eps = st.number_input(
 				label   = "Epsilon (ε)",
 				min_value = 0.01,
-				max_value = max(eps_default, 10.0),
+				max_value = max(eps_default if eps_default is not None else 0.5, 10.0),
 				value     = eps_default,
 				step      = 0.05,
 				help      = "Maximum distance between samples to be neighbors",
