@@ -989,13 +989,18 @@ class ParquetConverter:
 
 				df.to_parquet(
 					target_parquet_path,
-					schema              = schema,
-					engine              = 'pyarrow',
-					write_metadata_file = True,
-					# compute_kwargs      = {'scheduler': 'threads'},  # Use threads instead of processes for better memory control
-					compression         = 'snappy')
+					schema=schema,
+					engine='pyarrow',
+					write_metadata_file=True,
+					compression='snappy',
+					# Performance optimizations
+					write_index=False,  # Skip index writing for speed
+					overwrite=True,     # Allow overwriting for updates
+					# Use threads for I/O bound operations
+					compute_kwargs={'scheduler': 'threads', 'num_workers': min(4, os.cpu_count())}
+				)
 
-				logger.info(f'Successfully saved {table_name} as parquet')
+				logger.info(f'Successfully saved {table_name} as parquet with {df.npartitions} partitions')
 
 			else:
 				if len(df) > chunk_size:

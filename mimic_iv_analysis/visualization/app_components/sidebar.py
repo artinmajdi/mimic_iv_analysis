@@ -621,36 +621,36 @@ class SideBar:
 			st.session_state.conversion_status = {'type': 'warning', 'message': "No tables to process."}
 			return
 
-		try:
-			with st.spinner(f"Converting {len(tables_to_process)} table(s) to Parquet..."):
-				success_count = 0
-				failed_tables = []
+		# try:
+		with st.spinner(f"Converting {len(tables_to_process)} table(s) to Parquet..."):
+			success_count = 0
+			failed_tables = []
 
-				for table_enum in tables_to_process:
-					try:
-						logger.info(f"Starting conversion of {table_enum.value}")
-						self.parquet_converter.save_as_parquet(table_name=table_enum)
-						success_count += 1
-						logger.info(f"Successfully converted {table_enum.value}")
-					except Exception as table_error:
-						logger.error(f"Failed to convert {table_enum.value}: {str(table_error)}")
-						failed_tables.append(table_enum.value)
-						continue
+			for table_enum in tables_to_process:
+				# try:
+				logger.info(f"Starting conversion of {table_enum.value}")
+				self.parquet_converter.save_as_parquet(table_name=table_enum)
+				success_count += 1
+				logger.info(f"Successfully converted {table_enum.value}")
+				# except Exception as table_error:
+				# 	logger.error(f"Failed to convert {table_enum.value}: {str(table_error)}")
+				# 	failed_tables.append(table_enum.value)
+				# 	continue
 
-			if self._rescan_and_update_state():
-				if success_count == len(tables_to_process):
-					st.session_state.conversion_status = {'type': 'success', 'message': f"Successfully converted all {success_count} table(s)!"}
-				elif success_count > 0:
-					st.session_state.conversion_status = {'type': 'warning', 'message': f"Converted {success_count}/{len(tables_to_process)} table(s). Failed: {', '.join(failed_tables)}"}
-				else:
-					st.session_state.conversion_status = {'type': 'error', 'message': f"Failed to convert any tables. Failed: {', '.join(failed_tables)}"}
+		if self._rescan_and_update_state():
+			if success_count == len(tables_to_process):
+				st.session_state.conversion_status = {'type': 'success', 'message': f"Successfully converted all {success_count} table(s)!"}
+			elif success_count > 0:
+				st.session_state.conversion_status = {'type': 'warning', 'message': f"Converted {success_count}/{len(tables_to_process)} table(s). Failed: {', '.join(failed_tables)}"}
 			else:
-				st.session_state.conversion_status = {'type': 'error', 'message': "Conversion might have failed. Could not find updated tables."}
+				st.session_state.conversion_status = {'type': 'error', 'message': f"Failed to convert any tables. Failed: {', '.join(failed_tables)}"}
+		else:
+			st.session_state.conversion_status = {'type': 'error', 'message': "Conversion might have failed. Could not find updated tables."}
 
 
-		except Exception as e:
-			logger.error(f"Parquet conversion job failed: {e}", exc_info=True)
-			st.session_state.conversion_status = {'type': 'exception', 'message': f"Critical error during conversion: {str(e)}. Try reducing Dask memory settings or processing smaller tables."}
+		# except Exception as e:
+		# 	logger.error(f"Parquet conversion job failed: {e}", exc_info=True)
+		# 	st.session_state.conversion_status = {'type': 'exception', 'message': f"Critical error during conversion: {str(e)}. Try reducing Dask memory settings or processing smaller tables."}
 
 		st.session_state.selected_table = selected_table
 		st.session_state.selected_module = selected_module
