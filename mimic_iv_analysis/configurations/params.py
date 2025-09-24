@@ -113,9 +113,23 @@ DEFAULT_STUDY_TABLES_LIST = [
 				TableNames.D_ICD_DIAGNOSES,
 				TableNames.POE,
 				TableNames.POE_DETAIL,
-                TableNames.PRESCRIPTIONS
+                TableNames.PRESCRIPTIONS,
+                TableNames.D_LABITEMS,
+                TableNames.LABEVENTS,
 			]
 
+TABLES_W_SUBJECT_ID_COLUMN =  [
+                    TableNames.MERGED,
+                    TableNames.PATIENTS,
+					TableNames.ADMISSIONS,
+					TableNames.TRANSFERS,
+					TableNames.DIAGNOSES_ICD,
+					TableNames.POE,
+					TableNames.POE_DETAIL,
+					TableNames.MICROBIOLOGYEVENTS,
+                    TableNames.LABEVENTS,
+                    TableNames.PRESCRIPTIONS
+                ]
 
 # def convert_table_names_to_enum_class(name: str, module: Literal['hosp', 'icu']='hosp') -> TableNames:
 #     return TableNames(name)

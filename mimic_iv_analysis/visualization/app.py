@@ -11,7 +11,7 @@ import humanize
 
 # Local application imports
 from mimic_iv_analysis import logger
-from mimic_iv_analysis.configurations import TableNames, DEFAULT_MIMIC_PATH
+from mimic_iv_analysis.configurations import TableNames, DEFAULT_MIMIC_PATH, TABLES_W_SUBJECT_ID_COLUMN
 
 from mimic_iv_analysis.visualization.app_components import FeatureEngineeringTab, AnalysisVisualizationTab, ClusteringAnalysisTab, SideBar
 
@@ -61,8 +61,9 @@ class MIMICDashboardApp:
 
 				st.metric("Total Subjects", f"{st.session_state.total_subjects_count:,}")
 
-				loaded_subjects = st.session_state.df.subject_id.nunique().compute() if isinstance(st.session_state.df, dd.DataFrame) else len(st.session_state.df.subject_id.unique()) if st.session_state.df is not None else 0
-				st.metric("Subjects Loaded", f"{loaded_subjects:,}")
+				if st.session_state.selected_table in [t.value for t in TABLES_W_SUBJECT_ID_COLUMN]:
+					loaded_subjects = st.session_state.df.subject_id.nunique().compute() if isinstance(st.session_state.df, dd.DataFrame) else len(st.session_state.df.subject_id.unique()) if st.session_state.df is not None else 0
+					st.metric("Subjects Loaded", f"{loaded_subjects:,}")
 
 			with col3:
 				st.metric("Rows Loaded", f"{len(st.session_state.df):,}")

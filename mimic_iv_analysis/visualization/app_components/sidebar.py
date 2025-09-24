@@ -18,7 +18,7 @@ import streamlit as st
 from mimic_iv_analysis import logger
 from mimic_iv_analysis.core import FeatureEngineerUtils, DaskConfigOptimizer
 from mimic_iv_analysis.io import DataLoader, ParquetConverter
-from mimic_iv_analysis.configurations import TableNames, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS
+from mimic_iv_analysis.configurations import TableNames, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS, TABLES_W_SUBJECT_ID_COLUMN
 from mimic_iv_analysis.visualization.app_components import FilteringTab
 
 class SideBar:
@@ -429,8 +429,11 @@ class SideBar:
 		"""Load a specific MIMIC-IV table, handling large files and sampling."""
 
 		def _get_total_subjects(table_name: TableNames) -> int:
+
 			unique_subject_ids = self.data_handler.get_unique_subject_ids(table_name=table_name, recalculate_subject_ids=False)
-			st.session_state.total_subjects_count =  len(unique_subject_ids)
+
+			st.session_state.total_subjects_count = len(unique_subject_ids)
+
 			return st.session_state.total_subjects_count
 
 		def _load_study_tables_and_merge() -> pd.DataFrame:
@@ -509,14 +512,13 @@ class SideBar:
 		def _load_single_table():
 
 			def _df_is_valid(df, total_subjects):
-				# Check if DataFrame is not None
+
 				if df is None:
 					st.sidebar.error("Failed to load table. Check logs or file format.")
 					st.session_state.df = None
 					return False
 
-				# check shape
-				if (isinstance(df, dd.DataFrame) and total_subjects == 0) or (isinstance(df, pd.DataFrame) and df.empty):
+				if total_subjects == 0 and st.session_state.selected_table in TABLES_W_SUBJECT_ID_COLUMN:
 					st.sidebar.warning("Loaded table is empty.")
 					st.session_state.df = None
 					return False
@@ -746,7 +748,7 @@ class SideBar:
 	@property
 	def has_no_subject_id_column(self):
 		"""Check if the current table has a subject_id column."""
-		tables_that_can_be_sampled = [	"merged_table" ] + [table.value for table in self.data_handler.tables_w_subject_id_column]
+		tables_that_can_be_sampled = [	"merged_table" ] + [table.value for table in TABLES_W_SUBJECT_ID_COLUMN]
 		return st.session_state.selected_table not in tables_that_can_be_sampled
 
 	@property

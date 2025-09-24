@@ -22,9 +22,9 @@ from mimic_iv_analysis.configurations import (  TableNames,
 												DATETIME_COLUMNS,
 												DEFAULT_MIMIC_PATH,
 												DEFAULT_NUM_SUBJECTS,
-												SUBJECT_ID_COL,
-												DEFAULT_STUDY_TABLES_LIST,
-												DataFrameType)
+												TABLES_W_SUBJECT_ID_COLUMN,
+												DEFAULT_STUDY_TABLES_LIST
+												)
 
 
 class DataLoader:
@@ -291,7 +291,7 @@ class DataLoader:
 
 		return _sample_subject_ids(list(unique_subject_ids))
 
-	def get_unique_subject_ids(self, table_name: TableNames, recalculate_subject_ids: bool = False) -> set:
+	def get_unique_subject_ids(self, table_name: TableNames, recalculate_subject_ids: bool = False) -> Optional[set]:
 
 		def get_for_one_table(table_name: TableNames) -> set:
 			"""Returns a list of unique subject_ids found in a table."""
@@ -374,7 +374,7 @@ class DataLoader:
 				return intersection_set
 
 			# Get all tables that have subject_id column and are part of merged table
-			tables_with_subject_id = [table for table in self.merged_table_components if table in self.tables_w_subject_id_column]
+			tables_with_subject_id = [table for table in self.merged_table_components if table in TABLES_W_SUBJECT_ID_COLUMN]
 
 			if not tables_with_subject_id:
 				logger.warning("No tables with subject_id found in merged table components")
@@ -396,7 +396,10 @@ class DataLoader:
 		if table_name == TableNames.MERGED:
 			return get_merged_table_subject_ids()
 
-		return get_for_one_table(table_name=table_name)
+		if table_name in TABLES_W_SUBJECT_ID_COLUMN:
+			return get_for_one_table(table_name=table_name)
+
+		return {}
 
 	def fetch_complete_study_tables(self, use_dask: bool = True) -> Dict[str, pd.DataFrame | dd.DataFrame]:
 
@@ -673,16 +676,16 @@ class DataLoader:
 		return self.merge_tables(tables_dict=tables_dict, use_dask=use_dask)
 
 
-	@property
-	def tables_w_subject_id_column(self) -> List[TableNames]:
-		"""Tables that have a subject_id column."""
-		return  [	TableNames.PATIENTS,
-					TableNames.ADMISSIONS,
-					TableNames.TRANSFERS,
-					TableNames.DIAGNOSES_ICD,
-					TableNames.POE,
-					TableNames.POE_DETAIL,
-					TableNames.MICROBIOLOGYEVENTS]
+	# @property
+	# def tables_w_subject_id_column(self) -> List[TableNames]:
+	# 	"""Tables that have a subject_id column."""
+	# 	return  [	TableNames.PATIENTS,
+	# 				TableNames.ADMISSIONS,
+	# 				TableNames.TRANSFERS,
+	# 				TableNames.DIAGNOSES_ICD,
+	# 				TableNames.POE,
+	# 				TableNames.POE_DETAIL,
+	# 				TableNames.MICROBIOLOGYEVENTS]
 
 	@property
 	def merged_table_components(self) -> List[TableNames]:

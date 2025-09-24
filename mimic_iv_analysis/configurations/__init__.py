@@ -24,6 +24,7 @@ from .params import (   TableNames,
                         RANDOM_STATE,
                         SUBJECT_ID_COL,
                         DEFAULT_STUDY_TABLES_LIST,
+                        TABLES_W_SUBJECT_ID_COLUMN,
                         DataFrameType)
 
 def load_config(config_path=None):
