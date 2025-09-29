@@ -14,18 +14,15 @@ import yaml
 
 from .settings import logger
 from .params import (   TableNames,
-                        dtypes_all,
-                        parse_dates_all,
+                        ColumnNames,
                         pyarrow_dtypes_map,
-                        COLUMN_TYPES,
-                        DATETIME_COLUMNS,
                         DEFAULT_MIMIC_PATH,
                         DEFAULT_NUM_SUBJECTS,
                         RANDOM_STATE,
                         SUBJECT_ID_COL,
                         DEFAULT_STUDY_TABLES_LIST,
-                        TABLES_W_SUBJECT_ID_COLUMN,
-                        DataFrameType)
+                        DataFrameType
+                        )
 
 def load_config(config_path=None):
     """Load configuration from a YAML file.
@@ -55,8 +52,7 @@ __all__ = [
 
     # Params
     'TableNames',
-    'dtypes_all',
-    'parse_dates_all',
+    'ColumnNames',
     'DEFAULT_MIMIC_PATH',
     'DEFAULT_NUM_SUBJECTS',
     'RANDOM_STATE',
@@ -64,6 +60,4 @@ __all__ = [
     'DEFAULT_STUDY_TABLES_LIST',
     'DataFrameType',
     'pyarrow_dtypes_map',
-    'COLUMN_TYPES',
-    'DATETIME_COLUMNS'
 ]

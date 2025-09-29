@@ -1744,7 +1744,7 @@ wheels = [
 
 [[package]]
 name = "mimic-iv-analysis"
-version = "1.11.0"
+version = "1.11.4"
 source = { editable = "." }
 dependencies = [
     { name = "dask", extra = ["distributed"] },

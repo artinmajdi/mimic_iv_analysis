@@ -18,7 +18,7 @@ import streamlit as st
 from mimic_iv_analysis import logger
 from mimic_iv_analysis.core import FeatureEngineerUtils, DaskConfigOptimizer
 from mimic_iv_analysis.io import DataLoader, ParquetConverter
-from mimic_iv_analysis.configurations import TableNames, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS, TABLES_W_SUBJECT_ID_COLUMN
+from mimic_iv_analysis.configurations import TableNames, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS
 from mimic_iv_analysis.visualization.app_components import FilteringTab
 
 class SideBar:
@@ -48,14 +48,15 @@ class SideBar:
 
 
 			# Number of subjects to load
+			max_value = total_unique_subjects if total_unique_subjects > 0 else 1
 			st.sidebar.number_input(
 				"Number of Subjects to Load",
 				min_value = 1,
-				max_value = total_unique_subjects if total_unique_subjects > 0 else 1,
+				max_value = max_value,
 				disabled  = self.has_no_subject_id_column,
 				key       = "num_subjects_to_load",
 				step      = 10,
-				value     = st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS),
+				value     = min(st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS), max_value),
 				help      = f"Number of subjects to load. Max: {total_unique_subjects}."
 			)
 
@@ -94,18 +95,18 @@ class SideBar:
 					""" Checks which component tables of the merged table need to be converted to Parquet. """
 
 					tables_to_convert = []
-					component_tables = self.data_handler.merged_table_components
+					component_tables = self.data_handler.study_tables_list
 
 					if force_update:
 						return component_tables
 
-					for table_enum in component_tables:
+					for table_name in component_tables:
 						try:
-							file_path = self.data_handler._get_file_path(table_name=table_enum)
+							file_path = self.data_handler._get_file_path(table_name=TableNames(table_name))
 							if file_path.suffix != '.parquet':
-								tables_to_convert.append(table_enum)
+								tables_to_convert.append(table_name)
 						except (ValueError, IndexError):
-							logger.warning(f"Component table {table_enum.value} not found, skipping for conversion check.")
+							logger.warning(f"Component table {table_name} not found, skipping for conversion check.")
 							continue
 					return tables_to_convert
 
@@ -125,7 +126,7 @@ class SideBar:
 					label    = "Update All Base Parquet Tables",
 					key      = "update_merged_parquet",
 					on_click = self._convert_table_to_parquet,
-					args     = (self.data_handler.merged_table_components,),
+					args     = (self.data_handler.study_tables_list,),
 					help     = "Re-convert all base tables from CSV to update their Parquet files."
 				)
 
@@ -507,7 +508,7 @@ class SideBar:
 
 					self._clear_analysis_states()
 
-					st.sidebar.success(f"Successfully merged {len(st.session_state.connected_tables)} tables with {len(merged_df.columns)} columns and {total_subjects} rows!")
+					st.sidebar.success(f"Successfully merged {len(st.session_state.connected_tables)} tables with {len(merged_df.columns)} columns and {total_subjects} subjects!")
 
 		def _load_single_table():
 
@@ -518,7 +519,7 @@ class SideBar:
 					st.session_state.df = None
 					return False
 
-				if total_subjects == 0 and st.session_state.selected_table in TABLES_W_SUBJECT_ID_COLUMN:
+				if total_subjects == 0 and st.session_state.selected_table in TableNames._TABLES_W_SUBJECT_ID_COLUMN:
 					st.sidebar.warning("Loaded table is empty.")
 					st.session_state.df = None
 					return False
@@ -748,7 +749,7 @@ class SideBar:
 	@property
 	def has_no_subject_id_column(self):
 		"""Check if the current table has a subject_id column."""
-		tables_that_can_be_sampled = [	"merged_table" ] + [table.value for table in TABLES_W_SUBJECT_ID_COLUMN]
+		tables_that_can_be_sampled = TableNames._TABLES_W_SUBJECT_ID_COLUMN
 		return st.session_state.selected_table not in tables_that_can_be_sampled
 
 	@property

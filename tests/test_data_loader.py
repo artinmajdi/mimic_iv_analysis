@@ -122,7 +122,7 @@ class TestDataLoader:
         """Test the initialization of DataLoader."""
         loader = DataLoader()
         assert loader.mimic_path == DEFAULT_MIMIC_PATH
-        assert loader.study_table_list == DEFAULT_STUDY_TABLES_LIST
+        assert loader.study_tables_list == DEFAULT_STUDY_TABLES_LIST
         assert loader.tables_info_df is None
         assert loader.tables_info_dict is None
 
@@ -131,7 +131,7 @@ class TestDataLoader:
         custom_tables = [TableNames.PATIENTS, TableNames.ADMISSIONS]
         loader = DataLoader(mimic_path=custom_path, study_tables_list=custom_tables)
         assert loader.mimic_path == custom_path
-        assert loader.study_table_list == custom_tables
+        assert loader.study_tables_list == custom_tables
 
     def test_scan_mimic_directory(self, mock_mimic_dir):
         """Test scanning the MIMIC directory structure."""
@@ -574,7 +574,7 @@ class TestParquetConverter:
             converter.save_all_tables_as_parquet()
 
             # Should use the data_loader's study_table_list
-            assert mock_save.call_count == len(data_loader.study_table_list)
+            assert mock_save.call_count == len(data_loader.study_tables_list)
 
 
 class TestExampleDataLoader:

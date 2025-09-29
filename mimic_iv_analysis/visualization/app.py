@@ -11,12 +11,14 @@ import humanize
 
 # Local application imports
 from mimic_iv_analysis import logger
-from mimic_iv_analysis.configurations import TableNames, DEFAULT_MIMIC_PATH, TABLES_W_SUBJECT_ID_COLUMN
+from mimic_iv_analysis.configurations import TableNames, DEFAULT_MIMIC_PATH
 
 from mimic_iv_analysis.visualization.app_components import FeatureEngineeringTab, AnalysisVisualizationTab, ClusteringAnalysisTab, SideBar
 
 from mimic_iv_analysis.visualization.app_components.exploration_and_viz import ExplorationAndViz
 
+# TODO: fix the merge table loading and then update the local parquet file.
+# TODO: see why it saves the parquet in only one partition and if i increase it, will it improve the performance?
 # TODO: Add the prescriptions , labevents, and d_labitems into the study tables and merging scheme
 # TODO: Generate a sphinx documentation for this.
 
@@ -61,7 +63,8 @@ class MIMICDashboardApp:
 
 				st.metric("Total Subjects", f"{st.session_state.total_subjects_count:,}")
 
-				if st.session_state.selected_table in [t.value for t in TABLES_W_SUBJECT_ID_COLUMN]:
+				if st.session_state.selected_table in TableNames._TABLES_W_SUBJECT_ID_COLUMN:
+					# df2 = st.session_state.df.compute()
 					loaded_subjects = st.session_state.df.subject_id.nunique().compute() if isinstance(st.session_state.df, dd.DataFrame) else len(st.session_state.df.subject_id.unique()) if st.session_state.df is not None else 0
 					st.metric("Subjects Loaded", f"{loaded_subjects:,}")
 

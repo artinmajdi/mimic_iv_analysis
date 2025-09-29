@@ -36,12 +36,8 @@ class Filtering:
 			anchor_age        = (self.df.anchor_age >= 18.0) & (self.df.anchor_age <= 75.0)
 			anchor_year_group = self.df.anchor_year_group.isin(['2017 - 2019'])
 			dod               = self.df.dod.isnull()
+   
 			self.df           = self.df[anchor_age & anchor_year_group & dod]
-
-
-			# Exclude admission types like “Emergency”, “Urgent”, or “Elective”
-			# ADMISSION_TYPES     = ['EMERGENCY', 'URGENT', 'ELECTIVE', 'NEWBORN', 'OBSERVATION']
-			# self.df = self.df[ ~self.df.admission_type.isin(['EMERGENCY', 'URGENT', 'ELECTIVE']) ]
 
 		elif self.table_name == TableNames.DIAGNOSES_ICD:
 
@@ -52,7 +48,6 @@ class Filtering:
 
 		elif self.table_name == TableNames.D_ICD_DIAGNOSES:
 			self.df = self.df[ self.df.icd_version.isin([10,'10']) ]
-
 
 		elif self.table_name == TableNames.POE:
 
@@ -72,46 +67,32 @@ class Filtering:
 
 		elif self.table_name == TableNames.ADMISSIONS:
 
-			if self.table_name.value in self.filter_params:
+			# Filter columns
+			# self.df = self.df[ admissions_filters['selected_columns'] ]
 
-				admissions_filters = self.filter_params[self.table_name.value]
+			self.df = self.df.dropna(subset=['admittime', 'dischtime'])
 
-				# Filter columns
-				self.df = self.df[ admissions_filters['selected_columns'] ]
+			# Patient is alive
+			exclude_in_hospital_death = (self.df.deathtime.isnull()) | (self.df.hospital_expire_flag == 0)
 
+			# Discharge time is after admission time
+			discharge_after_admission = self.df['dischtime'] > self.df['admittime']
 
-				# Valid admission and discharge times
-				if admissions_filters['valid_admission_discharge']:
-					self.df = self.df.dropna(subset=['admittime', 'dischtime'])
-
-
-				# Patient is alive
-				if admissions_filters['exclude_in_hospital_death']:
-					self.df = self.df[ (self.df.deathtime.isnull()) | (self.df.hospital_expire_flag == 0) ]
-
-
-				# Discharge time is after admission time
-				if admissions_filters['discharge_after_admission']:
-					self.df = self.df[ self.df['dischtime'] > self.df['admittime'] ]
-
-
-				# Apply admission types
-				if admissions_filters['apply_admission_type']:
-					self.df = self.df[ self.df.admission_type.isin(admissions_filters['admission_type']) ]
-
-				# Apply admission location
-				if admissions_filters['apply_admission_location']:
-					self.df = self.df[ self.df.admission_location.isin(admissions_filters['admission_location']) ]
-
-			# Exclude admission types like "EW EMER.", "URGENT", or "ELECTIVE"
-			# self.df = self.df[~self.df.admission_type.isin(['EW EMER.', 'URGENT', 'ELECTIVE'])]
+			# Exclude admission types like “Emergency”, “Urgent”, or “Elective”
+			admission_type    = ~self.df.admission_type.isin(['EW EMER.', 'DIRECT EMER.', 'URGENT', 'ELECTIVE'])
+   
+			self.df = self.df[ exclude_in_hospital_death & discharge_after_admission & admission_type]
 
 
 		elif self.table_name == TableNames.TRANSFERS:
 
-			empty_cells = self.df.hadm_id != ''
+			# df2 = self.df.compute()
+   
+			# empty_cells = self.df.hadm_id != ''
+			self.df = self.df[ ~self.df.hadm_id.isnull()]
+   
 			careunit = self.df.careunit.isin(['Medicine'])
-			self.df = self.df[empty_cells & careunit]
+			self.df = self.df[careunit]
 
 		elif self.table_name == TableNames.MICROBIOLOGYEVENTS:
 			self.df = self.df.drop(columns=['comments'])

@@ -10,7 +10,7 @@ import streamlit as st
 
 # Local application imports
 from mimic_iv_analysis import logger
-from mimic_iv_analysis.configurations.params import TableNames, POE_COLUMNS, POE_ORDER_TYPES, POE_TRANSACTION_TYPES, ADMISSION_COLUMNS, ADMISSION_TYPES, ADMISSION_LOCATIONS
+from mimic_iv_analysis.configurations.params import TableNames# , POE_COLUMNS, POE_ORDER_TYPES, POE_TRANSACTION_TYPES, ADMISSION_COLUMNS, ADMISSION_TYPES, ADMISSION_LOCATIONS
 
 
 
@@ -22,19 +22,19 @@ class FilteringTab:
     inclusion and exclusion criteria.
     """
     def __init__(self, table_name: TableNames):
+        pass
+        # if table_name == TableNames.POE:
+        #     self._poe_filters()
 
-        if table_name == TableNames.POE:
-            self._poe_filters()
+        # elif table_name == TableNames.ADMISSIONS:
+        #     self._admission_filters()
 
-        elif table_name == TableNames.ADMISSIONS:
-            self._admission_filters()
+        # elif table_name == TableNames.MERGED:
+        #     self._poe_filters()
+        #     self._admission_filters()
 
-        elif table_name == TableNames.MERGED:
-            self._poe_filters()
-            self._admission_filters()
-
-        else:
-            logger.error(f"Invalid table name: {table_name}")
+        # else:
+        #     logger.error(f"Invalid table name: {table_name}")
 
     def _render_inclusion_criteria(self):
         """Render UI components for inclusion criteria."""
@@ -181,100 +181,100 @@ class FilteringTab:
     #         value=st.session_state.filter_params[diagnoses_icd]['icd_code']
     #     )
 
-    def _admission_filters(self):
+    # def _admission_filters(self):
 
-        admission = TableNames.ADMISSIONS.value
+    #     admission = TableNames.ADMISSIONS.value
 
-        if admission not in st.session_state.filter_params:
-            st.session_state.filter_params[admission] = {}
+    #     if admission not in st.session_state.filter_params:
+    #         st.session_state.filter_params[admission] = {}
 
-        # ADMISSION Columns to Include
-        st.session_state.filter_params[admission]['columns'] = st.multiselect(
-            "ADMISSION Columns to Include",
-            options=ADMISSION_COLUMNS,
-            default=st.session_state.filter_params[admission]['selected_columns']
-        )
+    #     # ADMISSION Columns to Include
+    #     st.session_state.filter_params[admission]['columns'] = st.multiselect(
+    #         "ADMISSION Columns to Include",
+    #         options=ADMISSION_COLUMNS,
+    #         default=st.session_state.filter_params[admission]['selected_columns']
+    #     )
 
-        # Valid Admission/Discharge Times
-        if 'admittime' in st.session_state.filter_params[admission]['selected_columns'] and 'dischtime' in st.session_state.filter_params[admission]['selected_columns']:
+    #     # Valid Admission/Discharge Times
+    #     if 'admittime' in st.session_state.filter_params[admission]['selected_columns'] and 'dischtime' in st.session_state.filter_params[admission]['selected_columns']:
 
-            st.session_state.filter_params[admission]['valid_admission_discharge'] = st.checkbox(
-                "Filter by Valid Admission/Discharge Times",
-                value=st.session_state.filter_params[admission]['valid_admission_discharge'],
-                help="Ensure admittime and dischtime in the admissions table are not null"
-            )
+    #         st.session_state.filter_params[admission]['valid_admission_discharge'] = st.checkbox(
+    #             "Filter by Valid Admission/Discharge Times",
+    #             value=st.session_state.filter_params[admission]['valid_admission_discharge'],
+    #             help="Ensure admittime and dischtime in the admissions table are not null"
+    #         )
 
-            # Discharge After Admission
-            st.session_state.filter_params[admission]['discharge_after_admission'] = st.checkbox(
-                "Filter by Discharge After Admission",
-                value=st.session_state.filter_params[admission]['discharge_after_admission'],
-                help="Ensure dischtime is after admittime"
-            )
+    #         # Discharge After Admission
+    #         st.session_state.filter_params[admission]['discharge_after_admission'] = st.checkbox(
+    #             "Filter by Discharge After Admission",
+    #             value=st.session_state.filter_params[admission]['discharge_after_admission'],
+    #             help="Ensure dischtime is after admittime"
+    #         )
 
-        # In-Hospital Death/Expiry
-        if 'deathtime' in st.session_state.filter_params[admission]['selected_columns'] or 'hospital_expire_flag' in st.session_state.filter_params[admission]['selected_columns']:
-            st.session_state.filter_params[admission]['exclude_in_hospital_death'] = st.checkbox(
-                "Exclude In-Hospital Deaths",
-                value=st.session_state.filter_params[admission]['exclude_in_hospital_death'],
-                help="Exclude admissions where deathtime is not null OR hospital_expire_flag = 1"
-            )
+    #     # In-Hospital Death/Expiry
+    #     if 'deathtime' in st.session_state.filter_params[admission]['selected_columns'] or 'hospital_expire_flag' in st.session_state.filter_params[admission]['selected_columns']:
+    #         st.session_state.filter_params[admission]['exclude_in_hospital_death'] = st.checkbox(
+    #             "Exclude In-Hospital Deaths",
+    #             value=st.session_state.filter_params[admission]['exclude_in_hospital_death'],
+    #             help="Exclude admissions where deathtime is not null OR hospital_expire_flag = 1"
+    #         )
 
 
 
-        # Admission Type
-        st.session_state.filter_params[admission]['apply_admission_type'] = st.checkbox( "Filter by Admission Types", value=st.session_state.filter_params[admission]['apply_admission_type'], )
+    #     # Admission Type
+    #     st.session_state.filter_params[admission]['apply_admission_type'] = st.checkbox( "Filter by Admission Types", value=st.session_state.filter_params[admission]['apply_admission_type'], )
 
-        st.session_state.filter_params[admission]['admission_type'] = st.multiselect(
-            "Admission Types to Include",
-            options=ADMISSION_TYPES,
-            default=st.session_state.filter_params[admission]['admission_type'],
-            disabled=not st.session_state.filter_params[admission]['apply_admission_type']
-        )
+    #     st.session_state.filter_params[admission]['admission_type'] = st.multiselect(
+    #         "Admission Types to Include",
+    #         options=ADMISSION_TYPES,
+    #         default=st.session_state.filter_params[admission]['admission_type'],
+    #         disabled=not st.session_state.filter_params[admission]['apply_admission_type']
+    #     )
 
-        # Admission Location
-        st.session_state.filter_params[admission]['apply_admission_location'] = st.checkbox( "Filter by Admission Locations", value=st.session_state.filter_params[admission]['apply_admission_location'], )
+    #     # Admission Location
+    #     st.session_state.filter_params[admission]['apply_admission_location'] = st.checkbox( "Filter by Admission Locations", value=st.session_state.filter_params[admission]['apply_admission_location'], )
 
-        # Admission Location
-        st.session_state.filter_params[admission]['admission_location'] = st.multiselect(
-            "Admission Locations to Include",
-            options=ADMISSION_LOCATIONS,
-            default=st.session_state.filter_params[admission]['admission_location'],
-            disabled=not st.session_state.filter_params[admission]['apply_admission_location']
-        )
+    #     # Admission Location
+    #     st.session_state.filter_params[admission]['admission_location'] = st.multiselect(
+    #         "Admission Locations to Include",
+    #         options=ADMISSION_LOCATIONS,
+    #         default=st.session_state.filter_params[admission]['admission_location'],
+    #         disabled=not st.session_state.filter_params[admission]['apply_admission_location']
+    #     )
 
-    def _poe_filters(self):
+    # def _poe_filters(self):
 
-        poe = TableNames.POE.value
+    #     poe = TableNames.POE.value
 
-        if poe not in st.session_state.filter_params:
-            st.session_state.filter_params[poe] = {}
+    #     if poe not in st.session_state.filter_params:
+    #         st.session_state.filter_params[poe] = {}
 
-        # POE Columns to Include
-        st.session_state.filter_params[poe]['selected_columns'] = st.multiselect(
-            "POE Columns to Include",
-            options=POE_COLUMNS,
-            default=st.session_state.filter_params[poe]['selected_columns']
-        )
+    #     # POE Columns to Include
+    #     st.session_state.filter_params[poe]['selected_columns'] = st.multiselect(
+    #         "POE Columns to Include",
+    #         options=POE_COLUMNS,
+    #         default=st.session_state.filter_params[poe]['selected_columns']
+    #     )
 
-        # POE Order Types
-        if 'order_type' in st.session_state.filter_params[poe]['selected_columns']:
-            st.session_state.filter_params[poe]['apply_order_type'] = st.checkbox( "Filter by Order Types", value=st.session_state.filter_params[poe]['apply_order_type'] )
+    #     # POE Order Types
+    #     if 'order_type' in st.session_state.filter_params[poe]['selected_columns']:
+    #         st.session_state.filter_params[poe]['apply_order_type'] = st.checkbox( "Filter by Order Types", value=st.session_state.filter_params[poe]['apply_order_type'] )
 
-            st.session_state.filter_params[poe]['order_type'] = st.multiselect(
-                "Order Types to Include",
-                options=POE_ORDER_TYPES,
-                default=st.session_state.filter_params[poe]['order_type'],
-                disabled=not st.session_state.filter_params[poe]['apply_order_type']
-            )
+    #         st.session_state.filter_params[poe]['order_type'] = st.multiselect(
+    #             "Order Types to Include",
+    #             options=POE_ORDER_TYPES,
+    #             default=st.session_state.filter_params[poe]['order_type'],
+    #             disabled=not st.session_state.filter_params[poe]['apply_order_type']
+    #         )
 
-        # POE Transaction Types
-        if 'transaction_type' in st.session_state.filter_params[poe]['selected_columns']:
+    #     # POE Transaction Types
+    #     if 'transaction_type' in st.session_state.filter_params[poe]['selected_columns']:
 
-            st.session_state.filter_params[poe]['apply_transaction_type'] = st.checkbox( "Filter by Transaction Types", value=st.session_state.filter_params[poe]['apply_transaction_type'] )
+    #         st.session_state.filter_params[poe]['apply_transaction_type'] = st.checkbox( "Filter by Transaction Types", value=st.session_state.filter_params[poe]['apply_transaction_type'] )
 
-            st.session_state.filter_params[poe]['transaction_type'] = st.multiselect(
-                "Transaction Types to Include",
-                options=POE_TRANSACTION_TYPES,
-                default=st.session_state.filter_params[poe]['transaction_type'],
-                disabled=not st.session_state.filter_params[poe]['apply_transaction_type']
-            )
+    #         st.session_state.filter_params[poe]['transaction_type'] = st.multiselect(
+    #             "Transaction Types to Include",
+    #             options=POE_TRANSACTION_TYPES,
+    #             default=st.session_state.filter_params[poe]['transaction_type'],
+    #             disabled=not st.session_state.filter_params[poe]['apply_transaction_type']
+    #         )

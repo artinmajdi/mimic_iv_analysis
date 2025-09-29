@@ -3,11 +3,13 @@ import os
 import glob
 from pathlib import Path
 from functools import lru_cache, cached_property
+from re import L
 import tempfile
 from typing import Dict, Optional, Tuple, List, Any, Literal
 
 # Data processing imports
 import pandas as pd
+import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import dask.dataframe as dd
@@ -17,30 +19,34 @@ from tqdm import tqdm
 from mimic_iv_analysis import logger
 from mimic_iv_analysis.core.filtering import Filtering
 from mimic_iv_analysis.configurations import (  TableNames,
+												ColumnNames,
 												pyarrow_dtypes_map,
-												COLUMN_TYPES,
-												DATETIME_COLUMNS,
 												DEFAULT_MIMIC_PATH,
 												DEFAULT_NUM_SUBJECTS,
-												TABLES_W_SUBJECT_ID_COLUMN,
 												DEFAULT_STUDY_TABLES_LIST
 												)
 
 
+subject_id: str = ColumnNames.SUBJECT_ID.value
+
 class DataLoader:
 	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
 
-	def __init__(self, mimic_path: Path = DEFAULT_MIMIC_PATH, study_tables_list: Optional[List[TableNames]] = None, apply_filtering: bool = True, filter_params: Optional[dict[str, dict[str, Any]]] = {}):
+	def __init__(self, 	mimic_path: Path = DEFAULT_MIMIC_PATH,
+						study_tables_list: list[str] = DEFAULT_STUDY_TABLES_LIST,
+						apply_filtering  : bool     = True,
+						filter_params    : Optional[dict[str, dict[str, Any]]] = {} ):
+
 		# Initialize persisted resources tracking
 		self._persisted_resources = {}
 
 		# MIMIC_IV v3.1 path
 		self.mimic_path      = Path(mimic_path)
 		self.apply_filtering = apply_filtering
-		self.filter_params         = filter_params
+		self.filter_params   = filter_params
 
 		# Tables to load. Use list provided by user or default list
-		self.study_table_list = set(study_tables_list or DEFAULT_STUDY_TABLES_LIST)
+		self.study_tables_list = study_tables_list
 
 		# Class variables
 		self.tables_info_df         : Optional[pd.DataFrame]  = None
@@ -221,41 +227,96 @@ class DataLoader:
 		if self.tables_info_df is None:
 			self.scan_mimic_directory()
 
-		# Get tables in the study
-		study_tables = [table.value for table in self.study_table_list]
+		return self.tables_info_df[self.tables_info_df.table_name.isin(self.study_tables_list)]
 
-		return self.tables_info_df[self.tables_info_df.table_name.isin(study_tables)]
+	# @property
+	# def _list_of_tables_w_subject_id_column(self) -> list[str]:
+	# 	"""Returns a list of tables that have subject_id column."""
+	# 	return self.study_tables_info[
+	# 		self.study_tables_info.columns_list.apply(lambda x: 'subject_id' in x)
+	# 	].table_name.tolist()
 
-	@property
-	def _list_of_tables_w_subject_id_column(self) -> List[TableNames]:
-		"""Returns a list of tables that have subject_id column."""
-		tables_list = self.study_tables_info[
-			self.study_tables_info.columns_list.apply(lambda x: 'subject_id' in x)
-		].table_name.tolist()
-
-		return [TableNames(table_name) for table_name in tables_list]
 
 	@staticmethod
 	def _get_column_dtype(file_path: Optional[Path] = None, columns_list: Optional[List[str]] = None) -> Tuple[Dict[str, str], List[str]]:
-		"""Determine the best dtype for a column based on its name and table."""
+		"""Determine the best dtype for a column based on its name and table.
+
+		Converts integer dtypes to nullable integer dtypes (Int64, Int32, Int16) to properly handle NA values.
+		This prevents issues where missing values in integer columns cause type conversion errors.
+		"""
 
 		if file_path is None and columns_list is None:
 			raise ValueError("Either file_path or columns_list must be provided.")
 
-
 		if file_path is not None:
 			columns_list = pd.read_csv(file_path, nrows=1).columns.tolist()
 
-		dtypes      = {col: dtype for col, dtype in COLUMN_TYPES.items() if col in columns_list}
-		parse_dates = [col for col in DATETIME_COLUMNS if col in columns_list]
+		# Get base dtypes and convert integer types to nullable versions
+		dtypes = {}
+		for col, dtype in TableNames._COLUMN_TYPES.items():
+			if col in columns_list:
+				# Convert integer dtypes to nullable versions for proper NA handling
+				if dtype == 'int64':
+					dtypes[col] = 'Int64'  # Nullable integer
+				elif dtype == 'int32':
+					dtypes[col] = 'Int32'  # Nullable integer
+				elif dtype == 'int16':
+					dtypes[col] = 'Int16'  # Nullable integer
+				else:
+					dtypes[col] = dtype  # Keep other dtypes as-is
+
+		parse_dates = [col for col in TableNames._DATETIME_COLUMNS if col in columns_list]
+
+		# remove datetime columns from dtypes
+		dtypes = {col: dtype for col, dtype in dtypes.items() if col not in parse_dates}
 
 		return dtypes, parse_dates
 
+	@staticmethod
+	def _handle_na_values_in_dataframe(df: pd.DataFrame | dd.DataFrame) -> pd.DataFrame | dd.DataFrame:
+		"""Handle NA values in integer columns by ensuring proper nullable integer dtypes.
 
-	def _get_file_path(self, table_name: TableNames) -> Path:
+		This method ensures that integer columns with NA values are properly handled
+		by converting them to nullable integer dtypes if they aren't already.
+		"""
+
+		def _convert_integer_columns_with_na(df_part: pd.DataFrame) -> pd.DataFrame:
+			"""Convert integer columns that contain NA values to nullable integer dtypes."""
+			for col in df_part.columns:
+				if col in TableNames._COLUMN_TYPES:
+					expected_dtype = TableNames._COLUMN_TYPES[col]
+					if expected_dtype in ['int64', 'int32', 'int16']:
+						# Convert integer columns to nullable integer dtypes for consistency
+						# This prevents issues when data contains NA values
+						if not pd.api.types.is_extension_array_dtype(df_part[col]):
+							# First, replace empty strings and 'NULL' with NaN
+							df_part[col] = df_part[col].replace(['', 'NULL', 'null', 'None'], np.nan)
+
+							# Convert to nullable integer dtype
+							if expected_dtype == 'int64':
+								df_part[col] = pd.to_numeric(df_part[col], errors='coerce').astype('Int64')
+							elif expected_dtype == 'int32':
+								df_part[col] = pd.to_numeric(df_part[col], errors='coerce').astype('Int32')
+							elif expected_dtype == 'int16':
+								df_part[col] = pd.to_numeric(df_part[col], errors='coerce').astype('Int16')
+
+			return df_part
+
+		# Handle Dask DataFrame
+		if isinstance(df, dd.DataFrame):
+			return df.map_partitions(_convert_integer_columns_with_na, meta=df)
+
+		# Handle pandas DataFrame
+		return _convert_integer_columns_with_na(df)
+
+
+	def _get_file_path(self, table_name: TableNames | str) -> Path:
 		"""Get the file path for a table with priority: parquet > csv > csv.gz"""
 
-		if table_name == TableNames.MERGED:
+		if isinstance(table_name, str):
+			table_name = TableNames(table_name)
+
+		if table_name.value == TableNames.MERGED.value:
 			return self.merged_table_parquet_path
 
 		if self.tables_info_df is None:
@@ -277,7 +338,10 @@ class DataLoader:
 		return Path(df['file_path'].iloc[0])
 
 
-	def get_sample_subject_ids(self, table_name: TableNames, num_subjects: int = DEFAULT_NUM_SUBJECTS) -> list[int]:
+	def get_sample_subject_ids(self, table_name: TableNames | str, num_subjects: int = DEFAULT_NUM_SUBJECTS) -> list[int]:
+
+		if isinstance(table_name, str):
+			table_name = TableNames(table_name)
 
 		def _sample_subject_ids(common_subject_ids_list: list[int]) -> list[int]:
 			"""Sample subject_ids from the list, ensuring no duplicates."""
@@ -291,7 +355,10 @@ class DataLoader:
 
 		return _sample_subject_ids(list(unique_subject_ids))
 
-	def get_unique_subject_ids(self, table_name: TableNames, recalculate_subject_ids: bool = False) -> Optional[set]:
+	def get_unique_subject_ids(self, table_name: TableNames | str, recalculate_subject_ids: bool = False) -> set:
+
+		if isinstance(table_name, str):
+			table_name = TableNames(table_name)
 
 		def get_for_one_table(table_name: TableNames) -> set:
 			"""Returns a list of unique subject_ids found in a table."""
@@ -302,26 +369,27 @@ class DataLoader:
 				file_path = self._get_file_path(table_name=table_name)
 
 				if file_path.suffix == '.parquet':
-					df_subject_id_column = dd.read_parquet(file_path, columns=['subject_id'], split_row_groups=True)
+					df_subject_id_column = dd.read_parquet(file_path, columns=[subject_id], split_row_groups=True)
 
 				elif file_path.suffix in ['.csv', '.gz', '.csv.gz']:
 
 					df_subject_id_column = dd.read_csv(
 						urlpath        = file_path,
-						usecols        = ['subject_id'],
-						dtype          = {'subject_id': 'int64'},
+						usecols        = [subject_id],
+						dtype          = {subject_id: 'int64'},
 						assume_missing = True,
 						blocksize      = None if str(file_path).endswith('.gz') else '200MB' )
 
 				# Get unique subject_ids for this table
-				unique_subject_ids = set(df_subject_id_column['subject_id'].unique().compute())
+				unique_subject_ids = set(df_subject_id_column[subject_id].unique().compute())
 
 				return unique_subject_ids
 
 			def _fetch_filtered_table_subject_ids(table_name: TableNames) -> set:
 				""" Returns a list of unique subject_ids found in the table after applying filters. """
+
 				df = self.fetch_table(table_name=table_name, apply_filtering=self.apply_filtering)
-				return set(df['subject_id'].unique().compute())
+				return set(df[subject_id].unique().compute())
 
 			def get_table_subject_ids_path(table_name: TableNames) -> Path:
 
@@ -340,14 +408,14 @@ class DataLoader:
 			# TODO: need to add the option to recalculate_subject_ids in the UI for user to select
 			if subject_ids_path.exists() and not recalculate_subject_ids:
 				df_unique_subject_ids = pd.read_csv(subject_ids_path)
-				return set(df_unique_subject_ids['subject_id'].values.tolist())
+				return set(df_unique_subject_ids[subject_id].values.tolist())
 
 			if self.apply_filtering:
 				unique_subject_ids = _fetch_filtered_table_subject_ids(table_name=table_name)
 			else:
 				unique_subject_ids = _fetch_full_table_subject_ids()
 
-			pd.DataFrame({'subject_id': list(unique_subject_ids)}).to_csv(subject_ids_path, index=False)
+			pd.DataFrame({subject_id: list(unique_subject_ids)}).to_csv(subject_ids_path, index=False)
 
 			return unique_subject_ids
 
@@ -374,7 +442,7 @@ class DataLoader:
 				return intersection_set
 
 			# Get all tables that have subject_id column and are part of merged table
-			tables_with_subject_id = [table for table in self.merged_table_components if table in TABLES_W_SUBJECT_ID_COLUMN]
+			tables_with_subject_id = [TableNames(n) if isinstance(n, str) else n for n in self.study_tables_list if n in TableNames._TABLES_W_SUBJECT_ID_COLUMN]
 
 			if not tables_with_subject_id:
 				logger.warning("No tables with subject_id found in merged table components")
@@ -393,13 +461,13 @@ class DataLoader:
 
 			return common_subject_ids_list
 
-		if table_name == TableNames.MERGED:
+		if table_name.value == TableNames.MERGED.value:
 			return get_merged_table_subject_ids()
 
-		if table_name in TABLES_W_SUBJECT_ID_COLUMN:
+		if table_name.value in TableNames._TABLES_W_SUBJECT_ID_COLUMN:
 			return get_for_one_table(table_name=table_name)
 
-		return {}
+		return set()
 
 	def fetch_complete_study_tables(self, use_dask: bool = True) -> Dict[str, pd.DataFrame | dd.DataFrame]:
 
@@ -462,7 +530,7 @@ class DataLoader:
 		return self.mimic_path / f'{TableNames.MERGED.value}.parquet'
 
 
-	def fetch_table(self, table_name: Optional[TableNames] = None, file_path: Optional[Path] = None, use_dask: bool = True, apply_filtering: bool = True) -> pd.DataFrame | dd.DataFrame:
+	def fetch_table(self, table_name: Optional[TableNames | str] = None, file_path: Optional[Path] = None, use_dask: bool = True, apply_filtering: bool = True) -> pd.DataFrame | dd.DataFrame:
 
 		def _load(file_path: Path) -> pd.DataFrame | dd.DataFrame:
 			"""Load a table from a file path, handling parquet and csv formats."""
@@ -509,6 +577,9 @@ class DataLoader:
 
 			return file_path, table_name
 
+		if isinstance(table_name, str):
+			table_name = TableNames(table_name)
+
 		if self.tables_info_df is None:
 			self.scan_mimic_directory()
 
@@ -516,14 +587,20 @@ class DataLoader:
 
 		df = _load(file_path=file_path)
 
+		# Handle NA values in integer columns
+		df = self._handle_na_values_in_dataframe(df)
+
 		if apply_filtering:
 			df = Filtering(df=df, table_name=table_name, filter_params=self.filter_params).render()
 
 		return df
 
-	def partial_loading(self, df: pd.DataFrame | dd.DataFrame, table_name: TableNames, num_subjects: int = DEFAULT_NUM_SUBJECTS) -> pd.DataFrame | dd.DataFrame:
+	def partial_loading(self, df: pd.DataFrame | dd.DataFrame, table_name: TableNames | str, num_subjects: int = DEFAULT_NUM_SUBJECTS) -> pd.DataFrame | dd.DataFrame:
 
-		if 'subject_id' not in df.columns:
+		if isinstance(table_name, str):
+			table_name = TableNames(table_name)
+
+		if subject_id not in df.columns:
 			logger.info(f"Table {table_name.value} does not have a subject_id column. "
 						f"Partial loading is not possible. Skipping partial loading.")
 			return df
@@ -535,11 +612,14 @@ class DataLoader:
 
 		# Use map_partitions for Dask DataFrame or direct isin for pandas
 		if isinstance(df, dd.DataFrame):
-			return df.map_partitions(lambda part: part[part['subject_id'].isin(subject_ids_set)])
+			return df.map_partitions(lambda part: part[part[subject_id].isin(subject_ids_set)])
 
-		return df[df['subject_id'].isin(subject_ids_set)]
+		return df[df[subject_id].isin(subject_ids_set)]
 
-	def load(self, table_name: TableNames, partial_loading: bool = False, num_subjects: int = DEFAULT_NUM_SUBJECTS, use_dask:bool = True, tables_dict:Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None) -> pd.DataFrame | dd.DataFrame:
+	def load(self, table_name: TableNames | str, partial_loading: bool = False, num_subjects: int = DEFAULT_NUM_SUBJECTS, use_dask:bool = True, tables_dict:Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None) -> pd.DataFrame | dd.DataFrame:
+
+		if isinstance(table_name, str):
+			table_name = TableNames(table_name)
 
 		if table_name is TableNames.MERGED:
 			# Use optimized path when partial loading is requested (select subject_ids first, then load only needed rows)
@@ -571,19 +651,22 @@ class DataLoader:
 		poe_df             = tables_dict[TableNames.POE.value] # 606MB
 		poe_detail_df      = tables_dict[TableNames.POE_DETAIL.value] # 55MB
 		transfers_df       = tables_dict.get(TableNames.TRANSFERS.value) # 46MB
+		prescriptions_df   = tables_dict.get(TableNames.PRESCRIPTIONS.value) # 606MB
+		labevents_df       = tables_dict.get(TableNames.LABEVENTS.value) # 2.6GB
+		d_labitems_df      = tables_dict.get(TableNames.D_LABITEMS.value) # 30KB
 
 		persisted_intermediates = {}  # Track intermediate results for cleanup
 
 		try:
 			# Merge tables with persist() for intermediate results
-			df12 = patients_df.merge(admissions_df, on='subject_id', how='inner')
+			df12 = patients_df.merge(admissions_df, on=subject_id, how='inner')
 
 			# Persist intermediate result if using Dask
 			if isinstance(df12, dd.DataFrame):
 				df12 = df12.persist()
 				persisted_intermediates['patients_admissions'] = df12
 
-			df123 = df12.merge(transfers_df, on=['subject_id', 'hadm_id'], how='inner')
+			df123 = df12.merge(transfers_df, on=[subject_id, ColumnNames.HADM_ID.value], how='inner')
 
 			# Persist intermediate result
 			if isinstance(df123, dd.DataFrame):
@@ -599,7 +682,7 @@ class DataLoader:
 				diagnoses_merged = diagnoses_merged.persist()
 				persisted_intermediates['diagnoses_merged'] = diagnoses_merged
 
-			merged_wo_poe = df123.merge(diagnoses_merged, on=['subject_id', 'hadm_id'], how='inner')
+			merged_wo_poe = df123.merge(diagnoses_merged, on=[subject_id, ColumnNames.HADM_ID.value], how='inner')
 
 			# Persist before final merge
 			if isinstance(merged_wo_poe, dd.DataFrame):
@@ -608,14 +691,14 @@ class DataLoader:
 
 			# The reason for 'left' is that we want to keep all the rows from poe table.
 			# The poe_detail table for unknown reasons, has fewer rows than poe table.
-			poe_and_details = poe_df.merge(poe_detail_df, on=['poe_id', 'poe_seq', 'subject_id'], how='inner')
+			poe_and_details = poe_df.merge(poe_detail_df, on=[ColumnNames.POE_ID.value, ColumnNames.POE_SEQ.value, subject_id], how='inner')
 
 			# Persist POE merge result
 			if isinstance(poe_and_details, dd.DataFrame):
 				poe_and_details = poe_and_details.persist()
 				persisted_intermediates['poe_and_details'] = poe_and_details
 
-			merged_full_study = merged_wo_poe.merge(poe_and_details, on=['subject_id', 'hadm_id'], how='inner')
+			merged_full_study = merged_wo_poe.merge(poe_and_details, on=[subject_id, ColumnNames.HADM_ID.value], how='inner')
 
 			# Store intermediate persisted results for potential cleanup
 			self._persisted_resources.update(persisted_intermediates)
@@ -648,11 +731,11 @@ class DataLoader:
 			df = self.fetch_table(table_name=table_name, use_dask=use_dask, apply_filtering=self.apply_filtering)
 
 			# Apply subject_id filtering when available
-			if 'subject_id' in df.columns:
+			if subject_id in df.columns:
 				if isinstance(df, dd.DataFrame):
-					df = df.map_partitions(lambda part: part[part['subject_id'].isin(subject_ids_set)])
+					df = df.map_partitions(lambda part: part[part[subject_id].isin(subject_ids_set)])
 				else:
-					df = df[df['subject_id'].isin(subject_ids_set)]
+					df = df[df[subject_id].isin(subject_ids_set)]
 
 			tables_dict[table_name.value] = df
 
@@ -675,30 +758,21 @@ class DataLoader:
 		# 3) Merge filtered tables using the same logic as the regular merger
 		return self.merge_tables(tables_dict=tables_dict, use_dask=use_dask)
 
-
 	# @property
-	# def tables_w_subject_id_column(self) -> List[TableNames]:
-	# 	"""Tables that have a subject_id column."""
-	# 	return  [	TableNames.PATIENTS,
-	# 				TableNames.ADMISSIONS,
-	# 				TableNames.TRANSFERS,
-	# 				TableNames.DIAGNOSES_ICD,
-	# 				TableNames.POE,
-	# 				TableNames.POE_DETAIL,
-	# 				TableNames.MICROBIOLOGYEVENTS]
-
-	@property
-	def merged_table_components(self) -> List[TableNames]:
-		"""Tables that are components of the merged table."""
-		return [
-			TableNames.PATIENTS,
-			TableNames.ADMISSIONS,
-			TableNames.TRANSFERS,
-			TableNames.DIAGNOSES_ICD,
-			TableNames.D_ICD_DIAGNOSES,
-			TableNames.POE,
-			TableNames.POE_DETAIL
-		]
+	# def merged_table_components(self) -> List[TableNames]:
+	# 	"""Tables that are components of the merged table."""
+	# 	return [
+	# 		TableNames.PATIENTS.value,
+	# 		TableNames.ADMISSIONS.value,
+	# 		TableNames.TRANSFERS.value,
+	# 		TableNames.DIAGNOSES_ICD.value,
+	# 		TableNames.D_ICD_DIAGNOSES.value,
+	# 		TableNames.POE.value,
+	# 		TableNames.POE_DETAIL.value,
+	# 		TableNames.LABEVENTS.value,
+	# 		TableNames.PRESCRIPTIONS.value,
+	# 		TableNames.D_LABITEMS.value,
+	# 	]
 
 
 class ExampleDataLoader(DataLoader):
@@ -728,12 +802,12 @@ class ExampleDataLoader(DataLoader):
 
 		def get_nsubject_ids(table_name):
 			df = self.tables_dict[table_name.value]
-			if 'subject_id' not in df.columns:
+			if subject_id not in df.columns:
 				return "N/A"
 			# INFO: if returns errors, use df.subject_id.unique().shape[0].compute() instead
 			return humanize.intcomma(
-				df.subject_id.nunique().compute() if isinstance(df, dd.DataFrame)
-				else df.subject_id.nunique()
+				df[subject_id].nunique().compute() if isinstance(df, dd.DataFrame)
+				else df[subject_id].nunique()
 			)
 
 		# Format the output in a tabular format
@@ -786,19 +860,19 @@ class ExampleDataLoader(DataLoader):
 		poe_detail_df      = self.tables_dict[TableNames.POE_DETAIL.value]
 
 		# Ensure compatible types
-		patients_df        = self.ensure_compatible_types(patients_df, ['subject_id'])
-		admissions_df      = self.ensure_compatible_types(admissions_df, ['subject_id', 'hadm_id'])
-		diagnoses_icd_df   = self.ensure_compatible_types(diagnoses_icd_df, ['subject_id', 'hadm_id', 'icd_code', 'icd_version'])
+		patients_df        = self.ensure_compatible_types(patients_df, [subject_id])
+		admissions_df      = self.ensure_compatible_types(admissions_df, [subject_id, ColumnNames.HADM_ID.value])
+		diagnoses_icd_df   = self.ensure_compatible_types(diagnoses_icd_df, [subject_id, ColumnNames.HADM_ID.value, 'icd_code', 'icd_version'])
 		d_icd_diagnoses_df = self.ensure_compatible_types(d_icd_diagnoses_df, ['icd_code', 'icd_version'])
-		poe_df             = self.ensure_compatible_types(poe_df, ['subject_id', 'hadm_id', 'poe_id', 'poe_seq'])
-		poe_detail_df      = self.ensure_compatible_types(poe_detail_df, ['subject_id', 'poe_id', 'poe_seq'])
+		poe_df             = self.ensure_compatible_types(poe_df, [subject_id, ColumnNames.HADM_ID.value, 'poe_id', 'poe_seq'])
+		poe_detail_df      = self.ensure_compatible_types(poe_detail_df, [subject_id, 'poe_id', 'poe_seq'])
 
 		# Merge tables
-		df12              = patients_df.merge(admissions_df, on='subject_id', how='inner')
+		df12              = patients_df.merge(admissions_df, on=subject_id, how='inner')
 		df34              = diagnoses_icd_df.merge(d_icd_diagnoses_df, on=('icd_code', 'icd_version'), how='inner')
-		poe_and_details   = poe_df.merge(poe_detail_df, on=('poe_id', 'poe_seq', 'subject_id'), how='left')
-		merged_wo_poe     = df12.merge(df34, on=('subject_id', 'hadm_id'), how='inner')
-		merged_full_study = merged_wo_poe.merge(poe_and_details, on=('subject_id', 'hadm_id'), how='inner')
+		poe_and_details   = poe_df.merge(poe_detail_df, on=('poe_id', 'poe_seq', subject_id), how='left')
+		merged_wo_poe     = df12.merge(df34, on=(subject_id, ColumnNames.HADM_ID.value), how='inner')
+		merged_full_study = merged_wo_poe.merge(poe_and_details, on=(subject_id, ColumnNames.HADM_ID.value), how='inner')
 
 		def get_count(df):
 			return df.shape[0].compute() if isinstance(df, dd.DataFrame) else df.shape[0]
@@ -821,7 +895,7 @@ class ExampleDataLoader(DataLoader):
 
 
 # TODO: currently when i try from the .parquet folder. if the folder is empty, the code gives me an error. fix the code so that if this happens it would fallback to loading the csv.gz or csv file
-# TODO: check the _create_table_schema() function to save all columns even if they are not in the COLUMN_TYPES or DATETIME_COLUMNS
+# TODO: check the _create_table_schema() function to save all columns even if they are not in the TableNames._COLUMN_TYPES or TableNames._DATETIME_COLUMNS
 
 class ParquetConverter:
 	"""Handles conversion of CSV/CSV.GZ files to Parquet format with appropriate schemas."""
@@ -870,7 +944,7 @@ class ParquetConverter:
 	def _create_table_schema(self, df: pd.DataFrame | dd.DataFrame) -> pa.Schema:
 		"""
 		Create a PyArrow schema for a table, inferring types for unspecified columns.
-		It prioritizes manually defined types from COLUMN_TYPES and DATETIME_COLUMNS.
+		It prioritizes manually defined types from TableNames._COLUMN_TYPES and TableNames._DATETIME_COLUMNS.
 		"""
 
 		# For Dask, use the metadata for schema inference; for pandas, a small sample is enough
@@ -1026,7 +1100,7 @@ class ParquetConverter:
 		"""
 		# If no tables list is provided, use the study table list
 		if tables_list is None:
-			tables_list = self.data_loader.study_table_list
+			tables_list = self.data_loader.study_tables_list
 
 		# Save tables as parquet with error handling
 		failed_tables = []
