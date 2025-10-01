@@ -408,7 +408,7 @@ _COLUMN_TYPES = {
     # Float/Double columns
     'basal_rate'          : 'float64', # DOUBLE - pharmacy
     'dilution_value'      : 'float64', # DOUBLE - microbiologyevents
-    'doses_per_24_hrs'    : 'float64', # DOUBLE - prescriptions, pharmacy
+    'doses_per_24_hrs'    : 'string', # DOUBLE - prescriptions, pharmacy # sold actually be float64 but some rows are of string type (eg 2.1-4)
     'duration'            : 'float64', # DOUBLE - pharmacy
     'one_hr_max'          : 'float64', # DOUBLE - pharmacy
     'parent_field_ordinal': 'float64', # DOUBLE - emar_detail

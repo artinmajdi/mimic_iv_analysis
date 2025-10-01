@@ -36,18 +36,18 @@ class Filtering:
 			anchor_age        = (self.df.anchor_age >= 18.0) & (self.df.anchor_age <= 75.0)
 			anchor_year_group = self.df.anchor_year_group.isin(['2017 - 2019'])
 			dod               = self.df.dod.isnull()
-   
+
 			self.df           = self.df[anchor_age & anchor_year_group & dod]
 
 		elif self.table_name == TableNames.DIAGNOSES_ICD:
 
-			icd_version = self.df.icd_version.isin(['10'])
-			seq_num     = self.df.seq_num.isin(['1', '2', '3'])
+			icd_version = self.df.icd_version.isin([10])
+			seq_num     = self.df.seq_num.isin([1,2,3])
 			icd_code    = self.df.icd_code.str.startswith('E11')
 			self.df     = self.df[icd_version & seq_num & icd_code]
 
 		elif self.table_name == TableNames.D_ICD_DIAGNOSES:
-			self.df = self.df[ self.df.icd_version.isin([10,'10']) ]
+			self.df = self.df[ self.df.icd_version.isin([10]) ]
 
 		elif self.table_name == TableNames.POE:
 
@@ -80,22 +80,26 @@ class Filtering:
 
 			# Exclude admission types like “Emergency”, “Urgent”, or “Elective”
 			admission_type    = ~self.df.admission_type.isin(['EW EMER.', 'DIRECT EMER.', 'URGENT', 'ELECTIVE'])
-   
+
 			self.df = self.df[ exclude_in_hospital_death & discharge_after_admission & admission_type]
 
 
 		elif self.table_name == TableNames.TRANSFERS:
 
 			# df2 = self.df.compute()
-   
+
 			# empty_cells = self.df.hadm_id != ''
 			self.df = self.df[ ~self.df.hadm_id.isnull()]
-   
+
 			careunit = self.df.careunit.isin(['Medicine'])
 			self.df = self.df[careunit]
 
 		elif self.table_name == TableNames.MICROBIOLOGYEVENTS:
 			self.df = self.df.drop(columns=['comments'])
-    
+
+		elif self.table_name == TableNames.LABEVENTS:
+			self.df = self.df.drop(columns=['hadm_id', 'value', 'valuenum', 'valueuom', 'ref_range_lower', 'ref_range_upper', 'flag', 'priority', 'comments'])
+
+		# Reset index
 		self.df = self.df.reset_index(drop=True)
 		return self.df

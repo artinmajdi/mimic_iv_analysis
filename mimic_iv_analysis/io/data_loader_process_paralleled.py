@@ -18,6 +18,7 @@ from tqdm import tqdm
 
 from mimic_iv_analysis import logger
 from mimic_iv_analysis.core.filtering import Filtering
+from mimic_iv_analysis.core.dask_config_optimizer import DaskConfigOptimizer
 from mimic_iv_analysis.configurations import (  TableNames,
 												ColumnNames,
 												pyarrow_dtypes_map,
@@ -29,8 +30,39 @@ from mimic_iv_analysis.configurations import (  TableNames,
 
 subject_id: str = ColumnNames.SUBJECT_ID.value
 
-# TODO: convert the labevents to parquet using a python script instead of using the streamlit app.
-
+# Module-level function for multiprocessing compatibility
+def process_partition_cpu_optimized(partition_data):
+	"""Process a single partition with CPU optimization - standalone function for multiprocessing"""
+	try:
+		import pandas as pd
+		import numpy as np
+		import logging
+		from mimic_iv_analysis.configurations import ColumnNames
+		
+		# Setup logging for this process
+		mp_logger = logging.getLogger('mp_worker')
+		subject_id = ColumnNames.SUBJECT_ID.value
+		
+		# Convert to pandas for CPU-intensive operations
+		if hasattr(partition_data, 'compute'):
+			partition_df = partition_data.compute()
+		else:
+			partition_df = partition_data
+		
+		# Use numpy for faster unique operations
+		if subject_id in partition_df.columns:
+			unique_values = partition_df[subject_id].dropna().unique()
+			result = set(unique_values)
+			mp_logger.debug(f"Processed partition: {len(result)} unique IDs")
+			return result
+		else:
+			mp_logger.warning(f"Column {subject_id} not found in partition")
+			return set()
+			
+	except Exception as e:
+		# Return error info for debugging
+		mp_logger.error(f"Error processing partition: {str(e)}")
+		return {'error': str(e)}
 
 class DataLoader:
 	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
@@ -54,6 +86,55 @@ class DataLoader:
 		# Class variables
 		self.tables_info_df         : Optional[pd.DataFrame]  = None
 		self.tables_info_dict       : Optional[Dict[str, Any]] = None
+
+		# Initialize CPU optimization configuration
+		self._setup_cpu_optimization()
+
+	def _setup_cpu_optimization(self):
+		"""Setup CPU optimization configuration for maximum performance."""
+		import dask
+		import multiprocessing as mp
+
+		# Get system resources
+		optimizer = DaskConfigOptimizer()
+		system_info = optimizer.get_system_info()
+
+		cpu_count = system_info['cpu_count']
+		memory_gb = system_info['total_memory_gb']
+
+		# Configure Dask globally for CPU-intensive operations
+		dask.config.set({
+			# Process-based parallelism
+			'scheduler': 'processes',
+			'distributed.worker.daemon': False,
+
+			# CPU optimization
+			'distributed.nthreads': 1,  # Single thread per process for CPU tasks
+			'distributed.worker.multiprocessing.initializer': None,
+			'distributed.worker.multiprocessing.initargs': (),
+
+			# Memory optimization for CPU tasks
+			'array.chunk-size': f'{min(1024, int(memory_gb * 80))}MB',
+			'distributed.worker.memory.target': 0.9 if memory_gb > 20 else 0.8,
+			'distributed.worker.memory.spill': 0.95,
+			'distributed.worker.memory.pause': 0.95,
+
+			# Performance tuning
+			'dataframe.query-planning': False,
+			'distributed.comm.timeouts.connect': '60s',
+			'distributed.comm.timeouts.tcp': '60s',
+			'distributed.worker.connections.outgoing': min(cpu_count * 2, 50),
+		})
+
+		# Set multiprocessing start method for better performance
+		try:
+			if mp.get_start_method(allow_none=True) != 'spawn':
+				mp.set_start_method('spawn', force=True)
+		except RuntimeError:
+			# Start method already set
+			pass
+
+		logger.info(f"CPU optimization configured: {cpu_count} cores, {memory_gb:.1f}GB RAM, process-based scheduler")
 
 	@lru_cache(maxsize=None)
 	def scan_mimic_directory(self):
@@ -276,7 +357,7 @@ class DataLoader:
 		return dtypes, parse_dates
 
 	def _compute_unique_subject_ids_chunked(self, df: dd.DataFrame, chunk_size: int = 1000000) -> set:
-		"""Compute unique subject_ids from a Dask DataFrame using chunked processing to avoid memory issues.
+		"""Compute unique subject_ids from a Dask DataFrame using optimized parallel processing.
 
 		Args:
 			df: Dask DataFrame containing subject_id column
@@ -285,53 +366,124 @@ class DataLoader:
 		Returns:
 			set: Set of unique subject_ids
 		"""
-		logger.info(f"Computing unique subject_ids using chunked processing with chunk_size={chunk_size:,}")
-
-		# Configure Dask for memory efficiency
+		import psutil
 		import dask
+		from concurrent.futures import ProcessPoolExecutor, as_completed
+		import multiprocessing as mp
+		from functools import partial
+
+		# Get system resources and optimal configuration
+		optimizer = DaskConfigOptimizer()
+		system_info = optimizer.get_system_info()
+		optimal_config = optimizer.get_optimal_balanced_config()
+
+		cpu_count = system_info['cpu_count']
+		memory_gb = system_info['total_memory_gb']
+		available_memory_gb = system_info['available_memory_gb']
+
+		logger.info(f"System resources: {cpu_count} CPU cores, {memory_gb:.1f}GB total RAM, {available_memory_gb:.1f}GB available")
+		logger.info(f"Computing unique subject_ids using CPU-optimized multiprocessing")
+
+		# Use aggressive configuration for CPU-bound tasks
+		memory_target = 0.9 if available_memory_gb > 20 else 0.8  # Use even more memory for CPU tasks
+		chunk_size_mb = min(1024, int(available_memory_gb * 80))  # Larger chunks for CPU processing
+		partition_size_mb = max(50, min(200, int(available_memory_gb * 8)))  # Larger partitions for CPU work
+
+		logger.info(f"CPU-optimized configuration: chunk_size={chunk_size_mb}MB, partition_size={partition_size_mb}MB, memory_target={memory_target}")
+
+		# Configure Dask for CPU-intensive processing
 		with dask.config.set({
 			'dataframe.query-planning': False,  # Use legacy query planning for stability
-			'array.chunk-size': '128MB',        # Smaller chunk size for memory efficiency
-			'distributed.worker.memory.target': 0.6,  # Target 60% memory usage
-			'distributed.worker.memory.spill': 0.7,   # Spill at 70% memory usage
-			'distributed.worker.memory.pause': 0.8,   # Pause at 80% memory usage
+			'array.chunk-size': f'{chunk_size_mb}MB',  # Large chunks for CPU processing
+			'distributed.worker.memory.target': memory_target,  # Aggressive memory usage
+			'distributed.worker.memory.spill': memory_target + 0.05,   # Spill slightly above target
+			'distributed.worker.memory.pause': memory_target + 0.05,    # Pause close to target
+			'distributed.nthreads': 1,         # Single thread per worker for multiprocessing
+			'distributed.worker.daemon': False,        # Better for batch processing
+			'scheduler': 'processes',          # Use process scheduler for CPU tasks
 		}):
-			unique_ids = set()
-
-			# Check if we need to repartition for better chunking (especially for compressed files)
+			# Check initial partitions and optimize for CPU processing
 			n_partitions = df.npartitions
 			logger.info(f"Initial partitions: {n_partitions}")
 
-			# Repartition if we have too few partitions for effective chunking
-			# min_partitions = 10  # Minimum number of partitions for effective processing
-			# if n_partitions < min_partitions:
-			# 	logger.info(f"Repartitioning DataFrame from {n_partitions} to improve chunking for large compressed files")
-			# 	df = df.repartition(partition_size="100MB")
-			# 	n_partitions = df.npartitions
-			# 	logger.info(f"Repartitioned to {n_partitions} partitions")
+			# Repartition for optimal CPU processing
+			# Target: 2-3 partitions per CPU core for CPU-intensive tasks
+			optimal_partitions = max(cpu_count * 2, 20)  # Fewer but larger partitions for CPU work
 
-			# Process each partition separately to control memory usage
-			for i in tqdm(range(n_partitions), desc="Processing partitions"):
-				try:
+			if n_partitions < optimal_partitions:
+				logger.info(f"Repartitioning from {n_partitions} to optimize for {optimal_partitions} target partitions")
+				# Use larger partition size for CPU processing
+				df = df.repartition(partition_size=f"{partition_size_mb}MB")
+				n_partitions = df.npartitions
+				logger.info(f"Repartitioned to {n_partitions} partitions")
 
-					# Get one partition at a time
-					partition = df.get_partition(i)
+			# Use all CPU cores for true parallelism
+			max_workers = min(cpu_count, n_partitions)  # Use all available CPU cores
+			logger.info(f"Using {max_workers} CPU processes for true parallel processing")
 
-					# Compute unique values for this partition
-					partition_unique = partition[subject_id].unique().compute()
+			# Persist the DataFrame in memory for faster access across processes
+			logger.info("Persisting DataFrame in memory for multiprocessing access...")
+			df = df.persist()
 
-					# Add to our running set
-					unique_ids.update(partition_unique)
+			# Use the module-level process_partition_cpu_optimized function for multiprocessing compatibility
+			unique_ids = set()
+			completed_partitions = 0
 
-					# Log progress every 10 partitions
-					if (i + 1) % 10 == 0 or i == n_partitions - 1:
-						logger.info(f"Processed partition {i+1}/{n_partitions}, unique IDs so far: {len(unique_ids):,}")
+			# Process partitions using multiprocessing for true CPU parallelism
+			logger.info("Starting CPU-optimized multiprocessing execution...")
 
-				except Exception as e:
-					logger.warning(f"Error processing partition {i}: {e}")
-					continue
+			# Use optimal batch size for CPU utilization
+			batch_size = max(2, min(cpu_count * 2, n_partitions // 4))  # Larger batches for CPU efficiency
 
-			logger.info(f"Completed chunked processing. Total unique subject_ids: {len(unique_ids):,}")
+			for batch_start in range(0, n_partitions, batch_size):
+				batch_end = min(batch_start + batch_size, n_partitions)
+				batch_partitions = list(range(batch_start, batch_end))
+
+				logger.info(f"Processing CPU batch {batch_start//batch_size + 1}/{(n_partitions + batch_size - 1)//batch_size}: partitions {batch_start}-{batch_end-1}")
+
+				# Get partition data for this batch
+				partition_data_list = []
+				for i in batch_partitions:
+					try:
+						partition = df.get_partition(i)
+						partition_data_list.append(partition)
+					except Exception as e:
+						logger.warning(f"Error getting partition {i}: {e}")
+						partition_data_list.append(None)
+
+				# Process batch with multiprocessing - use spawn method for better CPU isolation
+				mp_context = mp.get_context('spawn')
+				with ProcessPoolExecutor(max_workers=max_workers, mp_context=mp_context) as executor:
+					# Submit batch of partition processing tasks
+					future_to_partition = {}
+					for idx, partition_data in enumerate(partition_data_list):
+						if partition_data is not None:
+							future = executor.submit(process_partition_cpu_optimized, partition_data)
+							future_to_partition[future] = batch_partitions[idx]
+
+				# Collect results as they complete with progress tracking
+				batch_progress = tqdm(as_completed(future_to_partition),
+									 total=len(future_to_partition),
+									 desc=f"CPU batch {batch_start//batch_size + 1}")
+
+				for future in batch_progress:
+					partition_idx = future_to_partition[future]
+					try:
+						result = future.result(timeout=300)  # 5 minute timeout per partition
+						if isinstance(result, dict) and 'error' in result:
+							logger.warning(f"Error in partition {partition_idx}: {result['error']}")
+						else:
+							unique_ids.update(result)
+							completed_partitions += 1
+
+							# Log progress every 10 partitions or at completion
+							if completed_partitions % 10 == 0 or completed_partitions == n_partitions:
+								logger.info(f"Processed {completed_partitions}/{n_partitions} partitions, unique IDs so far: {len(unique_ids):,}")
+
+					except Exception as e:
+						logger.warning(f"Failed to get result for partition {partition_idx}: {e}")
+
+			logger.info(f"Completed CPU-optimized multiprocessing. Total unique subject_ids: {len(unique_ids):,}")
 			return unique_ids
 
 	@staticmethod
@@ -1101,13 +1253,17 @@ class ParquetConverter:
 
 			# Load the CSV file
 			if df is None:
+
+				# This is added as an exception, because the labevents table is too large.
+				if table_name == TableNames.LABEVENTS:
+					df = self.data_loader.fetch_table(file_path=csv_file_path, table_name=table_name, apply_filtering=True)
+
+					subject_ids_list = self.data_loader.get_unique_subject_ids(table_name=TableNames.MERGED)
+
+					df = self.data_loader.extract_rows_by_subject_ids(df=df, table_name=table_name, subject_ids_list=subject_ids_list)
+
+			else:
 				df = self.data_loader.fetch_table(file_path=csv_file_path, table_name=table_name, apply_filtering=False)
-
-			# This is added as an exception, because the labevents table is too large.
-			if table_name == TableNames.LABEVENTS:
-				subject_ids_list = self.data_loader.get_unique_subject_ids(table_name=TableNames.LABEVENTS)
-
-				df = self.data_loader.extract_rows_by_subject_ids(df=df, table_name=table_name, subject_ids_list=subject_ids_list)
 
 			# Get parquet directory
 			if target_parquet_path is None:

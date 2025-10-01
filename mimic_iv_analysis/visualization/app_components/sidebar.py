@@ -159,26 +159,26 @@ class SideBar:
 
 			st.sidebar.markdown("---")
 
-			if st.session_state.selected_table and not self.is_selected_table_parquet and st.session_state.selected_table != "merged_table":
-				# Disable loading options since conversion is required
-				st.sidebar.caption("Loading is disabled until the table is converted to Parquet.")
-				st.sidebar.checkbox("Load Full Table", value=True, disabled=True, key="load_full_disabled")
-				st.sidebar.number_input("Number of Subjects to Load", value=1, disabled=True, key="num_subjects_disabled")
-				st.sidebar.checkbox("Apply Filtering", value=True, disabled=True, key="apply_filtering_disabled")
-				st.sidebar.checkbox("Use Dask", value=True, disabled=True, key="use_dask_disabled")
-			else:
-				# Sampling options
-				st.sidebar.checkbox(
-					label   = "Load Full Table",
-					value   = st.session_state.get('load_full', False) if not self.has_no_subject_id_column else True,
-					key     = "load_full",
-					disabled=self.has_no_subject_id_column )
+			# if st.session_state.selected_table and not self.is_selected_table_parquet and st.session_state.selected_table != "merged_table":
+			# 	# Disable loading options since conversion is required
+			# 	st.sidebar.caption("Loading is disabled until the table is converted to Parquet.")
+			# 	st.sidebar.checkbox("Load Full Table", value=True, disabled=True, key="load_full_disabled")
+			# 	st.sidebar.number_input("Number of Subjects to Load", value=1, disabled=True, key="num_subjects_disabled")
+			# 	st.sidebar.checkbox("Apply Filtering", value=True, disabled=True, key="apply_filtering_disabled")
+			# 	st.sidebar.checkbox("Use Dask", value=True, disabled=True, key="use_dask_disabled")
+			# else:
+			# Sampling options
+			st.sidebar.checkbox(
+				label   = "Load Full Table",
+				value   = st.session_state.get('load_full', False) if not self.has_no_subject_id_column else True,
+				key     = "load_full",
+				disabled=self.has_no_subject_id_column )
 
-				if not st.session_state.load_full:
-					_select_sampling_parameters()
+			if not st.session_state.load_full:
+				_select_sampling_parameters()
 
-				st.sidebar.checkbox("Apply Filtering", value=st.session_state.get('apply_filtering', True), key="apply_filtering", on_change=self._callback_reload_dataloader, help="Apply cohort filtering to the table before loading.")
-				st.sidebar.checkbox("Use Dask"		 , value=st.session_state.get('use_dask', True)		  , key="use_dask"		 , help="Enable Dask for distributed computing and memory-efficient processing")
+			st.sidebar.checkbox("Apply Filtering", value=st.session_state.get('apply_filtering', True), key="apply_filtering", on_change=self._callback_reload_dataloader, help="Apply cohort filtering to the table before loading.")
+			st.sidebar.checkbox("Use Dask"		 , value=st.session_state.get('use_dask', True)		  , key="use_dask"		 , help="Enable Dask for distributed computing and memory-efficient processing")
 
 		def _select_table_module():
 
@@ -286,7 +286,12 @@ class SideBar:
 
 		_load_configuration()
 
-		if st.sidebar.button("Re calculate subject IDs", key="re_calculate_subject_ids", type="secondary"):
+		if st.session_state.selected_table == "merged_table":
+			button_name = "Re calculate subject IDs for all tables"
+		else:
+			button_name = "Re calculate subject IDs"
+
+		if st.sidebar.button(button_name, key="re_calculate_subject_ids", type="secondary"):
 			self.data_handler.get_unique_subject_ids(table_name=TableNames(st.session_state.selected_table), recalculate_subject_ids=True)
 
 		# Only show load button if table is Parquet or it is the merged view
@@ -468,8 +473,7 @@ class SideBar:
 						tables_dict     = st.session_state.connected_tables,
 						partial_loading = False,
 						use_dask        = st.session_state.use_dask,
-						num_subjects    = st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS)
-					)
+						num_subjects    = st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS) )
 
 				with st.spinner("Loading and merging connected tables..."):
 
@@ -480,8 +484,8 @@ class SideBar:
 
 					# Optimized path: 1) choose subject_ids via intersection, 2) load only those rows, 3) merge
 					selected_ids = self.data_handler.get_sample_subject_ids(
-										table_name=TableNames.MERGED,
-										num_subjects=st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS) )
+										table_name   = TableNames.MERGED,
+										num_subjects = st.session_state.get('num_subjects_to_load', DEFAULT_NUM_SUBJECTS) )
 
 					# Fallback to full load if no subject_ids found
 					if not selected_ids:
