@@ -46,7 +46,7 @@ class ExplorationAndViz:
 
 		cols = st.columns([1, 2])
 		with cols[0]:
-			st.session_state.n_rows_for_visualization = st.number_input("Number of Rows for Visualization", min_value=1, max_value=len(st.session_state.df), value=min(30, len(st.session_state.df)))
+			st.session_state.n_rows_for_visualization = st.number_input("Number of Rows for Visualization", min_value=1, max_value=st.session_state.df_length, value=min(30, st.session_state.df_length))
 
 		# Compute a sample from the DataFrame
 		preview_df = ExplorationAndViz.compute_dataframe_sample(df=st.session_state.df, exception_flag=_poe_preview_exception_handling() )

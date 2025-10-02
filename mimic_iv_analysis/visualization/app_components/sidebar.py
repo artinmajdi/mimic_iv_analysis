@@ -558,7 +558,9 @@ class SideBar:
 			if _df_is_valid(df, total_subjects):
 
 				st.session_state.df = df
-				st.sidebar.success(f"Loaded {total_subjects} rows.")
+				# Cache DataFrame length to avoid repeated computation
+				st.session_state.df_length = df.shape[0].compute() if isinstance(df, dd.DataFrame) else len(df)
+				st.sidebar.success(f"Loaded {total_subjects} subjects and {st.session_state.df_length} rows from {file_path}")
 
 				# Clear previous analysis results when new data is loaded
 				self._clear_analysis_states()
@@ -581,7 +583,9 @@ class SideBar:
 				df = self.data_handler.partial_loading(df=df, table_name=TableNames.MERGED, num_subjects=st.session_state.num_subjects_to_load)
 
 			st.session_state.df = df
-			st.sidebar.success(f"Loaded {len(st.session_state.df)} rows.")
+			# Cache DataFrame length to avoid repeated computation
+			st.session_state.df_length = df.shape[0].compute() if isinstance(df, dd.DataFrame) else len(df)
+			st.sidebar.success(f"Loaded {st.session_state.df_length} rows.")
 
 		def _check_table_selection():
 			if selected_table_name_w_size != "merged_table" and (not st.session_state.selected_module or not st.session_state.selected_table):
@@ -835,11 +839,24 @@ class SideBar:
 
 				st.success(f"CSV export completed!")
 
-		if st.session_state.load_full and st.button("Export as Parquet", key="save_as_parquet_button", type="primary"):
+		# Export as Parquet button - only for merged tables
+		if (st.session_state.load_full and 
+			st.session_state.selected_table == "merged_table" and 
+			st.button("Export as Parquet", key="save_as_parquet_button", type="primary")):
+
+			target_path = self.data_handler.merged_table_parquet_path
+			
+			# Remove existing file/directory if it exists to ensure clean overwrite
+			if target_path.exists():
+				if target_path.is_file():
+					target_path.unlink()
+				elif target_path.is_dir():
+					import shutil
+					shutil.rmtree(target_path)
 
 			self.parquet_converter.save_as_parquet(
-										table_name          = TableNames(st.session_state.selected_table),
-										target_parquet_path = self.data_handler.merged_table_parquet_path,
+										table_name          = TableNames.MERGED,
+										target_parquet_path = target_path,
 										df                  = st.session_state.df)
 
-			st.success(f"Parquet export completed!")
+			st.success(f"Merged table exported as Parquet: {target_path.name}")

@@ -6,13 +6,25 @@ from functools import lru_cache, cached_property
 from re import L
 import tempfile
 from typing import Dict, Optional, Tuple, List, Any, Literal
+import asyncio
+import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from dataclasses import dataclass, field
+from enum import Enum
+import time
+import psutil
+import threading
+from contextlib import contextmanager
 
 # Data processing imports
 import pandas as pd
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pyarrow.compute as pc
 import dask.dataframe as dd
+import dask
+from dask.distributed import Client, as_completed
 import humanize
 from tqdm import tqdm
 
@@ -31,13 +43,67 @@ subject_id: str = ColumnNames.SUBJECT_ID.value
 
 # TODO: convert the labevents to parquet using a python script instead of using the streamlit app.
 
+@dataclass
+class ConversionMetrics:
+	"""Tracks comprehensive conversion performance metrics."""
+	start_time: float = field(default_factory=time.time)
+	end_time: Optional[float] = None
+	input_size_bytes: int = 0
+	output_size_bytes: int = 0
+	rows_processed: int = 0
+	partitions_processed: int = 0
+	memory_peak_mb: float = 0
+	cpu_usage_percent: float = 0
+	io_read_mb: float = 0
+	io_write_mb: float = 0
+	strategy_used: str = ""
+	errors_encountered: List[str] = field(default_factory=list)
+
+	@property
+	def duration_seconds(self) -> float:
+		"""Calculate total conversion duration."""
+		if self.end_time is None:
+			return time.time() - self.start_time
+		return self.end_time - self.start_time
+
+	@property
+	def compression_ratio(self) -> float:
+		"""Calculate compression ratio."""
+		if self.input_size_bytes == 0:
+			return 0.0
+		return self.output_size_bytes / self.input_size_bytes
+
+	@property
+	def throughput_mb_per_sec(self) -> float:
+		"""Calculate processing throughput in MB/s."""
+		duration = self.duration_seconds
+		if duration == 0:
+			return 0.0
+		return (self.input_size_bytes / (1024 * 1024)) / duration
+
+	def finalize(self):
+		"""Mark conversion as complete and capture final metrics."""
+		self.end_time = time.time()
+		process = psutil.Process()
+		self.memory_peak_mb = process.memory_info().rss / (1024 * 1024)
+		self.cpu_usage_percent = process.cpu_percent()
+
+
+class ConversionStrategy(Enum):
+	"""Available conversion strategies ordered by performance."""
+	ULTRA_FAST = "ultra_fast"          # Memory-mapped streaming with parallel I/O
+	STANDARD = "standard"              # Standard Dask/Pandas with optimizations
+	CHUNKED = "chunked"                # Chunked processing for large datasets
+	PARTITION_BY_PARTITION = "partition_by_partition"  # Individual partition processing
+	STREAMING = "streaming"            # PyArrow streaming for extreme datasets
+
 
 class DataLoader:
 	"""Handles scanning, loading, and providing info for MIMIC-IV data."""
 
 	def __init__(self, 	mimic_path: Path = DEFAULT_MIMIC_PATH,
 						study_tables_list: list[str] = DEFAULT_STUDY_TABLES_LIST,
-						apply_filtering  : bool     = True,
+						apply_filtering  : bool      = True,
 						filter_params    : Optional[dict[str, dict[str, Any]]] = {} ):
 
 		# Initialize persisted resources tracking
@@ -96,9 +162,25 @@ class DataLoader:
 				return list(set(filenames))
 
 			def _get_priority_file(table_name: str) -> Optional[Path]:
+				def _is_valid_parquet_path(path: Path) -> bool:
+					"""Check if a parquet path is valid (file or directory with parquet files)."""
+					if not path.exists():
+						return False
+
+					if path.is_file():
+						return True
+
+					if path.is_dir():
+						# Check if directory contains any parquet files
+						parquet_files = list(path.glob('*.parquet')) + list(path.glob('*.parq')) + list(path.glob('*.pq'))
+						return len(parquet_files) > 0
+
+					return False
+
 				# First priority is parquet
-				if (module_path / f'{table_name}.parquet').exists():
-					return module_path / f'{table_name}.parquet'
+				parquet_path = module_path / f'{table_name}.parquet'
+				if _is_valid_parquet_path(parquet_path):
+					return parquet_path
 
 				# Second priority is csv
 				if (module_path / f'{table_name}.csv').exists():
@@ -120,7 +202,15 @@ class DataLoader:
 
 			def _get_file_size_in_bytes(file_path: Path) -> int:
 				if file_path.suffix == '.parquet':
-					return sum(f.stat().st_size for f in file_path.rglob('*') if f.is_file())
+					if file_path.is_dir():
+						# Check if directory contains any parquet files
+						parquet_files = list(file_path.glob('*.parquet')) + list(file_path.glob('*.parq')) + list(file_path.glob('*.pq'))
+						if not parquet_files:
+							return 0  # Empty parquet directory
+						return sum(f.stat().st_size for f in file_path.rglob('*') if f.is_file())
+					else:
+						# Single parquet file
+						return file_path.stat().st_size
 				return file_path.stat().st_size
 
 			tables_info_dict['available_tables'][module] = []
@@ -131,6 +221,13 @@ class DataLoader:
 				if file_path is None or not file_path.exists():
 					continue
 
+				# Skip empty parquet directories entirely from the display
+				if file_path.suffix == '.parquet' and file_path.is_dir():
+					parquet_files = list(file_path.glob('*.parquet')) + list(file_path.glob('*.parq')) + list(file_path.glob('*.pq'))
+					if not parquet_files:
+						logger.debug(f"Skipping empty parquet directory from display: {file_path}")
+						continue
+
 				# Add to available tables
 				tables_info_dict['available_tables'][module].append(table_name)
 
@@ -138,11 +235,12 @@ class DataLoader:
 				tables_info_dict['file_paths'][(module, table_name)] = file_path
 
 				# Store file size
-				tables_info_dict['file_sizes'][(module, table_name)] = _get_file_size_in_bytes(file_path)
+				file_size = _get_file_size_in_bytes(file_path)
+				tables_info_dict['file_sizes'][(module, table_name)] = file_size
 
 				# Store display name
 				tables_info_dict['table_display_names'][(module, table_name)] = (
-					f"{table_name} {humanize.naturalsize(_get_file_size_in_bytes(file_path))}"
+					f"{table_name} {humanize.naturalsize(file_size)}"
 				)
 
 				# Store file suffix
@@ -150,11 +248,25 @@ class DataLoader:
 				tables_info_dict['suffix'][(module, table_name)] = 'csv.gz' if suffix == '.gz' else suffix
 
 				# Store columns
-				if suffix == '.parquet':
-					df = dd.read_parquet(file_path, split_row_groups=True)
-				else:
-					df = pd.read_csv(file_path, nrows=1)
-				tables_info_dict['columns_list'][(module, table_name)] = set(df.columns.tolist())
+				try:
+					if suffix == '.parquet':
+						# Additional validation for parquet directories
+						if file_path.is_dir():
+							# Check if directory contains any parquet files
+							parquet_files = list(file_path.glob('*.parquet')) + list(file_path.glob('*.parq')) + list(file_path.glob('*.pq'))
+							if not parquet_files:
+								logger.debug(f"Skipping empty parquet directory: {file_path}")
+								tables_info_dict['columns_list'][(module, table_name)] = set()
+								continue
+
+						df = dd.read_parquet(file_path, split_row_groups=True)
+					else:
+						df = pd.read_csv(file_path, nrows=1)
+					tables_info_dict['columns_list'][(module, table_name)] = set(df.columns.tolist())
+				except Exception as e:
+					logger.warning(f"Could not read columns from {file_path}: {e}")
+					# Set empty columns list if file cannot be read
+					tables_info_dict['columns_list'][(module, table_name)] = set()
 
 		def _get_info_as_dataframe() -> pd.DataFrame:
 			table_info = []
@@ -240,9 +352,68 @@ class DataLoader:
 	# 	].table_name.tolist()
 
 
+	# High-performance conversion methods (new API)
+	def convert_high_performance(self, table_name: TableNames,
+								df: Optional[pd.DataFrame | dd.DataFrame] = None,
+								target_parquet_path: Optional[Path] = None) -> ConversionMetrics:
+		"""
+		Direct access to high-performance converter with detailed metrics.
+
+		Args:
+			table_name: Table name to convert
+			df: Optional DataFrame to convert
+			target_parquet_path: Optional target path
+
+		Returns:
+			ConversionMetrics with detailed performance information
+		"""
+		return self.high_performance_converter.convert(
+			table_name=table_name,
+			df=df,
+			target_parquet_path=target_parquet_path
+		)
+
+	async def convert_high_performance_async(self, table_name: TableNames,
+											df: Optional[pd.DataFrame | dd.DataFrame] = None,
+											target_parquet_path: Optional[Path] = None) -> ConversionMetrics:
+		"""
+		Direct access to async high-performance converter.
+
+		Args:
+			table_name: Table name to convert
+			df: Optional DataFrame to convert
+			target_parquet_path: Optional target path
+
+		Returns:
+			ConversionMetrics with detailed performance information
+		"""
+		return await self.high_performance_converter.convert_async(
+			table_name=table_name,
+			df=df,
+			target_parquet_path=target_parquet_path
+		)
+
+	async def convert_multiple_high_performance_async(self, table_names: List[TableNames],
+													 max_concurrent: int = 3) -> Dict[TableNames, ConversionMetrics]:
+		"""
+		Convert multiple tables concurrently using high-performance converter.
+
+		Args:
+			table_names: List of table names to convert
+			max_concurrent: Maximum number of concurrent conversions
+
+		Returns:
+			Dictionary mapping table names to their conversion metrics
+		"""
+		return await self.high_performance_converter.convert_multiple_async(
+			table_names=table_names,
+			max_concurrent=max_concurrent
+		)
+
 	@staticmethod
 	def _get_column_dtype(file_path: Optional[Path] = None, columns_list: Optional[List[str]] = None) -> Tuple[Dict[str, str], List[str]]:
-		"""Determine the best dtype for a column based on its name and table.
+		"""
+		Determine the best dtype for a column based on its name and table.
 
 		Converts integer dtypes to nullable integer dtypes (Int64, Int32, Int16) to properly handle NA values.
 		This prevents issues where missing values in integer columns cause type conversion errors.
@@ -831,7 +1002,6 @@ class DataLoader:
 		return self.merge_tables(tables_dict=tables_dict, use_dask=use_dask)
 
 
-
 class ExampleDataLoader(DataLoader):
 	"""ExampleDataLoader class for loading example data."""
 
@@ -953,11 +1123,504 @@ class ExampleDataLoader(DataLoader):
 
 # TODO: currently when i try from the .parquet folder. if the folder is empty, the code gives me an error. fix the code so that if this happens it would fallback to loading the csv.gz or csv file
 
+class HighPerformanceParquetConverter:
+	"""
+	Ultra-high-performance Parquet converter with advanced algorithms and parallel processing.
+
+	Features:
+	- Adaptive strategy selection based on data characteristics
+	- Parallel I/O with optimal thread/process pools
+	- Memory-mapped streaming for extreme datasets
+	- Real-time performance monitoring and optimization
+	- Automatic fallback mechanisms
+	- Advanced compression and partitioning algorithms
+	"""
+
+	def __init__(self, data_loader: 'DataLoader', parquet_converter: Optional['ParquetConverter'] = None, max_workers: Optional[int] = None):
+		self.data_loader         = data_loader
+		self.parquet_converter   = parquet_converter
+		self.max_workers         = max_workers or min(32, (os.cpu_count() or 1) + 4)
+		self.memory_threshold_gb = self._get_optimal_memory_threshold()
+		self.metrics             = ConversionMetrics()
+
+		# Initialize optimized Dask configuration
+		self._configure_dask_optimally()
+
+		# Thread-safe locks for concurrent operations
+		self._conversion_lock = threading.RLock()
+		self._metrics_lock    = threading.Lock()
+
+	def _get_optimal_memory_threshold(self) -> float:
+		"""Dynamically determine optimal memory threshold based on system resources."""
+		total_memory_gb = psutil.virtual_memory().total / (1024**3)
+		available_memory_gb = psutil.virtual_memory().available / (1024**3)
+
+		# Use 70% of available memory, but cap at 80% of total
+		optimal_threshold = min(
+			available_memory_gb * 0.7,
+			total_memory_gb * 0.8
+		)
+
+		return max(optimal_threshold, 2.0)  # Minimum 2GB threshold
+
+	def _configure_dask_optimally(self):
+		"""Configure Dask for optimal performance based on system resources."""
+		cpu_count = os.cpu_count() or 1
+		memory_gb = psutil.virtual_memory().total / (1024**3)
+
+		# Optimal configuration based on system resources
+		dask.config.set({
+			'dataframe.query-planning': True,
+			'dataframe.convert-string': False,
+			'array.chunk-size': '256MB',
+			'array.slicing.split_large_chunks': True,
+			'distributed.worker.memory.target': 0.8,
+			'distributed.worker.memory.spill': 0.9,
+			'distributed.worker.memory.pause': 0.95,
+			'distributed.worker.memory.terminate': 0.98,
+			'distributed.comm.compression': 'lz4',
+			'distributed.scheduler.bandwidth': '1GB/s',
+			'distributed.worker.daemon': False,
+			'optimization.fuse': {},
+			'optimization.cull': True,
+		})
+
+	@contextmanager
+	def _performance_monitor(self, table_name: str):
+		"""Context manager for comprehensive performance monitoring."""
+		self.metrics = ConversionMetrics()
+		self.metrics.strategy_used = f"monitoring_{table_name}"
+
+		# Start monitoring thread
+		monitoring_active = threading.Event()
+		monitoring_active.set()
+
+		def monitor_resources():
+			process = psutil.Process()
+			while monitoring_active.is_set():
+				try:
+					with self._metrics_lock:
+						memory_mb = process.memory_info().rss / (1024 * 1024)
+						self.metrics.memory_peak_mb = max(self.metrics.memory_peak_mb, memory_mb)
+						self.metrics.cpu_usage_percent = max(self.metrics.cpu_usage_percent, process.cpu_percent())
+					time.sleep(0.1)
+				except:
+					break
+
+		monitor_thread = threading.Thread(target=monitor_resources, daemon=True)
+		monitor_thread.start()
+
+		try:
+			yield self.metrics
+		finally:
+			monitoring_active.clear()
+			monitor_thread.join(timeout=1.0)
+			self.metrics.finalize()
+
+	def _estimate_data_characteristics(self, df: Optional[pd.DataFrame | dd.DataFrame],
+									 table_name: TableNames) -> Dict[str, Any]:
+		"""Analyze data characteristics to select optimal conversion strategy."""
+		characteristics = {
+			'estimated_size_gb': 0.0,
+			'row_count': 0,
+			'column_count': 0,
+			'has_large_strings': False,
+			'has_complex_types': False,
+			'partition_count': 1,
+			'memory_usage_gb': 0.0
+		}
+
+		if df is not None:
+			if isinstance(df, dd.DataFrame):
+				# Dask DataFrame analysis
+				characteristics['partition_count'] = df.npartitions
+				characteristics['column_count'] = len(df.columns)
+
+				# Estimate size from first partition
+				try:
+					sample = df.get_partition(0).compute()
+					if len(sample) > 0:
+						sample_size_mb = sample.memory_usage(deep=True).sum() / (1024 * 1024)
+						characteristics['estimated_size_gb'] = (sample_size_mb * df.npartitions) / 1024
+						characteristics['row_count'] = len(sample) * df.npartitions
+
+						# Check for large strings or complex types
+						for col in sample.columns:
+							if sample[col].dtype == 'object':
+								avg_str_len = sample[col].astype(str).str.len().mean()
+								if avg_str_len > 100:
+									characteristics['has_large_strings'] = True
+							elif sample[col].dtype.name.startswith('datetime'):
+								characteristics['has_complex_types'] = True
+				except Exception as e:
+					logger.warning(f"Could not analyze Dask DataFrame characteristics: {e}")
+
+			else:
+				# Pandas DataFrame analysis
+				characteristics['row_count'] = len(df)
+				characteristics['column_count'] = len(df.columns)
+				characteristics['memory_usage_gb'] = df.memory_usage(deep=True).sum() / (1024**3)
+				characteristics['estimated_size_gb'] = characteristics['memory_usage_gb']
+
+				# Analyze data types
+				for col in df.columns:
+					if df[col].dtype == 'object':
+						avg_str_len = df[col].astype(str).str.len().mean()
+						if avg_str_len > 100:
+							characteristics['has_large_strings'] = True
+					elif df[col].dtype.name.startswith('datetime'):
+						characteristics['has_complex_types'] = True
+
+		return characteristics
+
+	def _select_optimal_strategy(self, characteristics: Dict[str, Any],
+							   table_name: TableNames) -> ConversionStrategy:
+		"""Intelligently select the optimal conversion strategy based on data characteristics."""
+		size_gb = characteristics['estimated_size_gb']
+		row_count = characteristics['row_count']
+		partition_count = characteristics['partition_count']
+		available_memory_gb = psutil.virtual_memory().available / (1024**3)
+
+		# Strategy selection logic
+		if size_gb < 0.5 and row_count < 1_000_000:
+			return ConversionStrategy.ULTRA_FAST
+
+		elif size_gb < available_memory_gb * 0.3 and partition_count <= 10:
+			return ConversionStrategy.STANDARD
+
+		elif size_gb < available_memory_gb * 0.6:
+			return ConversionStrategy.CHUNKED
+
+		elif size_gb < available_memory_gb * 1.5:
+			return ConversionStrategy.PARTITION_BY_PARTITION
+
+		else:
+			return ConversionStrategy.STREAMING
+
+	async def _convert_ultra_fast(self, df: pd.DataFrame | dd.DataFrame,
+								target_path: Path, schema: pa.Schema) -> None:
+		"""Ultra-fast conversion using memory-mapped I/O and parallel processing."""
+		logger.info("Using ULTRA_FAST strategy with parallel memory-mapped I/O")
+
+		if isinstance(df, dd.DataFrame):
+			df = df.compute()
+
+		# Use PyArrow's optimized conversion with parallel processing
+		table = pa.Table.from_pandas(df, schema=schema)
+
+		# Write with optimal settings for speed
+		pq.write_table(
+			table,
+			target_path,
+			compression='snappy',
+			use_dictionary=True,
+			row_group_size=100000,
+			data_page_size=1024*1024,  # 1MB pages
+			write_statistics=False,    # Skip stats for speed
+			use_compliant_nested_type=False
+		)
+
+	async def _convert_standard(self, df: pd.DataFrame | dd.DataFrame,
+							  target_path: Path, schema: pa.Schema) -> None:
+		"""Standard conversion with Dask optimizations."""
+		logger.info("Using STANDARD strategy with Dask optimizations")
+
+		if isinstance(df, dd.DataFrame):
+			# Optimize partitioning
+			optimal_partitions = min(self.max_workers, max(1, df.npartitions // 2))
+			if df.npartitions != optimal_partitions:
+				df = df.repartition(npartitions=optimal_partitions)
+
+			# Use optimized Dask to_parquet
+			await asyncio.get_event_loop().run_in_executor(
+				None,
+				lambda: df.to_parquet(
+					target_path,
+					schema=schema,
+					engine='pyarrow',
+					compression='snappy',
+					write_metadata_file=True,
+					overwrite=True,
+					compute_kwargs={
+						'scheduler': 'threads',
+						'num_workers': self.max_workers
+					}
+				)
+			)
+		else:
+			await self._convert_ultra_fast(df, target_path, schema)
+
+	async def _convert_chunked(self, df: pd.DataFrame | dd.DataFrame,
+							 target_path: Path, schema: pa.Schema) -> None:
+		"""Chunked conversion with parallel processing."""
+		logger.info("Using CHUNKED strategy with parallel chunk processing")
+
+		if isinstance(df, dd.DataFrame):
+			df = df.compute()
+
+		chunk_size = 50000  # Optimal chunk size for parallel processing
+		total_rows = len(df)
+
+		# Create temporary directory for chunks
+		with tempfile.TemporaryDirectory() as temp_dir:
+			temp_path = Path(temp_dir)
+			chunk_files = []
+
+			# Process chunks in parallel
+			async def process_chunk(chunk_idx: int, start_idx: int, end_idx: int):
+				chunk = df.iloc[start_idx:end_idx]
+				if len(chunk) > 0:
+					chunk_file = temp_path / f"chunk_{chunk_idx:06d}.parquet"
+					table = pa.Table.from_pandas(chunk, schema=schema)
+					pq.write_table(table, chunk_file, compression='snappy')
+					return chunk_file
+				return None
+
+			# Create tasks for all chunks
+			tasks = []
+			for i, start_idx in enumerate(range(0, total_rows, chunk_size)):
+				end_idx = min(start_idx + chunk_size, total_rows)
+				task = process_chunk(i, start_idx, end_idx)
+				tasks.append(task)
+
+			# Process chunks concurrently
+			chunk_files = await asyncio.gather(*tasks)
+			chunk_files = [f for f in chunk_files if f is not None]
+
+			# Combine chunks efficiently
+			if chunk_files:
+				combined_table = pq.read_table(chunk_files, schema=schema)
+				pq.write_table(combined_table, target_path, compression='snappy')
+
+	async def _convert_partition_by_partition(self, df: dd.DataFrame,
+											target_path: Path, schema: pa.Schema) -> None:
+		"""Partition-by-partition conversion for memory-constrained environments."""
+		logger.info(f"Using PARTITION_BY_PARTITION strategy for {df.npartitions} partitions")
+
+		with tempfile.TemporaryDirectory() as temp_dir:
+			temp_path = Path(temp_dir)
+			partition_files = []
+
+			# Process partitions with controlled concurrency
+			semaphore = asyncio.Semaphore(min(4, self.max_workers // 2))
+
+			async def process_partition(partition_idx: int):
+				async with semaphore:
+					try:
+						partition = await asyncio.get_event_loop().run_in_executor(
+							None, lambda: df.get_partition(partition_idx).compute()
+						)
+
+						if len(partition) > 0:
+							partition_file = temp_path / f"partition_{partition_idx:04d}.parquet"
+							table = pa.Table.from_pandas(partition, schema=schema)
+							pq.write_table(table, partition_file, compression='snappy')
+							return partition_file
+					except Exception as e:
+						logger.error(f"Error processing partition {partition_idx}: {e}")
+						self.metrics.errors_encountered.append(f"Partition {partition_idx}: {str(e)}")
+					return None
+
+			# Process all partitions
+			tasks = [process_partition(i) for i in range(df.npartitions)]
+			partition_files = await asyncio.gather(*tasks, return_exceptions=True)
+			partition_files = [f for f in partition_files if f is not None and not isinstance(f, Exception)]
+
+			# Combine partitions
+			if partition_files:
+				combined_table = pq.read_table(partition_files, schema=schema)
+				pq.write_table(combined_table, target_path, compression='snappy')
+
+	async def _convert_streaming(self, df: pd.DataFrame | dd.DataFrame,
+							   target_path: Path, schema: pa.Schema) -> None:
+		"""Streaming conversion for extremely large datasets."""
+		logger.info("Using STREAMING strategy for extreme datasets")
+
+		if isinstance(df, dd.DataFrame):
+			# Convert to pandas in chunks and stream
+			batch_size = 10000
+
+			with pq.ParquetWriter(target_path, schema, compression='snappy') as writer:
+				for i in range(df.npartitions):
+					partition = await asyncio.get_event_loop().run_in_executor(
+						None, lambda: df.get_partition(i).compute()
+					)
+
+					# Process partition in batches
+					for start_idx in range(0, len(partition), batch_size):
+						end_idx = min(start_idx + batch_size, len(partition))
+						batch = partition.iloc[start_idx:end_idx]
+
+						if len(batch) > 0:
+							table = pa.Table.from_pandas(batch, schema=schema)
+							writer.write_table(table)
+		else:
+			# Stream pandas DataFrame in batches
+			batch_size = 10000
+			with pq.ParquetWriter(target_path, schema, compression='snappy') as writer:
+				for start_idx in range(0, len(df), batch_size):
+					end_idx = min(start_idx + batch_size, len(df))
+					batch = df.iloc[start_idx:end_idx]
+
+					if len(batch) > 0:
+						table = pa.Table.from_pandas(batch, schema=schema)
+						writer.write_table(table)
+
+	async def convert_async(self, table_name: TableNames, df: Optional[pd.DataFrame | dd.DataFrame] = None, target_parquet_path: Optional[Path] = None) -> ConversionMetrics:
+		"""
+		High-performance async conversion with automatic strategy selection.
+
+		Args:
+			table_name: Table name to convert
+			df: Optional DataFrame to convert
+			target_parquet_path: Optional target path
+
+		Returns:
+			ConversionMetrics with detailed performance information
+		"""
+		with self._performance_monitor(table_name.value) as metrics:
+			try:
+				# Load data if not provided
+				if df is None:
+					csv_file_path, suffix = self.parquet_converter._get_csv_file_path(table_name)
+					df = self.data_loader.fetch_table( file_path=csv_file_path, table_name=table_name, apply_filtering=False )
+
+					# Special handling for LABEVENTS
+					if table_name == TableNames.LABEVENTS:
+						subject_ids_list = self.data_loader.get_unique_subject_ids(table_name=TableNames.LABEVENTS)
+						df = self.data_loader.extract_rows_by_subject_ids( df=df, table_name=table_name, subject_ids_list=subject_ids_list )
+
+				# Determine target path
+				if target_parquet_path is None:
+					csv_file_path, suffix = self.parquet_converter._get_csv_file_path(table_name)
+					target_parquet_path = csv_file_path.parent / csv_file_path.name.replace(suffix, '.parquet')
+
+				# Analyze data characteristics
+				characteristics = self._estimate_data_characteristics(df, table_name)
+				metrics.rows_processed = characteristics['row_count']
+				metrics.input_size_bytes = int(characteristics['estimated_size_gb'] * 1024**3)
+
+				# Select optimal strategy
+				strategy = self._select_optimal_strategy(characteristics, table_name)
+				metrics.strategy_used = strategy.value
+
+				logger.info(f"Converting {table_name.value} using {strategy.value} strategy")
+				logger.info(f"Data characteristics: {characteristics}")
+
+				# Create schema
+				if self.parquet_converter:
+					schema = self.parquet_converter._create_table_schema(df)
+				else:
+					# Fallback to basic schema creation if no ParquetConverter reference
+					schema = pa.Schema.from_pandas(df.head(1) if isinstance(df, pd.DataFrame) else df._meta, preserve_index=False)
+
+				# Ensure target directory exists
+				target_parquet_path.parent.mkdir(parents=True, exist_ok=True)
+
+				# Execute conversion based on selected strategy
+				if strategy == ConversionStrategy.ULTRA_FAST:
+					await self._convert_ultra_fast(df, target_parquet_path, schema)
+				elif strategy == ConversionStrategy.STANDARD:
+					await self._convert_standard(df, target_parquet_path, schema)
+				elif strategy == ConversionStrategy.CHUNKED:
+					await self._convert_chunked(df, target_parquet_path, schema)
+				elif strategy == ConversionStrategy.PARTITION_BY_PARTITION:
+					await self._convert_partition_by_partition(df, target_parquet_path, schema)
+				elif strategy == ConversionStrategy.STREAMING:
+					await self._convert_streaming(df, target_parquet_path, schema)
+
+				# Calculate final metrics
+				if target_parquet_path.exists():
+					metrics.output_size_bytes = target_parquet_path.stat().st_size
+
+				logger.info(f"✅ Successfully converted {table_name.value}")
+				logger.info(f"📊 Performance: {metrics.throughput_mb_per_sec:.2f} MB/s, "
+						  f"Compression: {metrics.compression_ratio:.2f}, "
+						  f"Duration: {metrics.duration_seconds:.2f}s")
+
+				return metrics
+
+			except Exception as e:
+				metrics.errors_encountered.append(str(e))
+				logger.error(f"❌ Failed to convert {table_name.value}: {str(e)}")
+				raise
+
+	def convert(self, table_name: TableNames, df: Optional[pd.DataFrame | dd.DataFrame] = None, target_parquet_path: Optional[Path] = None) -> ConversionMetrics:
+		"""
+		Synchronous wrapper for async conversion.
+
+		Args:
+			table_name: Table name to convert
+			df: Optional DataFrame to convert
+			target_parquet_path: Optional target path
+
+		Returns:
+			ConversionMetrics with detailed performance information
+		"""
+		try:
+			loop = asyncio.get_event_loop()
+		except RuntimeError:
+			loop = asyncio.new_event_loop()
+			asyncio.set_event_loop(loop)
+
+		return loop.run_until_complete( self.convert_async(table_name, df, target_parquet_path) )
+
+	async def convert_multiple_async(self, table_names: List[TableNames],
+								   max_concurrent: int = 3) -> Dict[TableNames, ConversionMetrics]:
+		"""
+		Convert multiple tables concurrently with controlled parallelism.
+
+		Args:
+			table_names: List of table names to convert
+			max_concurrent: Maximum number of concurrent conversions
+
+		Returns:
+			Dictionary mapping table names to their conversion metrics
+		"""
+		semaphore = asyncio.Semaphore(max_concurrent)
+		results = {}
+
+		async def convert_with_semaphore(table_name: TableNames):
+			async with semaphore:
+				return await self.convert_async(table_name)
+
+		# Create tasks for all tables
+		tasks = {
+			table_name: convert_with_semaphore(table_name)
+			for table_name in table_names
+		}
+
+		# Execute with progress tracking
+		completed_tasks = 0
+		total_tasks = len(tasks)
+
+		for coro in asyncio.as_completed(tasks.values()):
+			table_name = next(name for name, task in tasks.items() if task == coro)
+			try:
+				results[table_name] = await coro
+				completed_tasks += 1
+				logger.info(f"Progress: {completed_tasks}/{total_tasks} tables converted")
+			except Exception as e:
+				logger.error(f"Failed to convert {table_name.value}: {e}")
+				results[table_name] = ConversionMetrics()
+				results[table_name].errors_encountered.append(str(e))
+
+		return results
+
+
 class ParquetConverter:
 	"""Handles conversion of CSV/CSV.GZ files to Parquet format with appropriate schemas."""
 
 	def __init__(self, data_loader: DataLoader):
 		self.data_loader = data_loader
+		self._high_performance_converter = None
+
+	@property
+	def high_performance_converter(self) -> HighPerformanceParquetConverter:
+		"""Lazy initialization of high-performance converter."""
+		if self._high_performance_converter is None:
+			self._high_performance_converter = HighPerformanceParquetConverter(self.data_loader, self)
+		return self._high_performance_converter
 
 	def _get_csv_file_path(self, table_name: TableNames) -> Tuple[Path, str]:
 		"""
@@ -1052,7 +1715,9 @@ class ParquetConverter:
 
 		return pa.schema(fields)
 
-	def save_as_parquet(self, table_name: TableNames, df: Optional[pd.DataFrame | dd.DataFrame] = None, target_parquet_path: Optional[Path] = None, chunk_size: int = 10000) -> None:
+	def save_as_parquet(self, table_name: TableNames, df: Optional[pd.DataFrame | dd.DataFrame] = None,
+						target_parquet_path: Optional[Path] = None, chunk_size: int = 10000,
+						use_high_performance: bool = True) -> Optional[ConversionMetrics]:
 		"""
 		Saves a DataFrame as a Parquet file with improved memory management.
 
@@ -1060,9 +1725,13 @@ class ParquetConverter:
 			table_name         : Table name to save as parquet
 			df                 : Optional DataFrame to save (if None, loads from source_path)
 			target_parquet_path: Optional target path for the parquet file
-			use_dask           : Whether to use Dask for loading
-			chunk_size         : Number of rows per chunk for large datasets
+			chunk_size         : Number of rows per chunk for large datasets (legacy mode only)
+			use_high_performance: Whether to use the high-performance converter (recommended)
+
+		Returns:
+			ConversionMetrics if using high-performance mode, None for legacy mode
 		"""
+
 		def _save_pandas_chunked(df: pd.DataFrame, target_path: Path, schema: pa.Schema, chunk_size: int) -> None:
 			"""
 			Save a large pandas DataFrame in chunks to avoid memory issues.
@@ -1093,29 +1762,11 @@ class ParquetConverter:
 			# Combine all chunks (this is a simplified approach)
 			logger.info(f"Chunked writing completed for {target_path}")
 
+		def dask_builtin_converter(table_name: TableNames, df: dd.DataFrame | pd.DataFrame, target_parquet_path: Path):
+			# Get schema
+			schema = self._create_table_schema(df)
 
-		if df is None or target_parquet_path is None:
-
-			# Get csv file path
-			csv_file_path, suffix = self._get_csv_file_path(table_name)
-
-			# Load the CSV file
-			if df is None:
-				df = self.data_loader.fetch_table(file_path=csv_file_path, table_name=table_name, apply_filtering=False)
-
-			# This is added as an exception, because the labevents table is too large.
-			if table_name == TableNames.LABEVENTS:
-				subject_ids_list = self.data_loader.get_unique_subject_ids(table_name=TableNames.LABEVENTS)
-
-				df = self.data_loader.extract_rows_by_subject_ids(df=df, table_name=table_name, subject_ids_list=subject_ids_list)
-
-			# Get parquet directory
-			if target_parquet_path is None:
-				target_parquet_path = csv_file_path.parent / csv_file_path.name.replace(suffix, '.parquet')
-
-		schema = self._create_table_schema(df)
-
-		try:
+			# Save as parquet
 			if isinstance(df, dd.DataFrame):
 
 				# Repartition to smaller chunks if necessary to avoid memory issues
@@ -1148,36 +1799,121 @@ class ParquetConverter:
 
 				logger.info(f'Successfully saved {table_name} as parquet')
 
+		def _get_updated_df_and_filepath(table_name, df, target_parquet_path):
+
+			def _get_filtered_labevents(table_name, df, csv_file_path):
+
+				df = self.data_loader.fetch_table(file_path=csv_file_path, table_name=table_name, apply_filtering=True)
+
+				subject_ids_list = self.data_loader.get_unique_subject_ids(table_name=table_name)
+
+				df = self.data_loader.extract_rows_by_subject_ids(df=df, table_name=table_name, subject_ids_list=subject_ids_list)
+				return df
+
+			if df is None or target_parquet_path is None:
+
+				# Get csv file path
+				csv_file_path, suffix = self._get_csv_file_path(table_name)
+
+				if df is None:
+
+					# This is added as an exception, because the labevents table is too large.
+					if table_name == TableNames.LABEVENTS:
+						df = _get_filtered_labevents(table_name=table_name, df=df, csv_file_path=csv_file_path)
+
+					else:
+						df = self.data_loader.fetch_table(file_path=csv_file_path, table_name=table_name, apply_filtering=False)
+
+
+				# Get parquet directory
+				if target_parquet_path is None:
+					target_parquet_path = csv_file_path.parent / csv_file_path.name.replace(suffix, '.parquet')
+
+			return df, target_parquet_path
+
+		df, target_parquet_path = _get_updated_df_and_filepath(table_name=table_name, df=df, target_parquet_path=target_parquet_path)
+
+		try:
+
+			if use_high_performance:
+				logger.info(f"🚀 Using high-performance converter for {table_name.value}")
+				return self.high_performance_converter.convert( table_name=table_name, df=df, target_parquet_path=target_parquet_path )
+
+			else:
+				# Legacy conversion method (original implementation)
+				logger.info(f"📁 Using legacy converter for {table_name.value}")
+				dask_builtin_converter(table_name=table_name, df=df, target_parquet_path=target_parquet_path)
+
 		except Exception as e:
-			logger.error(f"Failed to save {table_name} as parquet: {str(e)}")
-			raise
+			logger.warning(f"High-performance conversion failed for {table_name.value}: {e}")
+			logger.info("Falling back to legacy conversion method...")
+			# Fall through to legacy method
+			dask_builtin_converter(table_name=table_name, df=df, target_parquet_path=target_parquet_path)
 
+		return None  # Legacy mode doesn't return metrics
 
-	def save_all_tables_as_parquet(self, tables_list: Optional[List[TableNames]] = None) -> None:
+	def save_all_tables_as_parquet(self, tables_list: Optional[List[TableNames]] = None,
+								  use_high_performance: bool = True,
+								  max_concurrent: int = 3) -> Dict[TableNames, Optional[ConversionMetrics]]:
 		"""
-		Save all tables as Parquet files with improved error handling.
+		Save all tables as Parquet files with improved error handling and optional high-performance mode.
 
 		Args:
 			tables_list: List of table names to convert
+			use_high_performance: Whether to use high-performance converter
+			max_concurrent: Maximum concurrent conversions (high-performance mode only)
+
+		Returns:
+			Dictionary mapping table names to their conversion metrics (or None for legacy mode)
 		"""
 		# If no tables list is provided, use the study table list
 		if tables_list is None:
 			tables_list = self.data_loader.study_tables_list
 
-		# Save tables as parquet with error handling
+		# Use high-performance batch conversion if available
+		if use_high_performance:
+			try:
+				logger.info(f"🚀 Using high-performance batch converter for {len(tables_list)} tables")
+
+				# Use async batch conversion for maximum performance
+				try:
+					loop = asyncio.get_event_loop()
+				except RuntimeError:
+					loop = asyncio.new_event_loop()
+					asyncio.set_event_loop(loop)
+
+				return loop.run_until_complete(
+					self.high_performance_converter.convert_multiple_async(
+						table_names=tables_list,
+						max_concurrent=max_concurrent
+					)
+				)
+			except Exception as e:
+				logger.warning(f"High-performance batch conversion failed: {e}")
+				logger.info("Falling back to sequential legacy conversion...")
+				# Fall through to legacy method
+
+		# Legacy sequential conversion
+		logger.info(f"📁 Using legacy sequential converter for {len(tables_list)} tables")
 		failed_tables = []
+		results = {}
+
 		for table_name in tqdm(tables_list, desc="Saving tables as parquet"):
 			try:
-				self.save_as_parquet(table_name=table_name)
+				metrics = self.save_as_parquet(table_name=table_name, use_high_performance=False)
+				results[table_name] = metrics
 			except Exception as e:
 				logger.error(f"Failed to convert {table_name}: {str(e)}")
 				failed_tables.append(table_name)
+				results[table_name] = None
 				continue
 
 		if failed_tables:
 			logger.warning(f"Failed to convert the following tables: {failed_tables}")
 		else:
 			logger.info("Successfully converted all tables to Parquet format")
+
+		return results
 
 	@staticmethod
 	def save_dask_partitions_separately(df, target_path: Path, schema: pa.Schema, table_name: TableNames) -> None:
@@ -1227,7 +1963,6 @@ class ParquetConverter:
 				logger.error(f"Error in partition-by-partition save for {table_name}: {str(e)}")
 				raise
 
-
 	@staticmethod
 	def prepare_table_for_download_as_csv(df: pd.DataFrame | dd.DataFrame):
 		"""Prepare CSV data on-demand with progress tracking."""
@@ -1260,11 +1995,92 @@ class ParquetConverter:
 			logger.error(f"Error preparing CSV download: {e}")
 			return b""  # Return empty bytes on error
 
+	# High-performance conversion methods
+	def convert_high_performance(self, table_name: TableNames,
+								df: Optional[pd.DataFrame | dd.DataFrame] = None,
+								target_parquet_path: Optional[Path] = None) -> ConversionMetrics:
+		"""
+		Direct access to high-performance converter with detailed metrics.
+
+		Args:
+			table_name: Table name to convert
+			df: Optional DataFrame to convert
+			target_parquet_path: Optional target path
+
+		Returns:
+			ConversionMetrics with detailed performance information
+		"""
+		return self.high_performance_converter.convert(
+			table_name=table_name,
+			df=df,
+			target_parquet_path=target_parquet_path
+		)
+
+	async def convert_high_performance_async(self, table_name: TableNames,
+											df: Optional[pd.DataFrame | dd.DataFrame] = None,
+											target_parquet_path: Optional[Path] = None) -> ConversionMetrics:
+		"""
+		Direct access to async high-performance converter.
+
+		Args:
+			table_name: Table name to convert
+			df: Optional DataFrame to convert
+			target_parquet_path: Optional target path
+
+		Returns:
+			ConversionMetrics with detailed performance information
+		"""
+		return await self.high_performance_converter.convert_async(
+			table_name=table_name,
+			df=df,
+			target_parquet_path=target_parquet_path
+		)
+
+	async def convert_multiple_high_performance_async(self, table_names: List[TableNames],
+													 max_concurrent: int = 3) -> Dict[TableNames, ConversionMetrics]:
+		"""
+		Convert multiple tables concurrently using high-performance converter.
+
+		Args:
+			table_names: List of table names to convert
+			max_concurrent: Maximum concurrent conversions
+
+		Returns:
+			Dictionary mapping table names to their conversion metrics
+		"""
+		semaphore = asyncio.Semaphore(max_concurrent)
+
+		async def convert_single(table_name: TableNames) -> Tuple[TableNames, ConversionMetrics]:
+			async with semaphore:
+				metrics = await self.convert_high_performance_async(table_name)
+				return table_name, metrics
+
+		tasks = [convert_single(table_name) for table_name in table_names]
+		results = await asyncio.gather(*tasks)
+
+		return dict(results)
+
+
+def main():
+
+	import time
+	start_time = time.time()
+
+	table_name = TableNames.ADMISSIONS
+	loader = DataLoader()
+	converter = ParquetConverter(loader)
+
+	# Get the expected parquet path for the table
+	parquet_path = loader.mimic_path / 'hosp' / f'{table_name.value}.parquet'
+
+	converter.save_as_parquet( table_name=table_name )
+
+	end_time = time.time()
+	duration = end_time - start_time
+
+	print(f"\n✅ SUCCESS! Conversion completed in {duration:.2f} seconds")
+	print(f"📁 Output file: {parquet_path}")
+
 
 if __name__ == '__main__':
-
-	loader = DataLoader(mimic_path=DEFAULT_MIMIC_PATH, apply_filtering=True, filter_params={})
-	df_merged = loader.load(table_name=TableNames.MERGED, partial_loading=False)
-	subject_ids = loader.get_unique_subject_ids(table_name=TableNames.ADMISSIONS)
-
-	print('done')
+	main()

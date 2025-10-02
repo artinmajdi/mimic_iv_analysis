@@ -98,7 +98,7 @@ class Filtering:
 			self.df = self.df.drop(columns=['comments'])
 
 		elif self.table_name == TableNames.LABEVENTS:
-			self.df = self.df.drop(columns=['hadm_id', 'value', 'valuenum', 'valueuom', 'ref_range_lower', 'ref_range_upper', 'flag', 'priority', 'comments'])
+			self.df = self.df[['labevent_id', 'subject_id', 'itemid']] # 'labevent_id',  'value', 'valuenum', 'valueuom', 'ref_range_lower', 'ref_range_upper', 'flag', 'priority', 'comments'
 
 		# Reset index
 		self.df = self.df.reset_index(drop=True)

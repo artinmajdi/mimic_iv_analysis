@@ -69,7 +69,7 @@ class MIMICDashboardApp:
 					st.metric("Subjects Loaded", f"{loaded_subjects:,}")
 
 			with col3:
-				st.metric("Rows Loaded", f"{len(st.session_state.df):,}")
+				st.metric("Rows Loaded", f"{st.session_state.df_length:,}")
 				st.metric("Columns Loaded", f"{len(st.session_state.df.columns)}")
 
 			# Display filename
@@ -87,20 +87,20 @@ class MIMICDashboardApp:
 			# Welcome message when no data is loaded
 			st.title("Welcome to the MIMIC-IV Data Explorer & Analyzer")
 			st.markdown("""
-			<div class='info-box'>
-			<p>This tool allows you to load, explore, visualize, and analyze tables from the MIMIC-IV dataset.</p>
-			<p>To get started:</p>
-			<ol>
-				<li>Enter the path to your local MIMIC-IV v3.1 dataset in the sidebar.</li>
-				<li>Click "Scan MIMIC-IV Directory" to find available tables.</li>
-				<li>Select a module (e.g., 'hosp', 'icu') and a table.</li>
-				<li>Choose sampling options if needed.</li>
-				<li>Click "Load Selected Table".</li>
-			</ol>
-			<p>Once data is loaded, you can use the tabs below to explore, engineer features, perform clustering, and analyze the results.</p>
-			<p><i>Note: You need access to the MIMIC-IV dataset (v3.1 recommended) downloaded locally.</i></p>
-			</div>
-			""", unsafe_allow_html=True)
+				<div class='info-box'>
+				<p>This tool allows you to load, explore, visualize, and analyze tables from the MIMIC-IV dataset.</p>
+				<p>To get started:</p>
+				<ol>
+					<li>Enter the path to your local MIMIC-IV v3.1 dataset in the sidebar.</li>
+					<li>Click "Scan MIMIC-IV Directory" to find available tables.</li>
+					<li>Select a module (e.g., 'hosp', 'icu') and a table.</li>
+					<li>Choose sampling options if needed.</li>
+					<li>Click "Load Selected Table".</li>
+				</ol>
+				<p>Once data is loaded, you can use the tabs below to explore, engineer features, perform clustering, and analyze the results.</p>
+				<p><i>Note: You need access to the MIMIC-IV dataset (v3.1 recommended) downloaded locally.</i></p>
+				</div>
+				""", unsafe_allow_html=True)
 
 			# About MIMIC-IV Section
 			with st.expander("About MIMIC-IV"):
@@ -213,6 +213,7 @@ class MIMICDashboardApp:
 		st.session_state.selected_module = None
 		st.session_state.selected_table = None
 		st.session_state.df = None
+		st.session_state.df_length = 0  # Cached DataFrame length to avoid repeated computation
 		st.session_state.available_tables = {}
 		st.session_state.file_paths = {}
 		st.session_state.file_sizes = {}
