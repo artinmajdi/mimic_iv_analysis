@@ -53,8 +53,11 @@ class MIMICDashboardApp:
 				st.metric("Module", st.session_state.selected_module or "N/A")
 
 				# Format file size
-				file_size_mb = st.session_state.file_sizes.get((st.session_state.selected_module, st.session_state.selected_table), 0)
-				st.metric("File Size (Full)", humanize.naturalsize(file_size_mb))
+				if st.session_state.selected_table != TableNames.MERGED.value:
+					file_size_mb = st.session_state.file_sizes.get((st.session_state.selected_module, st.session_state.selected_table), 0)
+					st.metric("File Size (Full)", humanize.naturalsize(file_size_mb))
+				else:
+					st.metric("File Size (Merged)", "N/A")
 
 			with col2:
 				if st.session_state.get('total_subjects_count', None) is None:

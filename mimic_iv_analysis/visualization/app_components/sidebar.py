@@ -292,6 +292,7 @@ class SideBar:
 			button_name = "Re calculate subject IDs"
 
 		if st.sidebar.button(button_name, key="re_calculate_subject_ids", type="secondary"):
+			self._callback_reload_dataloader()
 			self.data_handler.get_unique_subject_ids(table_name=TableNames(st.session_state.selected_table), recalculate_subject_ids=True)
 
 		# Only show load button if table is Parquet or it is the merged view
@@ -605,12 +606,12 @@ class SideBar:
 
 			parquet_exist = parquet_file_exists_and_not_empty(self.data_handler.merged_table_parquet_path)
 
-			st.sidebar.checkbox('Load merged table from local parquet file', value=parquet_exist, key="load_merge_from_parquet", disabled=not parquet_exist)
+			st.sidebar.checkbox('Load merged table from local parquet file', value=parquet_exist, key="load_merge_from_local_parquet", disabled=not parquet_exist)
 
 		if st.sidebar.button("Load Table", key="load_button", type="primary") and _check_table_selection():
 
 			if selected_table_name_w_size == "merged_table":
-				if st.session_state.load_merge_from_parquet:
+				if st.session_state.load_merge_from_local_parquet:
 					_load_merged_table()
 				else:
 					_load_study_tables_and_merge()
@@ -840,19 +841,11 @@ class SideBar:
 				st.success(f"CSV export completed!")
 
 		# Export as Parquet button - only for merged tables
-		if (st.session_state.load_full and 
-			st.session_state.selected_table == "merged_table" and 
+		if (st.session_state.load_full and
+			st.session_state.selected_table == "merged_table" and
 			st.button("Export as Parquet", key="save_as_parquet_button", type="primary")):
 
 			target_path = self.data_handler.merged_table_parquet_path
-			
-			# Remove existing file/directory if it exists to ensure clean overwrite
-			if target_path.exists():
-				if target_path.is_file():
-					target_path.unlink()
-				elif target_path.is_dir():
-					import shutil
-					shutil.rmtree(target_path)
 
 			self.parquet_converter.save_as_parquet(
 										table_name          = TableNames.MERGED,

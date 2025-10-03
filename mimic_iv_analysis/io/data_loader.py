@@ -344,15 +344,7 @@ class DataLoader:
 
 		return self.tables_info_df[self.tables_info_df.table_name.isin(self.study_tables_list)]
 
-	# @property
-	# def _list_of_tables_w_subject_id_column(self) -> list[str]:
-	# 	"""Returns a list of tables that have subject_id column."""
-	# 	return self.study_tables_info[
-	# 		self.study_tables_info.columns_list.apply(lambda x: 'subject_id' in x)
-	# 	].table_name.tolist()
 
-
-	# High-performance conversion methods (new API)
 	def convert_high_performance(self, table_name: TableNames,
 								df: Optional[pd.DataFrame | dd.DataFrame] = None,
 								target_parquet_path: Optional[Path] = None) -> ConversionMetrics:
@@ -446,6 +438,7 @@ class DataLoader:
 
 		return dtypes, parse_dates
 
+
 	def _compute_unique_subject_ids_chunked(self, df: dd.DataFrame, chunk_size: int = 1000000) -> set:
 		"""Compute unique subject_ids from a Dask DataFrame using chunked processing to avoid memory issues.
 
@@ -504,6 +497,7 @@ class DataLoader:
 
 			logger.info(f"Completed chunked processing. Total unique subject_ids: {len(unique_ids):,}")
 			return unique_ids
+
 
 	@staticmethod
 	def _handle_na_values_in_dataframe(df: pd.DataFrame | dd.DataFrame) -> pd.DataFrame | dd.DataFrame:
@@ -570,23 +564,21 @@ class DataLoader:
 
 		return Path(df['file_path'].iloc[0])
 
-
-	def get_sample_subject_ids(self, table_name: TableNames | str, num_subjects: int = DEFAULT_NUM_SUBJECTS) -> list[int]:
+	def get_sample_subject_ids(self, table_name: TableNames | str, num_subjects: int = DEFAULT_NUM_SUBJECTS, subject_ids_list: Optional[list[int]] = None) -> list[int]:
 
 		if isinstance(table_name, str):
 			table_name = TableNames(table_name)
 
 		def _sample_subject_ids(common_subject_ids_list: list[int]) -> list[int]:
 			"""Sample subject_ids from the list, ensuring no duplicates."""
-			if num_subjects is None:
-				return []
-			elif num_subjects >= len(common_subject_ids_list):
+			if num_subjects >= len(common_subject_ids_list):
 				return common_subject_ids_list
 			return common_subject_ids_list[:num_subjects]
 
-		unique_subject_ids = self.get_unique_subject_ids(table_name=table_name)
+		if subject_ids_list is None:
+			subject_ids_list = self.get_unique_subject_ids(table_name=table_name)
 
-		return _sample_subject_ids(list(unique_subject_ids))
+		return _sample_subject_ids(list(subject_ids_list))
 
 	def get_unique_subject_ids(self, table_name: TableNames | str, recalculate_subject_ids: bool = False) -> set:
 
@@ -859,18 +851,26 @@ class DataLoader:
 		return df[df[subject_id].isin(subject_ids_list)]
 
 
-	def load(self, table_name: TableNames | str, partial_loading: bool = False, num_subjects: int = DEFAULT_NUM_SUBJECTS, use_dask:bool = True, tables_dict:Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None) -> pd.DataFrame | dd.DataFrame:
+	def load(self, table_name: TableNames | str, partial_loading: bool = False, num_subjects: Optional[int] = None, use_dask:bool = True, tables_dict:Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None) -> pd.DataFrame | dd.DataFrame:
 
 		if isinstance(table_name, str):
 			table_name = TableNames(table_name)
 
+		# Handle deprecated partial_loading argument
+		if (not partial_loading) and num_subjects is not None:
+			num_subjects = None
+
+		if partial_loading and num_subjects is None:
+			raise ValueError("num_subjects must be provided when partial_loading is True.")
+
+
 		if table_name is TableNames.MERGED:
-			# Use optimized path when partial loading is requested (select subject_ids first, then load only needed rows)
-			if partial_loading and tables_dict is None:
+			# This optimized path selects subject_ids first, then load only needed rows
+			if tables_dict is None:
 				return self.load_filtered_merged_table_by_subjects(num_subjects=num_subjects, use_dask=use_dask)
 
-			# Fall back to regular merge (uses provided tables_dict when available)
 			df = self.merge_tables(tables_dict=tables_dict, use_dask=use_dask)
+
 		else:
 			df = self.fetch_table(table_name=table_name, use_dask=use_dask, apply_filtering=self.apply_filtering)
 
@@ -882,6 +882,15 @@ class DataLoader:
 
 	def merge_tables(self, tables_dict: Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
 		""" Load and merge tables. """
+
+		def _dask_persist(df: pd.DataFrame | dd.DataFrame, tag: str) -> pd.DataFrame | dd.DataFrame:
+			nonlocal persisted_intermediates
+			if isinstance(df, dd.DataFrame):
+				df = df.persist()
+				persisted_intermediates[tag] = df
+
+			return df
+
 
 		if tables_dict is None:
 			tables_dict = self.fetch_complete_study_tables(use_dask=use_dask)
@@ -901,47 +910,42 @@ class DataLoader:
 		persisted_intermediates = {}  # Track intermediate results for cleanup
 
 		try:
-			# Merge tables with persist() for intermediate results
+			# Merge tables with persist() for intermediate results: -- subject_id --
 			df12 = patients_df.merge(admissions_df, on=subject_id, how='inner')
+			df12 = _dask_persist(df12, 'patients_admissions')
 
-			# Persist intermediate result if using Dask
-			if isinstance(df12, dd.DataFrame):
-				df12 = df12.persist()
-				persisted_intermediates['patients_admissions'] = df12
-
+			# Merge with Transfers: -- subject_id, hadm_id --
 			df123 = df12.merge(transfers_df, on=[subject_id, ColumnNames.HADM_ID.value], how='inner')
+			df123 = _dask_persist(df123, 'with_transfers')
 
-			# Persist intermediate result
-			if isinstance(df123, dd.DataFrame):
-				df123 = df123.persist()
-				persisted_intermediates['with_transfers'] = df123
-			else:
-				df123 = df12
-
+			# Diagnoses_ICD ICD and D_ICD_DIAGNOSES: -- icd_code, icd_version --
 			diagnoses_merged = diagnoses_icd_df.merge(d_icd_diagnoses_df, on=['icd_code', 'icd_version'], how='inner')
+			diagnoses_merged = _dask_persist(diagnoses_merged, 'diagnoses_merged')
 
-			# Persist diagnoses merge result
-			if isinstance(diagnoses_merged, dd.DataFrame):
-				diagnoses_merged = diagnoses_merged.persist()
-				persisted_intermediates['diagnoses_merged'] = diagnoses_merged
+			# Merge with Diagnoses: -- subject_id, hadm_id --
+			df1234 = df123.merge(diagnoses_merged, on=[subject_id, ColumnNames.HADM_ID.value], how='inner')
+			df1234 = _dask_persist(df1234, 'merged_wo_poe')
 
-			merged_wo_poe = df123.merge(diagnoses_merged, on=[subject_id, ColumnNames.HADM_ID.value], how='inner')
-
-			# Persist before final merge
-			if isinstance(merged_wo_poe, dd.DataFrame):
-				merged_wo_poe = merged_wo_poe.persist()
-				persisted_intermediates['merged_wo_poe'] = merged_wo_poe
-
-			# The reason for 'left' is that we want to keep all the rows from poe table.
-			# The poe_detail table for unknown reasons, has fewer rows than poe table.
+			# POE and POE_DETAIL: -- poe_id, poe_seq, subject_id --
+			# The reason for 'left' is that we want to keep all the rows from poe table. The poe_detail table for unknown reasons, has fewer rows than poe table.
 			poe_and_details = poe_df.merge(poe_detail_df, on=[ColumnNames.POE_ID.value, ColumnNames.POE_SEQ.value, subject_id], how='inner')
+			poe_and_details = _dask_persist(poe_and_details, 'poe_and_details')
 
-			# Persist POE merge result
-			if isinstance(poe_and_details, dd.DataFrame):
-				poe_and_details = poe_and_details.persist()
-				persisted_intermediates['poe_and_details'] = poe_and_details
+			# Merge with POE and POE_DETAIL: -- subject_id, hadm_id --
+			df12345 = df1234.merge(poe_and_details, on=[subject_id, ColumnNames.HADM_ID.value], how='inner')
+			df12345 = _dask_persist(df12345, 'merged_with_poe')
 
-			merged_full_study = merged_wo_poe.merge(poe_and_details, on=[subject_id, ColumnNames.HADM_ID.value], how='inner')
+			# Merge with Prescriptions: -- subject_id, hadm_id, poe_id, poe_seq --
+			df123456 = df12345.merge(prescriptions_df, on=[subject_id, ColumnNames.HADM_ID.value, ColumnNames.POE_ID.value, ColumnNames.POE_SEQ.value, ColumnNames.ORDER_PROVIDER_ID.value], how='left')
+			df123456 = _dask_persist(df123456, 'merged_with_prescriptions')
+
+			# # Labevents and d_labitems: -- itemid --
+			# labevents = labevents_df.merge(d_labitems_df, on=[ColumnNames.ITEMID.value], how='inner')
+			# labevents = _dask_persist(labevents, 'labevents')
+
+			# # Merge with Labevents: -- subject_id, poe_id, poe_seq --
+			# df1234567 = df123456.merge(labevents, on=[subject_id, ColumnNames.HADM_ID.value, ColumnNames.ORDER_PROVIDER_ID.value], how='inner')
+			# df1234567 = _dask_persist(df1234567, 'merged_with_labevents')
 
 			# Store intermediate persisted results for potential cleanup
 			self._persisted_resources.update(persisted_intermediates)
@@ -952,7 +956,7 @@ class DataLoader:
 			self._cleanup_persisted_resources(persisted_intermediates)
 			raise
 
-		return merged_full_study
+		return df123456
 
 
 	def load_filtered_study_tables_by_subjects(self, subject_ids: List[int], use_dask: bool = True) -> Dict[str, pd.DataFrame | dd.DataFrame]:
@@ -967,7 +971,7 @@ class DataLoader:
 		for _, row in self.study_tables_info.iterrows():
 			table_name = TableNames(row.table_name)
 
-			if table_name is TableNames.MERGED:
+			if table_name == TableNames.MERGED:
 				raise ValueError("merged table can not be part of the merged table")
 
 			# Load table
@@ -984,15 +988,26 @@ class DataLoader:
 
 		return tables_dict
 
-	def load_filtered_merged_table_by_subjects(self, num_subjects: int = DEFAULT_NUM_SUBJECTS, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
+
+	def load_filtered_merged_table_by_subjects(self, num_subjects: Optional[int] = None, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
 		"""Optimized merged loading: select subject_ids first, load filtered tables, then merge."""
 
-		# 1) Compute intersection and select N subject_ids
-		common_subject_ids_sample_list = self.get_sample_subject_ids(table_name=TableNames.MERGED, num_subjects=num_subjects)
+		def _sample_subject_ids(common_subject_ids_list: list[int], num_subjects: int) -> list[int]:
+			"""Sample subject_ids from the list, ensuring no duplicates."""
+			if num_subjects >= len(common_subject_ids_list):
+				return common_subject_ids_list
+			return common_subject_ids_list[:num_subjects]
 
-		if common_subject_ids_sample_list:
+		common_subject_ids_list = self.get_unique_subject_ids(table_name=TableNames.MERGED)
+
+		# 1) Compute intersection and select N subject_ids
+		if num_subjects is not None:
+			common_subject_ids_list = _sample_subject_ids(common_subject_ids_list=common_subject_ids_list, num_subjects=num_subjects)
+
+
+		if common_subject_ids_list:
 			# 2) Load only rows for selected subject_ids across component tables
-			tables_dict = self.load_filtered_study_tables_by_subjects(subject_ids=common_subject_ids_sample_list, use_dask=use_dask)
+			tables_dict = self.load_filtered_study_tables_by_subjects(subject_ids=common_subject_ids_list, use_dask=use_dask)
 
 		else:
 			logger.warning("No subject_ids selected for optimized merged loading; falling back to full merged load")
@@ -1120,8 +1135,6 @@ class ExampleDataLoader(DataLoader):
 		"""Load all study tables."""
 		return self.tables_dict
 
-
-# TODO: currently when i try from the .parquet folder. if the folder is empty, the code gives me an error. fix the code so that if this happens it would fallback to loading the csv.gz or csv file
 
 class HighPerformanceParquetConverter:
 	"""
@@ -1485,10 +1498,10 @@ class HighPerformanceParquetConverter:
 					csv_file_path, suffix = self.parquet_converter._get_csv_file_path(table_name)
 					df = self.data_loader.fetch_table( file_path=csv_file_path, table_name=table_name, apply_filtering=False )
 
-					# Special handling for LABEVENTS
-					if table_name == TableNames.LABEVENTS:
-						subject_ids_list = self.data_loader.get_unique_subject_ids(table_name=TableNames.LABEVENTS)
-						df = self.data_loader.extract_rows_by_subject_ids( df=df, table_name=table_name, subject_ids_list=subject_ids_list )
+					# # Special handling for LABEVENTS
+					# if table_name == TableNames.LABEVENTS:
+					# 	subject_ids_list = self.data_loader.get_unique_subject_ids(table_name=TableNames.MERGED)
+					# 	df = self.data_loader.extract_rows_by_subject_ids( df=df, table_name=table_name, subject_ids_list=subject_ids_list )
 
 				# Determine target path
 				if target_parquet_path is None:
@@ -1565,8 +1578,7 @@ class HighPerformanceParquetConverter:
 
 		return loop.run_until_complete( self.convert_async(table_name, df, target_parquet_path) )
 
-	async def convert_multiple_async(self, table_names: List[TableNames],
-								   max_concurrent: int = 3) -> Dict[TableNames, ConversionMetrics]:
+	async def convert_multiple_async(self, table_names: List[TableNames], max_concurrent: int = 3) -> Dict[TableNames, ConversionMetrics]:
 		"""
 		Convert multiple tables concurrently with controlled parallelism.
 
@@ -1801,14 +1813,14 @@ class ParquetConverter:
 
 		def _get_updated_df_and_filepath(table_name, df, target_parquet_path):
 
-			def _get_filtered_labevents(table_name, df, csv_file_path):
+			# def _get_filtered_labevents(table_name, df, csv_file_path):
 
-				df = self.data_loader.fetch_table(file_path=csv_file_path, table_name=table_name, apply_filtering=True)
+			# 	df = self.data_loader.fetch_table(file_path=csv_file_path, table_name=table_name, apply_filtering=True)
 
-				subject_ids_list = self.data_loader.get_unique_subject_ids(table_name=table_name)
+			# 	subject_ids_list = self.data_loader.get_unique_subject_ids(table_name=TableNames.MERGED)
 
-				df = self.data_loader.extract_rows_by_subject_ids(df=df, table_name=table_name, subject_ids_list=subject_ids_list)
-				return df
+			# 	df = self.data_loader.extract_rows_by_subject_ids(df=df, table_name=table_name, subject_ids_list=subject_ids_list)
+			# 	return df
 
 			if df is None or target_parquet_path is None:
 
@@ -1818,11 +1830,11 @@ class ParquetConverter:
 				if df is None:
 
 					# This is added as an exception, because the labevents table is too large.
-					if table_name == TableNames.LABEVENTS:
-						df = _get_filtered_labevents(table_name=table_name, df=df, csv_file_path=csv_file_path)
+					# if table_name == TableNames.LABEVENTS:
+					# 	df = _get_filtered_labevents(table_name=table_name, df=df, csv_file_path=csv_file_path)
 
-					else:
-						df = self.data_loader.fetch_table(file_path=csv_file_path, table_name=table_name, apply_filtering=False)
+					# else:
+					df = self.data_loader.fetch_table(file_path=csv_file_path, table_name=table_name, apply_filtering=False)
 
 
 				# Get parquet directory
@@ -1831,7 +1843,18 @@ class ParquetConverter:
 
 			return df, target_parquet_path
 
+		def _remove_existing_merged_parquet(table_name, target_parquet_path):
+			if table_name == TableNames.MERGED and target_parquet_path.exists():
+				if target_parquet_path.is_file():
+					target_parquet_path.unlink()
+				elif target_parquet_path.is_dir():
+					import shutil
+					shutil.rmtree(target_parquet_path)
+
+		# Get updated df and filepath
 		df, target_parquet_path = _get_updated_df_and_filepath(table_name=table_name, df=df, target_parquet_path=target_parquet_path)
+
+		_remove_existing_merged_parquet(table_name=table_name, target_parquet_path=target_parquet_path)
 
 		try:
 
@@ -1852,9 +1875,7 @@ class ParquetConverter:
 
 		return None  # Legacy mode doesn't return metrics
 
-	def save_all_tables_as_parquet(self, tables_list: Optional[List[TableNames]] = None,
-								  use_high_performance: bool = True,
-								  max_concurrent: int = 3) -> Dict[TableNames, Optional[ConversionMetrics]]:
+	def save_all_tables_as_parquet(self, tables_list: Optional[List[TableNames]] = None, use_high_performance: bool = True, max_concurrent: int = 3) -> Dict[TableNames, Optional[ConversionMetrics]]:
 		"""
 		Save all tables as Parquet files with improved error handling and optional high-performance mode.
 
@@ -2061,12 +2082,11 @@ class ParquetConverter:
 		return dict(results)
 
 
-def main():
+def example_save_to_parquet(table_name = TableNames.LABEVENTS):
 
 	import time
 	start_time = time.time()
 
-	table_name = TableNames.ADMISSIONS
 	loader = DataLoader()
 	converter = ParquetConverter(loader)
 
@@ -2078,9 +2098,49 @@ def main():
 	end_time = time.time()
 	duration = end_time - start_time
 
-	print(f"\n✅ SUCCESS! Conversion completed in {duration:.2f} seconds")
+	print(f"\n✅ SUCCESS! {table_name.value} table conversion completed in {duration:.2f} seconds")
 	print(f"📁 Output file: {parquet_path}")
 
+
+def example_export_merge_table():
+
+	import time
+	start_time = time.time()
+
+	# example_save_to_parquet()
+
+	# merge the tables and save it to parquet
+	loader = DataLoader(apply_filtering=True)
+	converter = ParquetConverter(data_loader=loader)
+
+	print("🔄 Loading and merging FULL tables...")
+
+	# Load FULL merged table without subject limitations
+	merged_df = loader.load(table_name=TableNames.MERGED, partial_loading=False, use_dask=True)
+
+	print(f"📊 Merged table loaded with {merged_df.shape[0].compute() if hasattr(merged_df.shape[0], 'compute') else len(merged_df)} rows")
+
+	target_path = loader.merged_table_parquet_path
+	# Save merged table as parquet
+	converter.save_as_parquet( table_name=TableNames.MERGED, df=merged_df, target_parquet_path=target_path )
+
+	end_time = time.time()
+	duration = end_time - start_time
+
+	print(f"\n✅ SUCCESS! Merged table conversion completed in {duration:.2f} seconds")
+	print(f"📁 Output file: {target_path}")
+
+	# Display file size
+	if target_path.exists():
+		if target_path.is_file():
+			size = target_path.stat().st_size
+		else:
+			size = sum(f.stat().st_size for f in target_path.rglob('*') if f.is_file())
+		print(f"📏 File size: {humanize.naturalsize(size)}")
+
+def main():
+	example_save_to_parquet()
+	# example_export_merge_table()
 
 if __name__ == '__main__':
 	main()

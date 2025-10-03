@@ -383,7 +383,7 @@ _COLUMN_TYPES = {
     'hadm_id'             : 'int64',   # INTEGER NOT NULL in MIMIC-IV (was incorrectly 'string')
     'stay_id'             : 'int64',
     'icustay_id'          : 'int64',
-    'itemid'              : 'int64',   # INTEGER - labevents
+    'itemid'              : 'Int64',   # INTEGER - labevents
     'labevent_id'         : 'int64',   # INTEGER NOT NULL in MIMIC-IV
     'specimen_id'         : 'int64',   # INTEGER NOT NULL in MIMIC-IV
     'poe_seq'             : 'int64',   # INTEGER - poe, poe_detail
@@ -683,8 +683,8 @@ DEFAULT_STUDY_TABLES_LIST = [
 				TableNames.D_ICD_DIAGNOSES.value, # 876KB
 				TableNames.POE.value, # 606MB
 				TableNames.POE_DETAIL.value, # 55MB
-                # TableNames.LABEVENTS.value, # 2.6GB
-                # TableNames.PRESCRIPTIONS.value, # 606MB
+                TableNames.LABEVENTS.value, # 2.6GB
+                TableNames.PRESCRIPTIONS.value, # 606MB
                 TableNames.D_LABITEMS.value # 30KB
 			]
 

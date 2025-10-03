@@ -68,7 +68,7 @@ class Filtering:
 		elif self.table_name == TableNames.ADMISSIONS:
 
 			# Filter columns
-			# self.df = self.df[ admissions_filters['selected_columns'] ]
+			self.df = self.df.drop(columns=['admit_provider_id', 'insurance','language', 'marital_status', 'race', 'edregtime', 'edouttime'])
 
 			self.df = self.df.dropna(subset=['admittime', 'dischtime'])
 
@@ -79,26 +79,34 @@ class Filtering:
 			discharge_after_admission = self.df['dischtime'] > self.df['admittime']
 
 			# Exclude admission types like “Emergency”, “Urgent”, or “Elective”
-			admission_type    = ~self.df.admission_type.isin(['EW EMER.', 'DIRECT EMER.', 'URGENT', 'ELECTIVE'])
+			admission_type = ~self.df.admission_type.isin(['EW EMER.', 'DIRECT EMER.', 'URGENT', 'ELECTIVE'])
 
 			self.df = self.df[ exclude_in_hospital_death & discharge_after_admission & admission_type]
 
 
 		elif self.table_name == TableNames.TRANSFERS:
 
-			# df2 = self.df.compute()
-
 			# empty_cells = self.df.hadm_id != ''
 			self.df = self.df[ ~self.df.hadm_id.isnull()]
 
-			careunit = self.df.careunit.isin(['Medicine'])
-			self.df = self.df[careunit]
+			# careunit = self.df.careunit.isin(['Medicine'])
+			# self.df = self.df[careunit]
 
 		elif self.table_name == TableNames.MICROBIOLOGYEVENTS:
 			self.df = self.df.drop(columns=['comments'])
 
 		elif self.table_name == TableNames.LABEVENTS:
-			self.df = self.df[['labevent_id', 'subject_id', 'itemid']] # 'labevent_id',  'value', 'valuenum', 'valueuom', 'ref_range_lower', 'ref_range_upper', 'flag', 'priority', 'comments'
+			self.df = self.df[['labevent_id', 'subject_id', 'hadm_id', 'itemid', 'order_provider_id']] # 'labevent_id',  'value', 'valuenum', 'valueuom', 'ref_range_lower', 'ref_range_upper', 'flag', 'priority', 'comments'
+
+			# TODO: why this removs majority of rows (goes to 29k from billions for rows and subjects to 2309 from 313k)
+			is_null = self.df.hadm_id.isnull() | self.df.order_provider_id.isnull()
+			self.df = self.df[~is_null]
+
+		elif self.table_name == TableNames.PRESCRIPTIONS:
+			# ['subject_id', 'hadm_id', 'pharmacy_id', 'poe_id', 'poe_seq', 'order_provider_id', 'starttime', 'stoptime', 'drug_type', 'drug', 'formulary_drug_cd', 'gsn', 'ndc', 'prod_strength', 'form_rx', 'dose_unit_rx', 'dose_val_rx', 'form_unit_disp', 'form_val_disp', 'doses_per_24_hrs', 'route']
+			# self.df = self.df[ ['subject_id', 'hadm_id', 'poe_id', 'poe_seq', 'order_provider_id']]
+			self.df = self.df.drop(columns=['pharmacy_id', 'starttime', 'stoptime', 'drug_type', 'formulary_drug_cd'])
+
 
 		# Reset index
 		self.df = self.df.reset_index(drop=True)
