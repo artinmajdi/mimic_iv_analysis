@@ -693,8 +693,8 @@ DEFAULT_STUDY_TABLES_LIST = [
 # Default paths and configurations
 # ============================================================================
 # TODO: Remove all dependencies on DEFAULT_MIMIC_PATH path except for UI path selection default value.
-# DEFAULT_MIMIC_PATH = Path("/Users/artinmajdi/Library/CloudStorage/GoogleDrive-msm2024@gmail.com/My Drive/MIMIC_IV_Dataset")
-DEFAULT_MIMIC_PATH = Path("/Users/pankajvyas/MIMIC_Project/MIMIC-IV-Raw Data")
+DEFAULT_MIMIC_PATH = Path("/Users/artinmajdi/Library/CloudStorage/GoogleDrive-msm2024@gmail.com/My Drive/MIMIC_IV_Dataset")
+# DEFAULT_MIMIC_PATH = Path("/Users/pankajvyas/MIMIC_Project/MIMIC-IV-Raw Data")
 
 
 DEFAULT_NUM_SUBJECTS = 20
