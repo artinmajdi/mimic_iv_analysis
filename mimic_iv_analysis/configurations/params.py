@@ -683,9 +683,9 @@ DEFAULT_STUDY_TABLES_LIST = [
 				TableNames.D_ICD_DIAGNOSES.value, # 876KB
 				TableNames.POE.value, # 606MB
 				TableNames.POE_DETAIL.value, # 55MB
-                TableNames.LABEVENTS.value, # 2.6GB
                 TableNames.PRESCRIPTIONS.value, # 606MB
-                TableNames.D_LABITEMS.value # 30KB
+                # TableNames.D_LABITEMS.value # 30KB
+                # TableNames.LABEVENTS.value, # 2.6GB
 			]
 
 

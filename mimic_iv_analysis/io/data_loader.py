@@ -904,8 +904,8 @@ class DataLoader:
 		poe_detail_df      = tables_dict[TableNames.POE_DETAIL.value] # 55MB
 		transfers_df       = tables_dict.get(TableNames.TRANSFERS.value) # 46MB
 		prescriptions_df   = tables_dict.get(TableNames.PRESCRIPTIONS.value) # 606MB
-		labevents_df       = tables_dict.get(TableNames.LABEVENTS.value) # 2.6GB
-		d_labitems_df      = tables_dict.get(TableNames.D_LABITEMS.value) # 30KB
+		# labevents_df       = tables_dict.get(TableNames.LABEVENTS.value) # 2.6GB
+		# d_labitems_df      = tables_dict.get(TableNames.D_LABITEMS.value) # 30KB
 
 		persisted_intermediates = {}  # Track intermediate results for cleanup
 
@@ -2139,8 +2139,8 @@ def example_export_merge_table():
 		print(f"📏 File size: {humanize.naturalsize(size)}")
 
 def main():
-	example_save_to_parquet()
-	# example_export_merge_table()
+	# example_save_to_parquet()
+	example_export_merge_table()
 
 if __name__ == '__main__':
 	main()
