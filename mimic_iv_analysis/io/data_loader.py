@@ -580,7 +580,11 @@ class DataLoader:
 
 		return _sample_subject_ids(list(subject_ids_list))
 
-	def get_unique_subject_ids(self, table_name: TableNames | str, recalculate_subject_ids: bool = False) -> set:
+	def get_unique_subject_ids(self, table_name: TableNames | str, recalculate_subject_ids: bool = False, before_applying_filters: bool = False) -> set:
+		""" Returns a set of unique subject_ids found in a table.
+			before_applying_filters: boolean, if True, the function will return the unique subject_ids before applying filters.
+			recalculate_subject_ids: boolean, if True, the function will recalculate the unique subject_ids.
+			"""
 
 		if isinstance(table_name, str):
 			table_name = TableNames(table_name)
@@ -618,7 +622,7 @@ class DataLoader:
 
 				csv_tag = table_name.value
 
-				if self.apply_filtering:
+				if self.apply_filtering and not before_applying_filters:
 					csv_tag += '_filtered'
 
 				subject_ids_path = self.mimic_path / 'subject_ids' / f'{csv_tag}_subject_ids.csv'
@@ -632,7 +636,7 @@ class DataLoader:
 				df_unique_subject_ids = pd.read_csv(subject_ids_path)
 				return set(df_unique_subject_ids[subject_id].values.tolist())
 
-			if self.apply_filtering:
+			if self.apply_filtering and not before_applying_filters:
 				unique_subject_ids = _fetch_filtered_table_subject_ids(table_name=table_name)
 			else:
 				unique_subject_ids = _fetch_full_table_subject_ids()
@@ -690,6 +694,10 @@ class DataLoader:
 			return get_for_one_table(table_name=table_name)
 
 		return set()
+
+	def get_unique_subject_ids_before_applying_filters(self, table_name: TableNames | str) -> set:
+		"""Returns the set of unique subject_ids found in the table before applying filters."""
+		return self.get_unique_subject_ids(table_name=table_name, recalculate_subject_ids=False, before_applying_filters=True)
 
 	def fetch_complete_study_tables(self, use_dask: bool = True) -> Dict[str, pd.DataFrame | dd.DataFrame]:
 
@@ -1015,6 +1023,45 @@ class DataLoader:
 
 		# 3) Merge filtered tables using the same logic as the regular merger
 		return self.merge_tables(tables_dict=tables_dict, use_dask=use_dask)
+
+
+	@classmethod
+	def example_export_merge_table(cls):
+
+		import time
+		start_time = time.time()
+
+		# example_save_to_parquet()
+
+		# merge the tables and save it to parquet
+		loader = cls(apply_filtering=True)
+		converter = ParquetConverter(data_loader=loader)
+
+		print("🔄 Loading and merging FULL tables...")
+
+		# Load FULL merged table without subject limitations
+		merged_df = loader.load(table_name=TableNames.MERGED, partial_loading=False, use_dask=True)
+
+		print(f"📊 Merged table loaded with {merged_df.shape[0].compute() if hasattr(merged_df.shape[0], 'compute') else len(merged_df)} rows")
+
+		target_path = loader.merged_table_parquet_path
+		# Save merged table as parquet
+		converter.save_as_parquet( table_name=TableNames.MERGED, df=merged_df, target_parquet_path=target_path )
+
+		end_time = time.time()
+		duration = end_time - start_time
+
+		print(f"\n✅ SUCCESS! Merged table conversion completed in {duration:.2f} seconds")
+		print(f"📁 Output file: {target_path}")
+
+		# Display file size
+		if target_path.exists():
+			if target_path.is_file():
+				size = target_path.stat().st_size
+			else:
+				size = sum(f.stat().st_size for f in target_path.rglob('*') if f.is_file())
+			print(f"📏 File size: {humanize.naturalsize(size)}")
+
 
 
 class ExampleDataLoader(DataLoader):
@@ -2081,66 +2128,31 @@ class ParquetConverter:
 
 		return dict(results)
 
+	@classmethod
+	def example_save_to_parquet(cls, table_name = TableNames.LABEVENTS):
 
-def example_save_to_parquet(table_name = TableNames.LABEVENTS):
+		import time
+		start_time = time.time()
 
-	import time
-	start_time = time.time()
+		loader = DataLoader()
+		converter = cls(data_loader=loader)
 
-	loader = DataLoader()
-	converter = ParquetConverter(loader)
+		# Get the expected parquet path for the table
+		parquet_path = loader.mimic_path / 'hosp' / f'{table_name.value}.parquet'
 
-	# Get the expected parquet path for the table
-	parquet_path = loader.mimic_path / 'hosp' / f'{table_name.value}.parquet'
+		converter.save_as_parquet( table_name=table_name )
 
-	converter.save_as_parquet( table_name=table_name )
+		end_time = time.time()
+		duration = end_time - start_time
 
-	end_time = time.time()
-	duration = end_time - start_time
+		print(f"\n✅ SUCCESS! {table_name.value} table conversion completed in {duration:.2f} seconds")
+		print(f"📁 Output file: {parquet_path}")
 
-	print(f"\n✅ SUCCESS! {table_name.value} table conversion completed in {duration:.2f} seconds")
-	print(f"📁 Output file: {parquet_path}")
-
-
-def example_export_merge_table():
-
-	import time
-	start_time = time.time()
-
-	# example_save_to_parquet()
-
-	# merge the tables and save it to parquet
-	loader = DataLoader(apply_filtering=True)
-	converter = ParquetConverter(data_loader=loader)
-
-	print("🔄 Loading and merging FULL tables...")
-
-	# Load FULL merged table without subject limitations
-	merged_df = loader.load(table_name=TableNames.MERGED, partial_loading=False, use_dask=True)
-
-	print(f"📊 Merged table loaded with {merged_df.shape[0].compute() if hasattr(merged_df.shape[0], 'compute') else len(merged_df)} rows")
-
-	target_path = loader.merged_table_parquet_path
-	# Save merged table as parquet
-	converter.save_as_parquet( table_name=TableNames.MERGED, df=merged_df, target_parquet_path=target_path )
-
-	end_time = time.time()
-	duration = end_time - start_time
-
-	print(f"\n✅ SUCCESS! Merged table conversion completed in {duration:.2f} seconds")
-	print(f"📁 Output file: {target_path}")
-
-	# Display file size
-	if target_path.exists():
-		if target_path.is_file():
-			size = target_path.stat().st_size
-		else:
-			size = sum(f.stat().st_size for f in target_path.rglob('*') if f.is_file())
-		print(f"📏 File size: {humanize.naturalsize(size)}")
 
 def main():
-	# example_save_to_parquet()
-	example_export_merge_table()
+	ParquetConverter.example_save_to_parquet(table_name=TableNames.PRESCRIPTIONS)
+	# DataLoader.example_export_merge_table()
+	pass
 
 if __name__ == '__main__':
 	main()

@@ -151,6 +151,8 @@ class ColumnNames(enum.Enum):
     SCHEDULETIME                         = 'scheduletime'
     SEQ_NUM                              = 'seq_num'
     SHORT_DESCRIPTION                    = 'short_description'
+    LONG_DESCRIPTION                     = 'long_description'
+    CODE                                 = 'code'
     SIDE                                 = 'side'
     SITE                                 = 'site'
     SLIDING_SCALE                        = 'sliding_scale'
@@ -404,6 +406,7 @@ _COLUMN_TYPES = {
     'expiration_value'    : 'int64',   # INTEGER - pharmacy
     'icd_version'         : 'int64',   # INTEGER - diagnoses_icd, procedures_icd
     'pharmacy_id'         : 'int64',   # INTEGER - prescriptions, pharmacy, emar
+    'category'            : 'int64',   # INTEGER - d_hcpcs
 
     # Float/Double columns
     'basal_rate'          : 'float64', # DOUBLE - pharmacy
@@ -491,6 +494,9 @@ _COLUMN_TYPES = {
     'formulary_drug_cd'     : 'string',
     'long_title'            : 'string',
     'leave_provider_id'     : 'string',
+    'short_description'     : 'string', # VARCHAR - d_hcpcs
+    'long_description'      : 'string', # VARCHAR - d_hcpcs
+    'code'                  : 'string', # VARCHAR - d_hcpcs
 
     # DateTime columns
     'admittime'       : 'datetime64[ns]', # DATETIME - admissions

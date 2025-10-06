@@ -438,10 +438,8 @@ class SideBar:
 		def _get_total_subjects(table_name: TableNames) -> int:
 
 			unique_subject_ids = self.data_handler.get_unique_subject_ids(table_name=table_name, recalculate_subject_ids=False)
+			return len(unique_subject_ids)
 
-			st.session_state.total_subjects_count = len(unique_subject_ids)
-
-			return st.session_state.total_subjects_count
 
 		def _load_study_tables_and_merge() -> pd.DataFrame:
 
@@ -559,9 +557,11 @@ class SideBar:
 			if _df_is_valid(df, total_subjects):
 
 				st.session_state.df = df
-				# Cache DataFrame length to avoid repeated computation
-				st.session_state.df_length = df.shape[0].compute() if isinstance(df, dd.DataFrame) else len(df)
-				st.sidebar.success(f"Loaded {total_subjects} subjects and {st.session_state.df_length} rows from {file_path}")
+
+				if st.session_state.get('n_rows_loaded', None) is None:
+					st.session_state.n_rows_loaded = df.shape[0].compute() if isinstance(df, dd.DataFrame) else len(df)
+
+				st.sidebar.success(f"Loaded {total_subjects} subjects and {st.session_state.n_rows_loaded} rows from {file_path}")
 
 				# Clear previous analysis results when new data is loaded
 				self._clear_analysis_states()
@@ -585,8 +585,8 @@ class SideBar:
 
 			st.session_state.df = df
 			# Cache DataFrame length to avoid repeated computation
-			st.session_state.df_length = df.shape[0].compute() if isinstance(df, dd.DataFrame) else len(df)
-			st.sidebar.success(f"Loaded {st.session_state.df_length} rows.")
+			st.session_state.n_rows_loaded = df.shape[0].compute() if isinstance(df, dd.DataFrame) else len(df)
+			st.sidebar.success(f"Loaded {st.session_state.n_rows_loaded} rows.")
 
 		def _check_table_selection():
 			if selected_table_name_w_size != "merged_table" and (not st.session_state.selected_module or not st.session_state.selected_table):
@@ -695,12 +695,17 @@ class SideBar:
 	def _callback_reload_dataloader(self):
 
 		self.data_handler = DataLoader(
-						mimic_path        = st.session_state.get('mimic_path', Path(DEFAULT_MIMIC_PATH)),
+						mimic_path       = st.session_state.get('mimic_path', Path(DEFAULT_MIMIC_PATH)),
 						apply_filtering   = st.session_state.apply_filtering,
 						filter_params     = st.session_state.filter_params)
 
 		self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
 
+		# Cached metrics
+		st.session_state.n_rows_loaded         = None
+		st.session_state.n_subjects_pre_filters = None
+		st.session_state.n_subjects_loaded     = None
+  
 	def _rescan_and_update_state(self):
 		"""Rescans the directory and updates session state with table info."""
 		logger.info("Re-scanning directory and updating state...")

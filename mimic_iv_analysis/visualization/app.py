@@ -60,19 +60,22 @@ class MIMICDashboardApp:
 					st.metric("File Size (Merged)", "N/A")
 
 			with col2:
-				if st.session_state.get('total_subjects_count', None) is None:
-					unique_subject_ids = self.sidebar.data_handler.get_unique_subject_ids(table_name=TableNames(st.session_state.selected_table), recalculate_subject_ids=False)
-					st.session_state.total_subjects_count =  len(unique_subject_ids)
+				if st.session_state.get('n_subjects_pre_filters', None) is None:
+					unique_subject_ids = self.sidebar.data_handler.get_unique_subject_ids_before_applying_filters(table_name=TableNames(st.session_state.selected_table))
+					st.session_state.n_subjects_pre_filters =  len(unique_subject_ids)
 
-				st.metric("Total Subjects", f"{st.session_state.total_subjects_count:,}")
+				st.metric("Total Subjects", f"{st.session_state.n_subjects_pre_filters:,}")
 
 				if st.session_state.selected_table in TableNames._TABLES_W_SUBJECT_ID_COLUMN:
-					# df2 = st.session_state.df.compute()
-					loaded_subjects = st.session_state.df.subject_id.nunique().compute() if isinstance(st.session_state.df, dd.DataFrame) else len(st.session_state.df.subject_id.unique()) if st.session_state.df is not None else 0
-					st.metric("Subjects Loaded", f"{loaded_subjects:,}")
+
+					if st.session_state.get('n_subjects_loaded', None) is None:
+						loaded_subjects = st.session_state.df.subject_id.nunique().compute() if isinstance(st.session_state.df, dd.DataFrame) else len(st.session_state.df.subject_id.unique()) if st.session_state.df is not None else 0
+						st.session_state.n_subjects_loaded = loaded_subjects
+
+					st.metric("Subjects Loaded", f"{st.session_state.n_subjects_loaded:,}")
 
 			with col3:
-				st.metric("Rows Loaded", f"{st.session_state.df_length:,}")
+				st.metric("Rows Loaded", f"{st.session_state.n_rows_loaded:,}")
 				st.metric("Columns Loaded", f"{len(st.session_state.df.columns)}")
 
 			# Display filename
@@ -216,7 +219,7 @@ class MIMICDashboardApp:
 		st.session_state.selected_module = None
 		st.session_state.selected_table = None
 		st.session_state.df = None
-		st.session_state.df_length = 0  # Cached DataFrame length to avoid repeated computation
+		st.session_state.n_rows_loaded = 0  # Cached DataFrame length to avoid repeated computation
 		st.session_state.available_tables = {}
 		st.session_state.file_paths = {}
 		st.session_state.file_sizes = {}
@@ -275,6 +278,10 @@ class MIMICDashboardApp:
 		st.session_state.app_initialized = True # Mark as initialized
 		logger.info("Session state initialized.")
 
+		# Cached metrics
+		st.session_state.n_rows_loaded          = None
+		st.session_state.n_subjects_pre_filters = None
+		st.session_state.n_subjects_loaded      = None
 
 def main():
 	app = MIMICDashboardApp()

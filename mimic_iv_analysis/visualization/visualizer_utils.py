@@ -8,10 +8,10 @@ import streamlit as st
 def display_dataframe_head(df):
 	MAX_DATAFRAME_ROWS_DISPLAYED = 30
 	if isinstance(df, dd.DataFrame):
-		df_length = df.shape[0].compute()
+		n_rows_loaded = df.shape[0].compute()
 	else:
-		df_length = df.shape[0]
+		n_rows_loaded = df.shape[0]
 
-	n_rows = min(MAX_DATAFRAME_ROWS_DISPLAYED, df_length)
+	n_rows = min(MAX_DATAFRAME_ROWS_DISPLAYED, n_rows_loaded)
 	st.dataframe(df.head(n_rows) , use_container_width=True)
  

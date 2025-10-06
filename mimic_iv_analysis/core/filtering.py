@@ -99,8 +99,11 @@ class Filtering:
 			self.df = self.df[['labevent_id', 'subject_id', 'hadm_id', 'itemid', 'order_provider_id']] # 'labevent_id',  'value', 'valuenum', 'valueuom', 'ref_range_lower', 'ref_range_upper', 'flag', 'priority', 'comments'
 
 			# TODO: why this removs majority of rows (goes to 29k from billions for rows and subjects to 2309 from 313k)
-			is_null = self.df.hadm_id.isnull() | self.df.order_provider_id.isnull()
-			self.df = self.df[~is_null]
+			hadm_id                = ~self.df.hadm_id.isnull()
+			order_provider_id_null = ~self.df.order_provider_id.isnull()
+
+			# self.df = self.df[hadm_id & order_provider_id_null]
+			self.df = self.df[hadm_id]
 
 		elif self.table_name == TableNames.PRESCRIPTIONS:
 			# ['subject_id', 'hadm_id', 'pharmacy_id', 'poe_id', 'poe_seq', 'order_provider_id', 'starttime', 'stoptime', 'drug_type', 'drug', 'formulary_drug_cd', 'gsn', 'ndc', 'prod_strength', 'form_rx', 'dose_unit_rx', 'dose_val_rx', 'form_unit_disp', 'form_val_disp', 'doses_per_24_hrs', 'route']
