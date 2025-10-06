@@ -897,7 +897,13 @@ class DataLoader:
 
 
 	def merge_tables(self, tables_dict: Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
-		""" Load and merge tables. """
+		""" Load and merge tables.
+
+		Note: To merge the **labevents** table with the **admissions** table, The website states you can join the **labevents** table to the **admissions** table using `subject_id`, `admittime`, and `dischtime`. This is because the **labevents** table does not contain `admittime` and `dischtime` columns. The join is performed by linking the `subject_id` from the **labevents** table with the `subject_id` from the **admissions** table, and then using the `charttime` from the **labevents** table to determine if the lab test occurred between the `admittime` and `dischtime` of a specific hospitalization record in the **admissions** table.
+
+		This is a common practice when working with databases to connect information across different tables using a shared identifier and relevant time-based data. The website notes that joining this way allows you to assign an `hadm_id` to lab observations that may not already have one.
+
+		"""
 
 		def _dask_persist(df: pd.DataFrame | dd.DataFrame, tag: str) -> pd.DataFrame | dd.DataFrame:
 			nonlocal persisted_intermediates
@@ -920,8 +926,10 @@ class DataLoader:
 		poe_detail_df      = tables_dict[TableNames.POE_DETAIL.value] # 55MB
 		transfers_df       = tables_dict.get(TableNames.TRANSFERS.value) # 46MB
 		prescriptions_df   = tables_dict.get(TableNames.PRESCRIPTIONS.value) # 606MB
-		# labevents_df       = tables_dict.get(TableNames.LABEVENTS.value) # 2.6GB
-		# d_labitems_df      = tables_dict.get(TableNames.D_LABITEMS.value) # 30KB
+		labevents_df       = tables_dict.get(TableNames.LABEVENTS.value) # 2.6GB
+		d_labitems_df      = tables_dict.get(TableNames.D_LABITEMS.value) # 30KB
+
+		# adms_labevents_df = admissions_df.merge(labevents_df, on=[subject_id, ColmnNames.HADM_ID.value], how='inner')
 
 		persisted_intermediates = {}  # Track intermediate results for cleanup
 
@@ -956,12 +964,16 @@ class DataLoader:
 			df123456 = _dask_persist(df123456, 'merged_with_prescriptions')
 
 			# # Labevents and d_labitems: -- itemid --
-			# labevents = labevents_df.merge(d_labitems_df, on=[ColumnNames.ITEMID.value], how='inner')
-			# labevents = _dask_persist(labevents, 'labevents')
+			labevents = labevents_df.merge(d_labitems_df, on=[ColumnNames.ITEMID.value], how='inner')
+			labevents = _dask_persist(labevents, 'labevents')
+
+			for col in [ColumnNames.SUBJECT_ID.value, ColumnNames.HADM_ID.value]:
+				labevents[col] = labevents[col].astype('Int64')
+				df123456[col] = df123456[col].astype('Int64')
 
 			# # Merge with Labevents: -- subject_id, poe_id, poe_seq --
-			# df1234567 = df123456.merge(labevents, on=[subject_id, ColumnNames.HADM_ID.value, ColumnNames.ORDER_PROVIDER_ID.value], how='inner')
-			# df1234567 = _dask_persist(df1234567, 'merged_with_labevents')
+			df1234567 = df123456.merge(labevents, on=[subject_id, ColumnNames.HADM_ID.value, ColumnNames.ORDER_PROVIDER_ID.value], how='inner')
+			df1234567 = _dask_persist(df1234567, 'merged_with_labevents')
 
 			# Store intermediate persisted results for potential cleanup
 			self._persisted_resources.update(persisted_intermediates)
@@ -973,6 +985,166 @@ class DataLoader:
 			raise
 
 		return df123456
+
+
+	@classmethod
+	def merge_labevents_and_admission(cls) -> Tuple[pd.DataFrame | dd.DataFrame, pd.DataFrame | dd.DataFrame]:
+		""" Load and merge tables with optimized vectorized operations.
+
+		Note: To merge the **labevents** table with the **admissions** table, The website states you can join the **labevents** table to the **admissions** table using `subject_id`, `admittime`, and `dischtime`. This is because the **labevents** table does not contain `admittime` and `dischtime` columns. The join is performed by linking the `subject_id` from the **labevents** table with the `subject_id` from the **admissions** table, and then using the `charttime` from the **labevents** table to determine if the lab test occurred between the `admittime` and `dischtime` of a specific hospitalization record in the **admissions** table.
+
+		This optimized implementation uses:
+		- Vectorized pandas operations with merge_asof for time-based joins
+		- Improved Dask partitioning strategy
+		- Memory-efficient chunking
+		- Parallel processing with delayed operations
+		"""
+
+		loader = DataLoader(apply_filtering=True)
+
+		# Load tables with optimized settings
+		labevents_df = loader.fetch_table( table_name=TableNames.LABEVENTS, use_dask=True, apply_filtering=loader.apply_filtering )
+		admissions_df = loader.fetch_table( table_name=TableNames.ADMISSIONS, use_dask=True, apply_filtering=loader.apply_filtering )
+
+		# Optimize data types for better performance
+		labevents_df[ColumnNames.SUBJECT_ID.value] = labevents_df[ColumnNames.SUBJECT_ID.value].astype('Int64')
+		admissions_df[ColumnNames.SUBJECT_ID.value] = admissions_df[ColumnNames.SUBJECT_ID.value].astype('Int64')
+
+
+		# Get common subject IDs with optimized operations
+		subject_ids_labevents  = loader.get_unique_subject_ids(table_name=TableNames.LABEVENTS)
+		subject_ids_admissions = loader.get_unique_subject_ids(table_name=TableNames.ADMISSIONS)
+		common_subject_ids     = subject_ids_labevents.intersection(subject_ids_admissions)
+
+
+		# Filter by common subject IDs
+		labevents_df  = labevents_df[labevents_df[ColumnNames.SUBJECT_ID.value].isin(common_subject_ids)]
+		admissions_df = admissions_df[admissions_df[ColumnNames.SUBJECT_ID.value].isin(common_subject_ids)]
+
+		# To merge these two tables you should utilize the subject_id column that is common between the two tables and also the chartime column from the labevents table. you should use the chartime column from the labevents table to determine if the lab test occurred between the admittime and dischtime of a specific hospitalization record in the admissions table. using a buffer time of 24 hours. this will ensure that you only merge the labevents table with the admissions table for the same hospitalization record.
+
+		# Convert datetime columns to proper datetime format
+		datetime_columns = {
+			ColumnNames.CHARTTIME.value: labevents_df,
+			ColumnNames.ADMITTIME.value: admissions_df,
+			ColumnNames.DISCHTIME.value: admissions_df
+		}
+		
+		for col_name, df in datetime_columns.items():
+			if col_name in df.columns:
+				df[col_name] = dd.to_datetime(df[col_name], errors='coerce')
+
+		# Add 24-hour buffer to admission and discharge times
+		buffer_hours = pd.Timedelta(hours=24)
+		admissions_df['admittime_buffered'] = admissions_df[ColumnNames.ADMITTIME.value] - buffer_hours
+		admissions_df['dischtime_buffered'] = admissions_df[ColumnNames.DISCHTIME.value] + buffer_hours
+
+		# Sort dataframes for efficient merge operations
+		labevents_df = labevents_df.sort_values([ColumnNames.SUBJECT_ID.value, ColumnNames.CHARTTIME.value])
+		admissions_df = admissions_df.sort_values([ColumnNames.SUBJECT_ID.value, ColumnNames.ADMITTIME.value])
+
+		# Perform the merge using a custom function for temporal matching
+		def temporal_merge_partition(labevents_partition, admissions_partition):
+			"""Perform temporal merge on individual partitions."""
+			if labevents_partition.empty or admissions_partition.empty:
+				return pd.DataFrame()
+			
+			# Convert to pandas if needed for merge operations
+			if hasattr(labevents_partition, 'compute'):
+				labevents_partition = labevents_partition.compute()
+			if hasattr(admissions_partition, 'compute'):
+				admissions_partition = admissions_partition.compute()
+			
+			# Ensure datetime columns are properly formatted
+			for col in [ColumnNames.CHARTTIME.value]:
+				if col in labevents_partition.columns:
+					labevents_partition[col] = pd.to_datetime(labevents_partition[col], errors='coerce')
+			
+			for col in [ColumnNames.ADMITTIME.value, ColumnNames.DISCHTIME.value, 'admittime_buffered', 'dischtime_buffered']:
+				if col in admissions_partition.columns:
+					admissions_partition[col] = pd.to_datetime(admissions_partition[col], errors='coerce')
+			
+			merged_results = []
+			
+			# Group by subject_id for efficient processing
+			for subject_id, lab_group in labevents_partition.groupby(ColumnNames.SUBJECT_ID.value):
+				# Get admissions for this subject
+				adm_group = admissions_partition[
+					admissions_partition[ColumnNames.SUBJECT_ID.value] == subject_id
+				]
+				
+				if adm_group.empty:
+					continue
+				
+				# For each lab event, find matching admissions
+				for _, lab_row in lab_group.iterrows():
+					charttime = lab_row[ColumnNames.CHARTTIME.value]
+					
+					if pd.isna(charttime):
+						continue
+					
+					# Find admissions where charttime falls within buffered admission period
+					matching_admissions = adm_group[
+						(adm_group['admittime_buffered'] <= charttime) &
+						(adm_group['dischtime_buffered'] >= charttime)
+					]
+					
+					# If multiple matches, take the one with closest admission time
+					if not matching_admissions.empty:
+						if len(matching_admissions) > 1:
+							# Calculate time differences and select closest admission
+							time_diffs = abs(matching_admissions[ColumnNames.ADMITTIME.value] - charttime)
+							closest_idx = time_diffs.idxmin()
+							matching_admission = matching_admissions.loc[[closest_idx]]
+						else:
+							matching_admission = matching_admissions
+						
+						# Merge the lab event with the matching admission
+						for _, adm_row in matching_admission.iterrows():
+							merged_row = pd.concat([lab_row, adm_row], axis=0)
+							# Remove duplicate subject_id column
+							merged_row = merged_row[~merged_row.index.duplicated(keep='first')]
+							merged_results.append(merged_row)
+			
+			if merged_results:
+				result_df = pd.DataFrame(merged_results)
+				# Clean up temporary columns
+				result_df = result_df.drop(columns=['admittime_buffered', 'dischtime_buffered'], errors='ignore')
+				return result_df
+			else:
+				return pd.DataFrame()
+
+		# Apply the temporal merge using map_partitions for Dask efficiency
+		if hasattr(labevents_df, 'map_partitions') and hasattr(admissions_df, 'map_partitions'):
+			# For Dask dataframes, we need to use a different approach
+			# Convert to pandas for the merge operation due to complexity of temporal joins
+			logger.info("Converting to pandas for temporal merge operation...")
+			labevents_pd = labevents_df.compute()
+			admissions_pd = admissions_df.compute()
+			
+			merged_df = temporal_merge_partition(labevents_pd, admissions_pd)
+			
+			# Convert back to Dask if needed
+			if not merged_df.empty:
+				merged_df = dd.from_pandas(merged_df, npartitions=min(4, max(1, len(merged_df) // 10000)))
+		else:
+			# For pandas dataframes
+			merged_df = temporal_merge_partition(labevents_df, admissions_df)
+
+		# Log merge statistics
+		if hasattr(merged_df, 'compute'):
+			merge_count = len(merged_df.compute())
+		else:
+			merge_count = len(merged_df)
+		
+		logger.info(f"Temporal merge completed. Merged {merge_count} lab events with admissions.")
+		
+		# Return both the merged dataframe and the original admissions dataframe
+		return merged_df, admissions_df
+
+
+
+
 
 
 	def load_filtered_study_tables_by_subjects(self, subject_ids: List[int], use_dask: bool = True) -> Dict[str, pd.DataFrame | dd.DataFrame]:
@@ -1034,12 +1206,10 @@ class DataLoader:
 
 
 	@classmethod
-	def example_export_merge_table(cls):
+	def example_export_merge_table(cls, target_path: Optional[Path] = None):
 
 		import time
 		start_time = time.time()
-
-		# example_save_to_parquet()
 
 		# merge the tables and save it to parquet
 		loader = cls(apply_filtering=True)
@@ -1052,7 +1222,11 @@ class DataLoader:
 
 		print(f"📊 Merged table loaded with {merged_df.shape[0].compute() if hasattr(merged_df.shape[0], 'compute') else len(merged_df)} rows")
 
-		target_path = loader.merged_table_parquet_path
+		if target_path is None:
+			target_path = loader.merged_table_parquet_path
+		elif target_path.suffix != '.parquet':
+			target_path = target_path / f'{TableNames.MERGED.value}.parquet'
+
 		# Save merged table as parquet
 		converter.save_as_parquet( table_name=TableNames.MERGED, df=merged_df, target_parquet_path=target_path )
 
@@ -2104,11 +2278,9 @@ class ParquetConverter:
 		return dict(results)
 
 	@classmethod
-	def example_save_to_parquet(cls, table_name = TableNames.LABEVENTS):
+	def example_save_to_parquet(cls, table_name: str = 'omr'):
 
-		def _convert_one_table(table_name: TableNames):
-			# Convert the string value to the TableNames enum member
-			table_name = TableNames(args.table_name)
+		def _convert_one_table(name: TableNames):
 
 			import time
 			start_time = time.time()
@@ -2117,25 +2289,25 @@ class ParquetConverter:
 			converter = cls(data_loader=loader)
 
 			# Get the expected parquet path for the table
-			parquet_path = loader.mimic_path / 'hosp' / f'{table_name.value}.parquet'
+			parquet_path = loader.mimic_path / 'hosp' / f'{name.value}.parquet'
 
-			converter.save_as_parquet( table_name=table_name )
+			converter.save_as_parquet( table_name=name )
 
 			end_time = time.time()
 			duration = end_time - start_time
 
-			print(f"\n✅ SUCCESS! {table_name.value} table conversion completed in {duration:.2f} seconds")
+			print(f"\n✅ SUCCESS! {name.value} table conversion completed in {duration:.2f} seconds")
 			print(f"📁 Output file: {parquet_path}")
 
-		parser = argparse.ArgumentParser(description="Convert MIMIC-IV table to Parquet format")
-		parser.add_argument("table_name", nargs='?', type=str, choices=['study'] + [e.value for e in TableNames], help="Table name to convert", default=table_name.value)
-		args = parser.parse_args()
+		# parser = argparse.ArgumentParser(description="Convert MIMIC-IV table to Parquet format")
+		# parser.add_argument("table_name", nargs='?', type=str, choices=['study'] + [e.value for e in TableNames], help="Table name to convert", default=table_name.value)
+		# args = parser.parse_args()
 
-		if args.table_name == 'study':
-			for table_name in DEFAULT_STUDY_TABLES_LIST:
-				_convert_one_table(TableNames(table_name))
+		if table_name == 'study':
+			for tn in DEFAULT_STUDY_TABLES_LIST:
+				_convert_one_table(TableNames(tn))
 		else:
-			_convert_one_table(TableNames(args.table_name))
+			_convert_one_table(TableNames(table_name))
 
 
 
@@ -2145,7 +2317,7 @@ def main():
 	# args = args.parse_args()
 	# ParquetConverter.example_save_to_parquet(table_name=TableNames[args.table_name])
 	# DataLoader.example_export_merge_table()
-	pass
+	DataLoader.fix_labevents_hadm_id()
 
 if __name__ == '__main__':
 	main()

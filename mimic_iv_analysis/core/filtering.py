@@ -118,14 +118,14 @@ class Filtering:
 		# 							labevents
 		# ============================================================================
 		elif self.table_name == TableNames.LABEVENTS:
-			self.df = self.df[['labevent_id', 'subject_id', 'hadm_id', 'itemid', 'order_provider_id']] # 'labevent_id',  'value', 'valuenum', 'valueuom', 'ref_range_lower', 'ref_range_upper', 'flag', 'priority', 'comments'
+			self.df = self.df[['labevent_id', 'subject_id', 'hadm_id', 'itemid', 'order_provider_id', 'charttime']]
 
-			# TODO: why this removs majority of rows (goes to 29k from billions for rows and subjects to 2309 from 313k)
-			hadm_id                = ~self.df.hadm_id.isnull()
-			order_provider_id_null = ~self.df.order_provider_id.isnull()
+			# hadm_id                = ~self.df.hadm_id.isnull()
+			# order_provider_id_null = ~self.df.order_provider_id.isnull()
 
 			# self.df = self.df[hadm_id & order_provider_id_null]
-			self.df = self.df[hadm_id]
+			# self.df = self.df[hadm_id]
+			pass
 
 		# ============================================================================
 		# 							prescriptions

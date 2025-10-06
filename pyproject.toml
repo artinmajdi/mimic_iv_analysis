@@ -91,8 +91,7 @@ Repository    = "https://github.com/artinmajdi/mimic_iv_analysis.git"
 Issues        = "https://github.com/artinmajdi/mimic_iv_analysis/issues"
 
 [project.scripts]
-mimic-iv = "mimic_iv_analysis.cli:run_dashboard"
-convert = "mimic_iv_analysis.io.data_loader:ParquetConverter.example_save_to_parquet"
+mimic = "mimic_iv_analysis.main_cli:main"
 
 [tool.setuptools]
 packages = [

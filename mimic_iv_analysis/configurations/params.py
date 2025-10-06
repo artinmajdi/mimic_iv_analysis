@@ -89,6 +89,7 @@ class ColumnNames(enum.Enum):
     GENDER                               = 'gender'
     GSN                                  = 'gsn'
     HADM_ID                              = 'hadm_id'
+    HADM_ID2                             = 'hadm_id2'
     HCPCS_CD                             = 'hcpcs_cd'
     HOSPITAL_EXPIRE_FLAG                 = 'hospital_expire_flag'
     ICD_CODE                             = 'icd_code'
@@ -690,8 +691,8 @@ DEFAULT_STUDY_TABLES_LIST = [
 				TableNames.POE.value, # 606MB
 				TableNames.POE_DETAIL.value, # 55MB
                 TableNames.PRESCRIPTIONS.value, # 606MB
-                # TableNames.D_LABITEMS.value # 30KB
-                # TableNames.LABEVENTS.value, # 2.6GB
+                TableNames.D_LABITEMS.value, # 30KB
+                TableNames.LABEVENTS.value, # 2.6GB
 			]
 
 
