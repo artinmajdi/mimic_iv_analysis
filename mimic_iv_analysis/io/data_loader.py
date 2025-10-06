@@ -474,13 +474,7 @@ class DataLoader:
 			n_partitions = df.npartitions
 			logger.info(f"Initial partitions: {n_partitions}")
 
-			# Repartition if we have too few partitions for effective chunking
-			# min_partitions = 10  # Minimum number of partitions for effective processing
-			# if n_partitions < min_partitions:
-			# 	logger.info(f"Repartitioning DataFrame from {n_partitions} to improve chunking for large compressed files")
-			# 	df = df.repartition(partition_size="100MB")
-			# 	n_partitions = df.npartitions
-			# 	logger.info(f"Repartitioned to {n_partitions} partitions")
+
 
 			# Process each partition separately to control memory usage
 			for i in tqdm(range(n_partitions), desc="Processing partitions"):
@@ -988,124 +982,211 @@ class DataLoader:
 
 
 	@classmethod
-	def merge_labevents_and_admission(cls) -> Tuple[pd.DataFrame | dd.DataFrame, pd.DataFrame | dd.DataFrame]:
-		""" Load and merge tables with optimized vectorized operations.
+	def merge_labevents_and_admission(cls, n_rows: int | None = None) -> Tuple[pd.DataFrame | dd.DataFrame, pd.DataFrame | dd.DataFrame]:
+		""" Load and merge tables with optimized Dask multiprocessing operations.
 
 		Note: To merge the **labevents** table with the **admissions** table, The website states you can join the **labevents** table to the **admissions** table using `subject_id`, `admittime`, and `dischtime`. This is because the **labevents** table does not contain `admittime` and `dischtime` columns. The join is performed by linking the `subject_id` from the **labevents** table with the `subject_id` from the **admissions** table, and then using the `charttime` from the **labevents** table to determine if the lab test occurred between the `admittime` and `dischtime` of a specific hospitalization record in the **admissions** table.
 
 		This optimized implementation uses:
-		- Vectorized pandas operations with merge_asof for time-based joins
-		- Improved Dask partitioning strategy
+		- Professional Dask configuration for memory management
+		- Partition-by-partition processing to avoid memory issues
+		- Progress tracking with tqdm
+		- Comprehensive error handling
 		- Memory-efficient chunking
-		- Parallel processing with delayed operations
 		"""
+		logger.info("Starting temporal merge of labevents and admissions tables with Dask optimization")
 
-		loader = DataLoader(apply_filtering=True)
+		# Configure Dask for memory efficiency (following chunked processing pattern)
+		import dask
+		with dask.config.set({
+			'dataframe.query-planning': False,  # Use legacy query planning for stability
+			'array.chunk-size': '128MB',        # Smaller chunk size for memory efficiency
+			'distributed.worker.memory.target': 0.6,  # Target 60% memory usage
+			'distributed.worker.memory.spill': 0.7,   # Spill at 70% memory usage
+			'distributed.worker.memory.pause': 0.8,   # Pause at 80% memory usage
+			'optimization.fuse': {
+				'delayed': True,
+				'array': True,
+				'dataframe': True
+			},
+			'optimization.cull': True,
+		}):
+			loader = DataLoader(apply_filtering=True)
 
-		# Load tables with optimized settings
-		labevents_df = loader.fetch_table( table_name=TableNames.LABEVENTS, use_dask=True, apply_filtering=loader.apply_filtering )
-		admissions_df = loader.fetch_table( table_name=TableNames.ADMISSIONS, use_dask=True, apply_filtering=loader.apply_filtering )
+			# Load tables with optimized settings
+			labevents_df  = loader.fetch_table( table_name=TableNames.LABEVENTS, use_dask=True, apply_filtering=loader.apply_filtering )
+			admissions_df = loader.fetch_table( table_name=TableNames.ADMISSIONS, use_dask=True, apply_filtering=loader.apply_filtering )
 
-		# Optimize data types for better performance
-		labevents_df[ColumnNames.SUBJECT_ID.value] = labevents_df[ColumnNames.SUBJECT_ID.value].astype('Int64')
-		admissions_df[ColumnNames.SUBJECT_ID.value] = admissions_df[ColumnNames.SUBJECT_ID.value].astype('Int64')
+			labevents_df[ColumnNames.SUBJECT_ID.value]  = labevents_df[ColumnNames.SUBJECT_ID.value].astype('Int64')
+			admissions_df[ColumnNames.SUBJECT_ID.value] = admissions_df[ColumnNames.SUBJECT_ID.value].astype('Int64')
 
-
-		# Get common subject IDs with optimized operations
-		subject_ids_labevents  = loader.get_unique_subject_ids(table_name=TableNames.LABEVENTS)
-		subject_ids_admissions = loader.get_unique_subject_ids(table_name=TableNames.ADMISSIONS)
-		common_subject_ids     = subject_ids_labevents.intersection(subject_ids_admissions)
+			# show the number of paritions
+			print('labevents_df.npartitions:', labevents_df.npartitions)
+			print('admissions_df.npartitions:', admissions_df.npartitions)
 
 
-		# Filter by common subject IDs
-		labevents_df  = labevents_df[labevents_df[ColumnNames.SUBJECT_ID.value].isin(common_subject_ids)]
-		admissions_df = admissions_df[admissions_df[ColumnNames.SUBJECT_ID.value].isin(common_subject_ids)]
+			# Get common subject IDs with optimized operations
+			# For testing: limit to first 1000 rows of labevents while keeping it as Dask DataFrame
+			if n_rows is not None:
+				labevents_df = dd.from_pandas(labevents_df.head(n_rows), npartitions=2)
+				subject_ids_labevents  = set(labevents_df[ColumnNames.SUBJECT_ID.value].unique().compute().tolist())
+			else:
+				subject_ids_labevents  = loader.get_unique_subject_ids(table_name=TableNames.LABEVENTS)
 
-		# To merge these two tables you should utilize the subject_id column that is common between the two tables and also the chartime column from the labevents table. you should use the chartime column from the labevents table to determine if the lab test occurred between the admittime and dischtime of a specific hospitalization record in the admissions table. using a buffer time of 24 hours. this will ensure that you only merge the labevents table with the admissions table for the same hospitalization record.
 
-		# Convert datetime columns to proper datetime format
-		datetime_columns = {
-			ColumnNames.CHARTTIME.value: labevents_df,
-			ColumnNames.ADMITTIME.value: admissions_df,
-			ColumnNames.DISCHTIME.value: admissions_df
-		}
-		
-		for col_name, df in datetime_columns.items():
-			if col_name in df.columns:
-				df[col_name] = dd.to_datetime(df[col_name], errors='coerce')
+			subject_ids_admissions = loader.get_unique_subject_ids(table_name=TableNames.ADMISSIONS)
+			common_subject_ids     = subject_ids_labevents.intersection(subject_ids_admissions)
 
-		# Add 24-hour buffer to admission and discharge times
-		buffer_hours = pd.Timedelta(hours=24)
-		admissions_df['admittime_buffered'] = admissions_df[ColumnNames.ADMITTIME.value] - buffer_hours
-		admissions_df['dischtime_buffered'] = admissions_df[ColumnNames.DISCHTIME.value] + buffer_hours
+			logger.info(f"Found {len(common_subject_ids):,} common subject IDs between tables")
 
-		# Sort dataframes for efficient merge operations
-		labevents_df = labevents_df.sort_values([ColumnNames.SUBJECT_ID.value, ColumnNames.CHARTTIME.value])
-		admissions_df = admissions_df.sort_values([ColumnNames.SUBJECT_ID.value, ColumnNames.ADMITTIME.value])
+			# Filter by common subject IDs
+			labevents_df  = labevents_df[labevents_df[ColumnNames.SUBJECT_ID.value].isin(common_subject_ids)]
+			admissions_df = admissions_df[admissions_df[ColumnNames.SUBJECT_ID.value].isin(common_subject_ids)]
 
-		# Perform the merge using a custom function for temporal matching
-		def temporal_merge_partition(labevents_partition, admissions_partition):
-			"""Perform temporal merge on individual partitions."""
-			if labevents_partition.empty or admissions_partition.empty:
-				return pd.DataFrame()
-			
-			# Convert to pandas if needed for merge operations
-			if hasattr(labevents_partition, 'compute'):
-				labevents_partition = labevents_partition.compute()
-			if hasattr(admissions_partition, 'compute'):
-				admissions_partition = admissions_partition.compute()
-			
+			# Convert datetime columns to proper datetime format
+			datetime_columns = {
+				ColumnNames.CHARTTIME.value: labevents_df,
+				ColumnNames.ADMITTIME.value: admissions_df,
+				ColumnNames.DISCHTIME.value: admissions_df
+			}
+
+			for col_name, df in datetime_columns.items():
+				if col_name in df.columns:
+					df[col_name] = dd.to_datetime(df[col_name], errors='coerce')
+
+			# Add 24-hour buffer to admission and discharge times
+			buffer_hours = pd.Timedelta(hours=24)
+			admissions_df['admittime_buffered'] = admissions_df[ColumnNames.ADMITTIME.value] - buffer_hours
+			admissions_df['dischtime_buffered'] = admissions_df[ColumnNames.DISCHTIME.value] + buffer_hours
+
+			# Sort dataframes for efficient merge operations
+			labevents_df = labevents_df.sort_values([ColumnNames.SUBJECT_ID.value, ColumnNames.CHARTTIME.value])
+			admissions_df = admissions_df.sort_values([ColumnNames.SUBJECT_ID.value, ColumnNames.ADMITTIME.value])
+
+			# Get partition information for processing
+			n_partitions_lab = labevents_df.npartitions
+			n_partitions_adm = admissions_df.npartitions
+			logger.info(f"Processing {n_partitions_lab} labevents partitions and {n_partitions_adm} admissions partitions")
+
+			# Convert admissions to pandas once for efficient lookup (smaller table)
+			logger.info("Converting admissions table to pandas for efficient temporal lookups...")
+			admissions_pd = admissions_df.compute()
+
+			merged_results = []
+			total_merged_count = 0
+
+			# Process each labevents partition separately to control memory usage
+			for i in tqdm(range(n_partitions_lab), desc="Processing labevents partitions"):
+				try:
+					# Get one partition at a time
+					labevents_partition = labevents_df.get_partition(i)
+					labevents_pd_partition = labevents_partition.compute()
+
+					if labevents_pd_partition.empty:
+						continue
+
+					# Perform temporal merge on this partition
+					partition_merged = cls._temporal_merge_partition(labevents_pd_partition, admissions_pd)
+
+					if not partition_merged.empty:
+						merged_results.append(partition_merged)
+						total_merged_count += len(partition_merged)
+
+					# Log progress every 10 partitions
+					if (i + 1) % 10 == 0 or i == n_partitions_lab - 1:
+						logger.info(f"Processed partition {i+1}/{n_partitions_lab}, merged records so far: {total_merged_count:,}")
+
+				except Exception as e:
+					logger.warning(f"Error processing labevents partition {i}: {e}")
+					continue
+
+			# Combine all merged results
+			if merged_results:
+				logger.info("Combining merged partition results...")
+				merged_df = pd.concat(merged_results, ignore_index=True)
+
+				# Convert back to Dask for consistency
+				merged_df = dd.from_pandas(merged_df, npartitions=min(8, max(1, len(merged_df) // 50000)))
+
+				logger.info(f"Temporal merge completed successfully. Total merged records: {total_merged_count:,}")
+			else:
+				logger.warning("No records were successfully merged")
+				merged_df = pd.DataFrame()
+
+			# Return both the merged dataframe and the original admissions dataframe
+			return merged_df, admissions_df
+
+	@staticmethod
+	def _temporal_merge_partition(labevents_partition: pd.DataFrame, admissions_df: pd.DataFrame) -> pd.DataFrame:
+		"""Perform temporal merge on individual partitions with comprehensive error handling.
+
+		Args:
+			labevents_partition: Pandas DataFrame partition from labevents
+			admissions_df: Complete admissions DataFrame for temporal lookups
+
+		Returns:
+			pd.DataFrame: Merged results for this partition
+		"""
+		if labevents_partition.empty or admissions_df.empty:
+			return pd.DataFrame()
+
+		try:
 			# Ensure datetime columns are properly formatted
 			for col in [ColumnNames.CHARTTIME.value]:
 				if col in labevents_partition.columns:
 					labevents_partition[col] = pd.to_datetime(labevents_partition[col], errors='coerce')
-			
+
 			for col in [ColumnNames.ADMITTIME.value, ColumnNames.DISCHTIME.value, 'admittime_buffered', 'dischtime_buffered']:
-				if col in admissions_partition.columns:
-					admissions_partition[col] = pd.to_datetime(admissions_partition[col], errors='coerce')
-			
+				if col in admissions_df.columns:
+					admissions_df[col] = pd.to_datetime(admissions_df[col], errors='coerce')
+
 			merged_results = []
-			
+
 			# Group by subject_id for efficient processing
 			for subject_id, lab_group in labevents_partition.groupby(ColumnNames.SUBJECT_ID.value):
-				# Get admissions for this subject
-				adm_group = admissions_partition[
-					admissions_partition[ColumnNames.SUBJECT_ID.value] == subject_id
-				]
-				
-				if adm_group.empty:
-					continue
-				
-				# For each lab event, find matching admissions
-				for _, lab_row in lab_group.iterrows():
-					charttime = lab_row[ColumnNames.CHARTTIME.value]
-					
-					if pd.isna(charttime):
-						continue
-					
-					# Find admissions where charttime falls within buffered admission period
-					matching_admissions = adm_group[
-						(adm_group['admittime_buffered'] <= charttime) &
-						(adm_group['dischtime_buffered'] >= charttime)
+				try:
+					# Get admissions for this subject
+					adm_group = admissions_df[
+						admissions_df[ColumnNames.SUBJECT_ID.value] == subject_id
 					]
-					
-					# If multiple matches, take the one with closest admission time
-					if not matching_admissions.empty:
-						if len(matching_admissions) > 1:
-							# Calculate time differences and select closest admission
-							time_diffs = abs(matching_admissions[ColumnNames.ADMITTIME.value] - charttime)
-							closest_idx = time_diffs.idxmin()
-							matching_admission = matching_admissions.loc[[closest_idx]]
-						else:
-							matching_admission = matching_admissions
-						
-						# Merge the lab event with the matching admission
-						for _, adm_row in matching_admission.iterrows():
-							merged_row = pd.concat([lab_row, adm_row], axis=0)
-							# Remove duplicate subject_id column
-							merged_row = merged_row[~merged_row.index.duplicated(keep='first')]
-							merged_results.append(merged_row)
-			
+
+					if adm_group.empty:
+						continue
+
+					# For each lab event, find matching admissions
+					for _, lab_row in lab_group.iterrows():
+						charttime = lab_row[ColumnNames.CHARTTIME.value]
+
+						if pd.isna(charttime):
+							continue
+
+						# Find admissions where charttime falls within buffered admission period
+						matching_admissions = adm_group[
+							(adm_group['admittime_buffered'] <= charttime) &
+							(adm_group['dischtime_buffered'] >= charttime)
+						]
+
+						# If multiple matches, take the one with closest admission time
+						if not matching_admissions.empty:
+							if len(matching_admissions) > 1:
+								# Calculate time differences and select closest admission
+								time_diffs = abs(matching_admissions[ColumnNames.ADMITTIME.value] - charttime)
+								closest_idx = time_diffs.idxmin()
+								matching_admission = matching_admissions.loc[[closest_idx]]
+							else:
+								matching_admission = matching_admissions
+
+							# Merge the lab event with the matching admission
+							for _, adm_row in matching_admission.iterrows():
+								merged_row = pd.concat([lab_row, adm_row], axis=0)
+								# Remove duplicate subject_id column
+								merged_row = merged_row[~merged_row.index.duplicated(keep='first')]
+								merged_results.append(merged_row)
+
+				except Exception as e:
+					logger.warning(f"Error processing subject {subject_id} in partition: {e}")
+					continue
+
 			if merged_results:
 				result_df = pd.DataFrame(merged_results)
 				# Clean up temporary columns
@@ -1114,33 +1195,9 @@ class DataLoader:
 			else:
 				return pd.DataFrame()
 
-		# Apply the temporal merge using map_partitions for Dask efficiency
-		if hasattr(labevents_df, 'map_partitions') and hasattr(admissions_df, 'map_partitions'):
-			# For Dask dataframes, we need to use a different approach
-			# Convert to pandas for the merge operation due to complexity of temporal joins
-			logger.info("Converting to pandas for temporal merge operation...")
-			labevents_pd = labevents_df.compute()
-			admissions_pd = admissions_df.compute()
-			
-			merged_df = temporal_merge_partition(labevents_pd, admissions_pd)
-			
-			# Convert back to Dask if needed
-			if not merged_df.empty:
-				merged_df = dd.from_pandas(merged_df, npartitions=min(4, max(1, len(merged_df) // 10000)))
-		else:
-			# For pandas dataframes
-			merged_df = temporal_merge_partition(labevents_df, admissions_df)
-
-		# Log merge statistics
-		if hasattr(merged_df, 'compute'):
-			merge_count = len(merged_df.compute())
-		else:
-			merge_count = len(merged_df)
-		
-		logger.info(f"Temporal merge completed. Merged {merge_count} lab events with admissions.")
-		
-		# Return both the merged dataframe and the original admissions dataframe
-		return merged_df, admissions_df
+		except Exception as e:
+			logger.error(f"Critical error in temporal merge partition: {e}")
+			return pd.DataFrame()
 
 
 
@@ -2317,7 +2374,7 @@ def main():
 	# args = args.parse_args()
 	# ParquetConverter.example_save_to_parquet(table_name=TableNames[args.table_name])
 	# DataLoader.example_export_merge_table()
-	DataLoader.fix_labevents_hadm_id()
+	DataLoader.merge_labevents_and_admission()
 
 if __name__ == '__main__':
 	main()
