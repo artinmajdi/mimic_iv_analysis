@@ -74,8 +74,9 @@ dev = [
     "mypy>=0.9",
     "sphinx>=4.0",
     "sphinx-rtd-theme>=1.0",
-    "twine",
+    "twine>=6.0",
     "wheel",
+    "build>=1.0",
 ]
 test = [
     "pytest>=6.0",
@@ -91,6 +92,7 @@ Issues        = "https://github.com/artinmajdi/mimic_iv_analysis/issues"
 
 [project.scripts]
 mimic-iv = "mimic_iv_analysis.cli:run_dashboard"
+convert = "mimic_iv_analysis.io.data_loader:ParquetConverter.example_save_to_parquet"
 
 [tool.setuptools]
 packages = [

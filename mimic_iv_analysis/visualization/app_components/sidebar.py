@@ -16,13 +16,21 @@ import streamlit as st
 
 # Local application imports
 from mimic_iv_analysis import logger
-from mimic_iv_analysis.core import FeatureEngineerUtils, DaskConfigOptimizer
+from mimic_iv_analysis.core import FeatureEngineerUtils, DaskConfigOptimizer, DaskUtils
 from mimic_iv_analysis.io import DataLoader, ParquetConverter
 from mimic_iv_analysis.configurations import TableNames, DEFAULT_MIMIC_PATH, DEFAULT_NUM_SUBJECTS
 from mimic_iv_analysis.visualization.app_components import FilteringTab
 
 class SideBar:
 	def __init__(self):
+
+		# Initialize Dask configuration safely to prevent KeyError issues
+		logger.info("Initializing Dask configuration...")
+		if not DaskUtils.initialize_dask_config_safely():
+			logger.warning("Failed to initialize Dask configuration, using defaults")
+
+		# Ensure optimization.fuse configuration is properly set
+		DaskUtils.ensure_optimization_fuse_config()
 
 		# Initialize core components
 		logger.info(f"Initializing DataLoader with path: {DEFAULT_MIMIC_PATH}")
@@ -467,6 +475,9 @@ class SideBar:
 			def _load_connected_tables():
 
 				def _load_and_return():
+					# Ensure Dask configuration is properly set before loading
+					DaskUtils.ensure_optimization_fuse_config()
+
 					return self.data_handler.load(
 						table_name      = TableNames.MERGED,
 						tables_dict     = st.session_state.connected_tables,
@@ -705,7 +716,7 @@ class SideBar:
 		st.session_state.n_rows_loaded         = None
 		st.session_state.n_subjects_pre_filters = None
 		st.session_state.n_subjects_loaded     = None
-  
+
 	def _rescan_and_update_state(self):
 		"""Rescans the directory and updates session state with table info."""
 		logger.info("Re-scanning directory and updating state...")

@@ -15,6 +15,7 @@ import time
 import psutil
 import threading
 from contextlib import contextmanager
+import argparse
 
 # Data processing imports
 import pandas as pd
@@ -37,6 +38,7 @@ from mimic_iv_analysis.configurations import (  TableNames,
 												DEFAULT_NUM_SUBJECTS,
 												DEFAULT_STUDY_TABLES_LIST
 												)
+from mimic_iv_analysis.core import DaskUtils
 
 
 subject_id: str = ColumnNames.SUBJECT_ID.value
@@ -459,6 +461,12 @@ class DataLoader:
 			'distributed.worker.memory.target': 0.6,  # Target 60% memory usage
 			'distributed.worker.memory.spill': 0.7,   # Spill at 70% memory usage
 			'distributed.worker.memory.pause': 0.8,   # Pause at 80% memory usage
+			'optimization.fuse': {
+				'delayed': True,
+				'array': True,
+				'dataframe': True
+			},
+			'optimization.cull': True,
 		}):
 			unique_ids = set()
 
@@ -1200,50 +1208,18 @@ class HighPerformanceParquetConverter:
 		self.data_loader         = data_loader
 		self.parquet_converter   = parquet_converter
 		self.max_workers         = max_workers or min(32, (os.cpu_count() or 1) + 4)
-		self.memory_threshold_gb = self._get_optimal_memory_threshold()
+		self.memory_threshold_gb = DaskUtils._get_optimal_memory_threshold()
 		self.metrics             = ConversionMetrics()
 
 		# Initialize optimized Dask configuration
-		self._configure_dask_optimally()
+		DaskUtils.configure_dask_optimally()
 
 		# Thread-safe locks for concurrent operations
 		self._conversion_lock = threading.RLock()
 		self._metrics_lock    = threading.Lock()
 
-	def _get_optimal_memory_threshold(self) -> float:
-		"""Dynamically determine optimal memory threshold based on system resources."""
-		total_memory_gb = psutil.virtual_memory().total / (1024**3)
-		available_memory_gb = psutil.virtual_memory().available / (1024**3)
 
-		# Use 70% of available memory, but cap at 80% of total
-		optimal_threshold = min(
-			available_memory_gb * 0.7,
-			total_memory_gb * 0.8
-		)
 
-		return max(optimal_threshold, 2.0)  # Minimum 2GB threshold
-
-	def _configure_dask_optimally(self):
-		"""Configure Dask for optimal performance based on system resources."""
-		cpu_count = os.cpu_count() or 1
-		memory_gb = psutil.virtual_memory().total / (1024**3)
-
-		# Optimal configuration based on system resources
-		dask.config.set({
-			'dataframe.query-planning': True,
-			'dataframe.convert-string': False,
-			'array.chunk-size': '256MB',
-			'array.slicing.split_large_chunks': True,
-			'distributed.worker.memory.target': 0.8,
-			'distributed.worker.memory.spill': 0.9,
-			'distributed.worker.memory.pause': 0.95,
-			'distributed.worker.memory.terminate': 0.98,
-			'distributed.comm.compression': 'lz4',
-			'distributed.scheduler.bandwidth': '1GB/s',
-			'distributed.worker.daemon': False,
-			'optimization.fuse': {},
-			'optimization.cull': True,
-		})
 
 	@contextmanager
 	def _performance_monitor(self, table_name: str):
@@ -1277,9 +1253,9 @@ class HighPerformanceParquetConverter:
 			monitor_thread.join(timeout=1.0)
 			self.metrics.finalize()
 
-	def _estimate_data_characteristics(self, df: Optional[pd.DataFrame | dd.DataFrame],
-									 table_name: TableNames) -> Dict[str, Any]:
+	def _estimate_data_characteristics(self, df: Optional[pd.DataFrame | dd.DataFrame], table_name: TableNames) -> Dict[str, Any]:
 		"""Analyze data characteristics to select optimal conversion strategy."""
+
 		characteristics = {
 			'estimated_size_gb': 0.0,
 			'row_count': 0,
@@ -2104,8 +2080,7 @@ class ParquetConverter:
 			target_parquet_path=target_parquet_path
 		)
 
-	async def convert_multiple_high_performance_async(self, table_names: List[TableNames],
-													 max_concurrent: int = 3) -> Dict[TableNames, ConversionMetrics]:
+	async def convert_multiple_high_performance_async(self, table_names: List[TableNames], max_concurrent: int = 3) -> Dict[TableNames, ConversionMetrics]:
 		"""
 		Convert multiple tables concurrently using high-performance converter.
 
@@ -2131,26 +2106,44 @@ class ParquetConverter:
 	@classmethod
 	def example_save_to_parquet(cls, table_name = TableNames.LABEVENTS):
 
-		import time
-		start_time = time.time()
+		def _convert_one_table(table_name: TableNames):
+			# Convert the string value to the TableNames enum member
+			table_name = TableNames(args.table_name)
 
-		loader = DataLoader()
-		converter = cls(data_loader=loader)
+			import time
+			start_time = time.time()
 
-		# Get the expected parquet path for the table
-		parquet_path = loader.mimic_path / 'hosp' / f'{table_name.value}.parquet'
+			loader = DataLoader()
+			converter = cls(data_loader=loader)
 
-		converter.save_as_parquet( table_name=table_name )
+			# Get the expected parquet path for the table
+			parquet_path = loader.mimic_path / 'hosp' / f'{table_name.value}.parquet'
 
-		end_time = time.time()
-		duration = end_time - start_time
+			converter.save_as_parquet( table_name=table_name )
 
-		print(f"\n✅ SUCCESS! {table_name.value} table conversion completed in {duration:.2f} seconds")
-		print(f"📁 Output file: {parquet_path}")
+			end_time = time.time()
+			duration = end_time - start_time
+
+			print(f"\n✅ SUCCESS! {table_name.value} table conversion completed in {duration:.2f} seconds")
+			print(f"📁 Output file: {parquet_path}")
+
+		parser = argparse.ArgumentParser(description="Convert MIMIC-IV table to Parquet format")
+		parser.add_argument("table_name", nargs='?', type=str, choices=['study'] + [e.value for e in TableNames], help="Table name to convert", default=table_name.value)
+		args = parser.parse_args()
+
+		if args.table_name == 'study':
+			for table_name in DEFAULT_STUDY_TABLES_LIST:
+				_convert_one_table(TableNames(table_name))
+		else:
+			_convert_one_table(TableNames(args.table_name))
+
+
 
 
 def main():
-	ParquetConverter.example_save_to_parquet(table_name=TableNames.PRESCRIPTIONS)
+
+	# args = args.parse_args()
+	# ParquetConverter.example_save_to_parquet(table_name=TableNames[args.table_name])
 	# DataLoader.example_export_merge_table()
 	pass
 

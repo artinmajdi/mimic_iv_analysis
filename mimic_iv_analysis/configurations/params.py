@@ -579,7 +579,7 @@ _DATETIME_COLUMNS = [
     'verifiedtime'
     ]
 
-_TABLES_W_SUBJECT_ID_COLUMN =  {'merged_table', 'patients', 'admissions', 'transfers', 'diagnoses_icd', 'poe', 'poe_detail', 'microbiologyevents', 'labevents', 'prescriptions'}
+_TABLES_W_SUBJECT_ID_COLUMN =  {'merged_table', 'patients', 'admissions', 'transfers', 'diagnoses_icd', 'poe', 'poe_detail', 'microbiologyevents', 'labevents', 'prescriptions', 'omr', 'pharmacy', 'services', 'emar', 'emar_detail'}
 
 
 # Attach constants to the TableNames class

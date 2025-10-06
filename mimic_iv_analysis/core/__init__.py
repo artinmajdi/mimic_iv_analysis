@@ -11,11 +11,12 @@ Components:
 
 from .clustering import ClusteringAnalyzer, ClusterInterpreter
 from .feature_engineering import FeatureEngineerUtils
-from .dask_config_optimizer import DaskConfigOptimizer
+from .dask_config import DaskConfigOptimizer, DaskUtils
 
 
 __all__ = [ 'ClusteringAnalyzer',
             'ClusterInterpreter',
             'FeatureEngineerUtils',
-            'DaskConfigOptimizer'
+            'DaskConfigOptimizer',
+            'DaskUtils'
             ]

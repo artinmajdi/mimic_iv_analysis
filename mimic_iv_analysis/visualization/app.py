@@ -75,8 +75,11 @@ class MIMICDashboardApp:
 					st.metric("Subjects Loaded", f"{st.session_state.n_subjects_loaded:,}")
 
 			with col3:
-				st.metric("Rows Loaded", f"{st.session_state.n_rows_loaded:,}")
-				st.metric("Columns Loaded", f"{len(st.session_state.df.columns)}")
+				if st.session_state.get('n_rows_loaded', None) is not None:
+					st.metric("Rows Loaded", f"{st.session_state.n_rows_loaded:,}")
+
+				if st.session_state.get('df', None) is not None:
+					st.metric("Columns Loaded", f"{len(st.session_state.df.columns)}")
 
 			# Display filename
 			if st.session_state.current_file_path:

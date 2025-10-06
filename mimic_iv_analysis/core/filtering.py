@@ -31,6 +31,9 @@ class Filtering:
 
 	def render(self) -> pd.DataFrame | dd.DataFrame:
 
+		# ============================================================================
+		# 							patients
+		# ============================================================================
 		if self.table_name == TableNames.PATIENTS:
 
 			anchor_age        = (self.df.anchor_age >= 18.0) & (self.df.anchor_age <= 75.0)
@@ -39,6 +42,9 @@ class Filtering:
 
 			self.df           = self.df[anchor_age & anchor_year_group & dod]
 
+		# ============================================================================
+		# 							diagnoses_icd
+		# ============================================================================
 		elif self.table_name == TableNames.DIAGNOSES_ICD:
 
 			icd_version = self.df.icd_version.isin([10])
@@ -46,9 +52,15 @@ class Filtering:
 			icd_code    = self.df.icd_code.str.startswith('E11')
 			self.df     = self.df[icd_version & seq_num & icd_code]
 
+		# ============================================================================
+		# 							d_icd_diagnoses
+		# ============================================================================
 		elif self.table_name == TableNames.D_ICD_DIAGNOSES:
 			self.df = self.df[ self.df.icd_version.isin([10]) ]
 
+		# ============================================================================
+		# 							poe
+		# ============================================================================
 		elif self.table_name == TableNames.POE:
 
 			if self.table_name.value in self.filter_params:
@@ -64,7 +76,9 @@ class Filtering:
 				if poe_filters_params['apply_transaction_type']:
 					self.df = self.df[ self.df.transaction_type.isin(poe_filters_params['transaction_type']) ]
 
-
+		# ============================================================================
+		# 							admissions
+		# ============================================================================
 		elif self.table_name == TableNames.ADMISSIONS:
 
 			# Filter columns
@@ -83,7 +97,9 @@ class Filtering:
 
 			self.df = self.df[ exclude_in_hospital_death & discharge_after_admission & admission_type]
 
-
+		# ============================================================================
+		# 							transfers
+		# ============================================================================
 		elif self.table_name == TableNames.TRANSFERS:
 
 			# empty_cells = self.df.hadm_id != ''
@@ -92,9 +108,15 @@ class Filtering:
 			# careunit = self.df.careunit.isin(['Medicine'])
 			# self.df = self.df[careunit]
 
+		# ============================================================================
+		# 							microbiologyevents
+		# ============================================================================
 		elif self.table_name == TableNames.MICROBIOLOGYEVENTS:
 			self.df = self.df.drop(columns=['comments'])
 
+		# ============================================================================
+		# 							labevents
+		# ============================================================================
 		elif self.table_name == TableNames.LABEVENTS:
 			self.df = self.df[['labevent_id', 'subject_id', 'hadm_id', 'itemid', 'order_provider_id']] # 'labevent_id',  'value', 'valuenum', 'valueuom', 'ref_range_lower', 'ref_range_upper', 'flag', 'priority', 'comments'
 
@@ -105,10 +127,20 @@ class Filtering:
 			# self.df = self.df[hadm_id & order_provider_id_null]
 			self.df = self.df[hadm_id]
 
+		# ============================================================================
+		# 							prescriptions
+		# ============================================================================
 		elif self.table_name == TableNames.PRESCRIPTIONS:
 			# ['subject_id', 'hadm_id', 'pharmacy_id', 'poe_id', 'poe_seq', 'order_provider_id', 'starttime', 'stoptime', 'drug_type', 'drug', 'formulary_drug_cd', 'gsn', 'ndc', 'prod_strength', 'form_rx', 'dose_unit_rx', 'dose_val_rx', 'form_unit_disp', 'form_val_disp', 'doses_per_24_hrs', 'route']
 			# self.df = self.df[ ['subject_id', 'hadm_id', 'poe_id', 'poe_seq', 'order_provider_id']]
 			self.df = self.df.drop(columns=['pharmacy_id', 'starttime', 'stoptime', 'drug_type', 'formulary_drug_cd'])
+
+		# ============================================================================
+		# omr
+		# ============================================================================
+		elif self.table_name == TableNames.OMR:
+			seq_num     = self.df.seq_num.isin([1,2,3])
+			self.df     = self.df[seq_num]
 
 
 		# Reset index
