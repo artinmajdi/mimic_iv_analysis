@@ -62,6 +62,7 @@ dependencies = [
     "pydantic>=2.11.5",
     "rich>=14.0.0",
     "psutil>=7.0.0",
+    "pip>=23.0.0",
 ]
 
 [project.optional-dependencies]
