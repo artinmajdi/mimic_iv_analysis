@@ -1043,6 +1043,7 @@ class DataLoader:
 			total_merged_count = 0
 
 			# Process each labevents partition separately to control memory usage
+			# TODO: see if I can run this for loop in parallel to speed it up
 			for i in tqdm(range(n_partitions_lab), desc="Processing labevents partitions"):
 				try:
 					# Get one partition at a time
