@@ -533,7 +533,7 @@ class SideBar:
 					st.session_state.df = None
 					return False
 
-				if total_subjects == 0 and st.session_state.selected_table in TableNames._TABLES_W_SUBJECT_ID_COLUMN:
+				if total_subjects == 0 and st.session_state.selected_table in TableNames.TABLES_W_SUBJECT_ID_COLUMN:
 					st.sidebar.warning("Loaded table is empty.")
 					st.session_state.df = None
 					return False
@@ -774,7 +774,7 @@ class SideBar:
 	@property
 	def has_no_subject_id_column(self):
 		"""Check if the current table has a subject_id column."""
-		tables_that_can_be_sampled = TableNames._TABLES_W_SUBJECT_ID_COLUMN
+		tables_that_can_be_sampled = TableNames.TABLES_W_SUBJECT_ID_COLUMN
 		return st.session_state.selected_table not in tables_that_can_be_sampled
 
 	@property

@@ -580,7 +580,7 @@ _DATETIME_COLUMNS = [
     'verifiedtime'
     ]
 
-_TABLES_W_SUBJECT_ID_COLUMN =  {'merged_table', 'patients', 'admissions', 'transfers', 'diagnoses_icd', 'poe', 'poe_detail', 'microbiologyevents', 'labevents', 'prescriptions', 'omr', 'pharmacy', 'services', 'emar', 'emar_detail'}
+TABLES_W_SUBJECT_ID_COLUMN =  {'merged_table', 'patients', 'admissions', 'transfers', 'diagnoses_icd', 'poe', 'poe_detail', 'microbiologyevents', 'labevents', 'prescriptions', 'omr', 'pharmacy', 'services', 'emar', 'emar_detail'}
 
 
 # Attach constants to the TableNames class
@@ -591,7 +591,7 @@ TableNames._TABLE_TO_COLUMNS           = _TABLE_TO_COLUMNS
 TableNames._COLUMN_TYPES               = _COLUMN_TYPES
 TableNames._CATEGORIES                 = _CATEGORIES
 TableNames._DATETIME_COLUMNS           = _DATETIME_COLUMNS
-TableNames._TABLES_W_SUBJECT_ID_COLUMN = _TABLES_W_SUBJECT_ID_COLUMN
+TableNames.TABLES_W_SUBJECT_ID_COLUMN = TABLES_W_SUBJECT_ID_COLUMN
 
 def values(cls) -> list[str]:
     """Returns all table values as a list."""

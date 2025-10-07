@@ -66,7 +66,7 @@ class MIMICDashboardApp:
 
 				st.metric("Total Subjects", f"{st.session_state.n_subjects_pre_filters:,}")
 
-				if st.session_state.selected_table in TableNames._TABLES_W_SUBJECT_ID_COLUMN:
+				if st.session_state.selected_table in TableNames.TABLES_W_SUBJECT_ID_COLUMN:
 
 					if st.session_state.get('n_subjects_loaded', None) is None:
 						loaded_subjects = st.session_state.df.subject_id.nunique().compute() if isinstance(st.session_state.df, dd.DataFrame) else len(st.session_state.df.subject_id.unique()) if st.session_state.df is not None else 0
