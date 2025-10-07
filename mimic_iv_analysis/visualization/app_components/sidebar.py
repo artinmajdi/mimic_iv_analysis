@@ -185,7 +185,8 @@ class SideBar:
 			if not st.session_state.load_full:
 				_select_sampling_parameters()
 
-			st.sidebar.checkbox("Apply Filtering", value=st.session_state.get('apply_filtering', True), key="apply_filtering", on_change=self._callback_reload_dataloader, help="Apply cohort filtering to the table before loading.")
+			st.sidebar.checkbox("Include labevents", value=st.session_state.get('include_labevents', False), key="include_labevents", on_change=self._callback_reload_dataloader_preserve_metrics, help="Include labevents in the table before loading.", disabled=True)
+			st.sidebar.checkbox("Apply Filtering", value=st.session_state.get('apply_filtering', True), key="apply_filtering", on_change=self._callback_reload_dataloader_preserve_metrics, help="Apply cohort filtering to the table before loading.")
 			st.sidebar.checkbox("Use Dask"		 , value=st.session_state.get('use_dask', True)		  , key="use_dask"		 , help="Enable Dask for distributed computing and memory-efficient processing")
 
 		def _select_table_module():
@@ -610,8 +611,8 @@ class SideBar:
 			path = Path(file_path)
 			return path.exists() and path.stat().st_size > 0
 
-		# Updating self.data_handler
-		self._callback_reload_dataloader()
+		# Updating self.data_handler (don't clear cached metrics as data isn't loaded yet)
+		self._callback_reload_dataloader(clear_cached_metrics=False)
 
 		if selected_table_name_w_size == "merged_table":
 
@@ -680,7 +681,7 @@ class SideBar:
 		try:
 			# Update the data handler's path if it changed
 			if mimic_path != str(self.data_handler.mimic_path):
-				self._callback_reload_dataloader()
+				self._callback_reload_dataloader(clear_cached_metrics=True)
 				# self.data_handler      = DataLoader(mimic_path=Path(mimic_path))
 				# self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
 
@@ -703,19 +704,25 @@ class SideBar:
 			st.sidebar.error(f"Error scanning directory: {e}")
 			logger.exception("Error during directory scan")
 
-	def _callback_reload_dataloader(self):
+	def _callback_reload_dataloader(self, clear_cached_metrics: bool = False):
 
 		self.data_handler = DataLoader(
 						mimic_path       = st.session_state.get('mimic_path', Path(DEFAULT_MIMIC_PATH)),
 						apply_filtering   = st.session_state.apply_filtering,
-						filter_params     = st.session_state.filter_params)
+						filter_params     = st.session_state.filter_params,
+						include_labevents = st.session_state.include_labevents)
 
 		self.parquet_converter = ParquetConverter(data_loader=self.data_handler)
 
-		# Cached metrics
-		st.session_state.n_rows_loaded         = None
-		st.session_state.n_subjects_pre_filters = None
-		st.session_state.n_subjects_loaded     = None
+		# Only clear cached metrics when explicitly requested (e.g., when new data is loaded)
+		if clear_cached_metrics:
+			st.session_state.n_rows_loaded         = None
+			st.session_state.n_subjects_pre_filters = None
+			st.session_state.n_subjects_loaded     = None
+
+	def _callback_reload_dataloader_preserve_metrics(self):
+		"""Wrapper function for UI callbacks that should preserve cached metrics."""
+		self._callback_reload_dataloader(clear_cached_metrics=False)
 
 	def _rescan_and_update_state(self):
 		"""Rescans the directory and updates session state with table info."""

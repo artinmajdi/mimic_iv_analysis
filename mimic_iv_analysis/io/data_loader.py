@@ -107,7 +107,8 @@ class DataLoader:
 	def __init__(self, 	mimic_path: Path = DEFAULT_MIMIC_PATH,
 						study_tables_list: list[str] = DEFAULT_STUDY_TABLES_LIST,
 						apply_filtering  : bool      = True,
-						filter_params    : Optional[dict[str, dict[str, Any]]] = {} ):
+						filter_params    : Optional[dict[str, dict[str, Any]]] = {},
+						include_labevents: bool      = False ):
 
 		# Initialize persisted resources tracking
 		self._persisted_resources = {}
@@ -116,13 +117,23 @@ class DataLoader:
 		self.mimic_path      = Path(mimic_path)
 		self.apply_filtering = apply_filtering
 		self.filter_params   = filter_params
+		self.include_labevents = include_labevents
 
 		# Tables to load. Use list provided by user or default list
-		self.study_tables_list = study_tables_list
+		self.study_tables_list = set(study_tables_list)
+		if self.include_labevents:
+			self.study_tables_list.add(TableNames.LABEVENTS.value)
+			self.study_tables_list.add(TableNames.D_LABITEMS.value)
+		else:
+			self.study_tables_list.discard(TableNames.LABEVENTS.value)
+			self.study_tables_list.discard(TableNames.D_LABITEMS.value)
 
 		# Class variables
 		self.tables_info_df         : Optional[pd.DataFrame]  = None
 		self.tables_info_dict       : Optional[Dict[str, Any]] = None
+
+		self.study_tables_list = list(self.study_tables_list)
+
 
 	@lru_cache(maxsize=None)
 	def scan_mimic_directory(self):
@@ -891,7 +902,7 @@ class DataLoader:
 		return df
 
 
-	def merge_tables(self, tables_dict: Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None, use_dask: bool = True) -> pd.DataFrame | dd.DataFrame:
+	def merge_tables(self, tables_dict: Optional[Dict[str, pd.DataFrame | dd.DataFrame]] = None, use_dask: bool = True, include_labevents: bool = False) -> pd.DataFrame | dd.DataFrame:
 		""" Load and merge tables.
 
 		Note: To merge the **labevents** table with the **admissions** table, The website states you can join the **labevents** table to the **admissions** table using `subject_id`, `admittime`, and `dischtime`. This is because the **labevents** table does not contain `admittime` and `dischtime` columns. The join is performed by linking the `subject_id` from the **labevents** table with the `subject_id` from the **admissions** table, and then using the `charttime` from the **labevents** table to determine if the lab test occurred between the `admittime` and `dischtime` of a specific hospitalization record in the **admissions** table.
@@ -921,8 +932,11 @@ class DataLoader:
 		poe_detail_df      = tables_dict[TableNames.POE_DETAIL.value] # 55MB
 		transfers_df       = tables_dict.get(TableNames.TRANSFERS.value) # 46MB
 		prescriptions_df   = tables_dict.get(TableNames.PRESCRIPTIONS.value) # 606MB
-		labevents_df       = tables_dict.get(TableNames.LABEVENTS.value) # 2.6GB
-		d_labitems_df      = tables_dict.get(TableNames.D_LABITEMS.value) # 30KB
+
+		# Get labevents table if include_labevents is True
+		if self.include_labevents:
+			labevents_df       = tables_dict.get(TableNames.LABEVENTS.value) # 2.6GB
+			d_labitems_df      = tables_dict.get(TableNames.D_LABITEMS.value) # 30KB
 
 		# adms_labevents_df = admissions_df.merge(labevents_df, on=[subject_id, ColmnNames.HADM_ID.value], how='inner')
 
@@ -958,17 +972,24 @@ class DataLoader:
 			df123456 = df12345.merge(prescriptions_df, on=[subject_id, ColumnNames.HADM_ID.value, ColumnNames.POE_ID.value, ColumnNames.POE_SEQ.value, ColumnNames.ORDER_PROVIDER_ID.value], how='left')
 			df123456 = _dask_persist(df123456, 'merged_with_prescriptions')
 
-			# # Labevents and d_labitems: -- itemid --
-			labevents = labevents_df.merge(d_labitems_df, on=[ColumnNames.ITEMID.value], how='inner')
-			labevents = _dask_persist(labevents, 'labevents')
+			# Merge with Labevents: -- subject_id, hadm_id, poe_id, poe_seq --
+			if self.include_labevents:
+				# Labevents and d_labitems: -- itemid --
+				labevents = labevents_df.merge(d_labitems_df, on=[ColumnNames.ITEMID.value], how='inner')
+				labevents = _dask_persist(labevents, 'labevents')
 
-			for col in [ColumnNames.SUBJECT_ID.value, ColumnNames.HADM_ID.value]:
-				labevents[col] = labevents[col].astype('Int64')
-				df123456[col] = df123456[col].astype('Int64')
+				for col in [ColumnNames.SUBJECT_ID.value, ColumnNames.HADM_ID.value]:
+					labevents[col] = labevents[col].astype('Int64')
+					df123456[col] = df123456[col].astype('Int64')
 
-			# # Merge with Labevents: -- subject_id, poe_id, poe_seq --
-			df1234567 = df123456.merge(labevents, on=[subject_id, ColumnNames.HADM_ID.value, ColumnNames.ORDER_PROVIDER_ID.value], how='inner')
-			df1234567 = _dask_persist(df1234567, 'merged_with_labevents')
+				# Merge with Labevents: -- subject_id, hadm_id, poe_id, poe_seq --
+				df1234567 = df123456.merge(labevents, on=[subject_id, ColumnNames.HADM_ID.value, ColumnNames.ORDER_PROVIDER_ID.value], how='inner')
+				df1234567 = _dask_persist(df1234567, 'merged_with_labevents')
+				df = df1234567
+
+			else:
+				df = df123456
+
 
 			# Store intermediate persisted results for potential cleanup
 			self._persisted_resources.update(persisted_intermediates)
@@ -979,9 +1000,10 @@ class DataLoader:
 			self._cleanup_persisted_resources(persisted_intermediates)
 			raise
 
-		return df123456
+		return df
 
 
+	# TODO: compare the result of this with normal merging of these two.
 	# TODO: check the test_basic_merge and see if it works. If so, just use that with the merged table (for all other tables) which is small. if not fix the merge_labevents_and_admission
 	@classmethod
 	def merge_labevents_and_admission(cls, n_rows: int | None = None) -> Tuple[pd.DataFrame | dd.DataFrame, pd.DataFrame | dd.DataFrame]:

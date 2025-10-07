@@ -230,6 +230,7 @@ class MIMICDashboardApp:
 		st.session_state.mimic_path = DEFAULT_MIMIC_PATH
 		st.session_state.use_dask = True
 		st.session_state.apply_filtering = True
+		st.session_state.include_labevents = False
 
 		# Feature engineering states
 		st.session_state.detected_order_cols = []
@@ -281,10 +282,10 @@ class MIMICDashboardApp:
 		st.session_state.app_initialized = True # Mark as initialized
 		logger.info("Session state initialized.")
 
-		# Cached metrics
-		st.session_state.n_rows_loaded          = None
-		st.session_state.n_subjects_pre_filters = None
-		st.session_state.n_subjects_loaded      = None
+		# # Cached metrics
+		# st.session_state.n_rows_loaded          = None
+		# st.session_state.n_subjects_pre_filters = None
+		# st.session_state.n_subjects_loaded      = None
 
 def main():
 	app = MIMICDashboardApp()
