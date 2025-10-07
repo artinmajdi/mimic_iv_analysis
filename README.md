@@ -7,23 +7,43 @@
 
 *Unlock Insights from Healthcare Data Effortlessly*
 
-A comprehensive analytical toolkit for exploring and modeling data from the MIMIC-IV clinical database. This project provides tools for data loading, preprocessing, feature engineering, clustering, and visualization, primarily focusing on provider order pattern analysis.
+## Development Architecture and Implementation of the MIMIC-IV Analysis User Interface
+
+The MIMIC-IV Analysis User Interface was developed as a comprehensive web-based dashboard using a modern, modular architecture that prioritizes scalability, maintainability, and user experience. The application is built on **Streamlit**, a Python-based framework specifically designed for data science applications, which enables rapid development of interactive web applications without requiring extensive frontend development expertise. This choice was particularly advantageous for nursing research applications, as it allows researchers to focus on data analysis rather than web development complexities.
+
+The application follows a **component-based architecture** with clear separation of concerns, organized into distinct modules that handle different aspects of the analytical workflow. The main application class (MIMICDashboardApp) serves as the orchestrator, managing session state and coordinating between specialized components including data loading (SideBar), exploration and visualization (ExplorationAndViz), feature engineering (FeatureEngineeringTab), clustering analysis (ClusteringAnalysisTab), and post-analysis visualization (AnalysisVisualizationTab). Each component is encapsulated as a separate class with its own render() method, ensuring modularity and facilitating future enhancements or modifications to specific functionality areas.
+
+**Performance optimization** was a critical consideration in the development process, particularly given the large-scale nature of MIMIC-IV datasets. The application integrates **Dask**, a parallel computing library, to handle distributed data processing and enable efficient analysis of datasets that exceed available memory. The Dask integration includes automatic client initialization with configurable worker processes, memory limits, and dashboard monitoring capabilities. Additionally, the application implements intelligent data caching strategies using Streamlit's built-in caching mechanisms (@st.cache\_resource and @st.cache\_data) to minimize redundant computations and improve user experience during iterative analysis sessions.
+
+The user interface design emphasizes **accessibility and usability** for nursing researchers with varying levels of technical expertise. The dashboard features an intuitive tab-based navigation system with four primary analytical workflows: data exploration and visualization, feature engineering, clustering analysis, and cluster interpretation. Each tab provides contextual guidance and progressive disclosure of advanced options, allowing users to begin with basic exploration and gradually access more sophisticated analytical tools. The interface includes comprehensive data filtering capabilities with predefined inclusion and exclusion criteria specific to nursing research contexts, such as age-based patient selection (18-75 years), specific admission types, and clinical outcome considerations. Real-time feedback mechanisms, including progress indicators and dataset statistics, help users understand the impact of their analytical choices and maintain confidence in the analysis process.
+
+**Data integration and preprocessing** capabilities are seamlessly embedded within the interface, supporting both CSV and Parquet file formats with automatic format detection and conversion. The application includes sophisticated data validation and error handling mechanisms that provide clear feedback when data quality issues are encountered, ensuring that nursing researchers can confidently work with complex clinical datasets. The modular design also facilitates easy integration of new data sources or analytical methods, making the platform adaptable to evolving research needs in nursing informatics and clinical data analysis.
+
 
 ## Table of Contents
 
-- [About MIMIC-IV Data](#about-mimic-iv-data)
-- [Features](#features)
-- [Project Structure](#project-structure)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Usage](#usage)
-- [Core Modules Overview](#core-modules-overview)
-- [Development](#development)
-- [Documentation](#documentation)
-- [Streamlit Cloud Deployment](#streamlit-cloud-deployment)
-- [Contributing](#contributing)
-- [License](#license)
-- [Author](#author)
+- [MIMIC-IV Analysis Toolkit](#mimic-iv-analysis-toolkit)
+  - [Development Architecture and Implementation of the MIMIC-IV Analysis User Interface](#development-architecture-and-implementation-of-the-mimic-iv-analysis-user-interface)
+  - [Table of Contents](#table-of-contents)
+  - [About MIMIC-IV Data](#about-mimic-iv-data)
+  - [Features](#features)
+  - [Project Structure](#project-structure)
+  - [Installation](#installation)
+    - [Prerequisites](#prerequisites)
+    - [Installation Steps](#installation-steps)
+  - [Configuration](#configuration)
+  - [Usage](#usage)
+    - [Running the Streamlit Dashboard](#running-the-streamlit-dashboard)
+    - [Install the package from TestPyPI (Example for version 0.5.8)](#install-the-package-from-testpypi-example-for-version-058)
+  - [Core Modules Overview](#core-modules-overview)
+  - [Development](#development)
+    - [Code Style](#code-style)
+    - [Running Tests](#running-tests)
+  - [Documentation](#documentation)
+  - [Streamlit Cloud Deployment](#streamlit-cloud-deployment)
+  - [Contributing](#contributing)
+  - [License](#license)
+  - [Author](#author)
 
 ## About MIMIC-IV Data
 
