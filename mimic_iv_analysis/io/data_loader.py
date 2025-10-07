@@ -1024,7 +1024,7 @@ class DataLoader:
 
 			# repartition dataframes
 			logger.info("Repartitioning dataframes")
-			labevents_df  = labevents_df.repartition(npartitions=50)
+			labevents_df  = labevents_df.repartition(npartitions=20)
 
 			# Sort dataframes for efficient merge operations
 			labevents_df = labevents_df.sort_values([ColumnNames.SUBJECT_ID.value, ColumnNames.CHARTTIME.value])
@@ -1148,7 +1148,7 @@ class DataLoader:
 		import dask
 		with dask.config.set({
 			'dataframe.query-planning': False,  # Use legacy query planning for stability
-			'array.chunk-size': '128MB',        # Smaller chunk size for memory efficiency
+			'array.chunk-size': '1GB',        # Smaller chunk size for memory efficiency
 			'distributed.worker.memory.target': 0.6,  # Target 60% memory usage
 			'distributed.worker.memory.spill': 0.7,   # Spill at 70% memory usage
 			'distributed.worker.memory.pause': 0.8,   # Pause at 80% memory usage
