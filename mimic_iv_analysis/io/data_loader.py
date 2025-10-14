@@ -1028,8 +1028,7 @@ class DataLoader:
 		return df
 
 
-	# TODO: compare the result of this with normal merging of these two.
-	# TODO: check the test_basic_merge and see if it works. If so, just use that with the merged table (for all other tables) which is small. if not fix the merge_labevents_and_admission
+	# TODO: now that this is resolved. add it to the rest of the merged table.
 	@classmethod
 	def merge_labevents_and_admission(cls, n_rows: int | None = None) -> Tuple[pd.DataFrame | dd.DataFrame, pd.DataFrame | dd.DataFrame]:
 		""" Load and merge tables with optimized Dask multiprocessing operations.
@@ -1220,10 +1219,10 @@ class DataLoader:
 			logger.info(f'Saving CSV to: {target_csv_path}')
 
 			# Compute and save the CSV in a single operation to avoid Futures mixing
-			# df.compute().to_csv(target_csv_path, index=False)
+			df.compute().to_csv(target_csv_path, index=False)
 
 			# Build the CSV write graph without immediate execution to avoid mixing Futures
-			df.to_csv(str(target_csv_path), index=False, single_file=True, compute=True)
+			# df.to_csv(str(target_csv_path), index=False, single_file=True, compute=True)
 			# csv_graph = df.to_csv(str(target_csv_path), index=False, single_file=True, compute=False)
 			# import dask
 			# # Execute the write with the currently active scheduler/client
