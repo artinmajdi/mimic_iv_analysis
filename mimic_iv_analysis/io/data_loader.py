@@ -44,8 +44,6 @@ from mimic_iv_analysis.core import DaskUtils
 
 subject_id: str = ColumnNames.SUBJECT_ID.value
 
-# TODO: convert the labevents to parquet using a python script instead of using the streamlit app.
-
 @dataclass
 class ConversionMetrics:
 	"""Tracks comprehensive conversion performance metrics."""

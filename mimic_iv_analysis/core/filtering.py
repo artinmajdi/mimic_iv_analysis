@@ -32,60 +32,59 @@ class Filtering:
 	def render(self) -> pd.DataFrame | dd.DataFrame:
 		"""
 		Apply filtering criteria to MIMIC-IV data based on table-specific inclusion and exclusion rules.
-		
+
 		Returns:
 			pd.DataFrame | dd.DataFrame: Filtered dataframe with applied criteria
-		
+
 		Table-specific filtering criteria:
-		
+
 		PATIENTS:
 			Inclusions:
 				- anchor_age between 18 and 75 years
 				- anchor_year_group: '2017 - 2019'
 				- dod (date of death) is null (alive patients)
-		
+
 		DIAGNOSES_ICD:
 			Inclusions:
 				- icd_version: 10
 				- seq_num: 1, 2, or 3
 				- icd_code: starts with 'E11' (diabetes-related codes)
-		
+
 		D_ICD_DIAGNOSES:
 			Inclusions:
 				- icd_version: 10
-		
+
 		POE (Provider Order Entry):
 			Column selection (when table in filter_params):
 				- Keeps only: poe_id, poe_seq, subject_id, hadm_id, ordertime, order_type, order_subtype, order_provider_id
-		
+
 		ADMISSIONS:
 			Column exclusions:
-				- Removes: admit_provider_id, insurance, language, marital_status, 
-				  race, edregtime, edouttime
+				- Removes: admit_provider_id, insurance, language, marital_status, race, edregtime, edouttime
 			Row exclusions:
 				- Null values in admittime or dischtime
 				- In-hospital deaths (deathtime not null AND hospital_expire_flag = 1)
 				- Discharge time before admission time
 				- Admission types: 'EW EMER.', 'DIRECT EMER.', 'URGENT', 'ELECTIVE'
-		
+
 		TRANSFERS:
 			Row exclusions:
 				- Null values in hadm_id
 			Note: Careunit filtering to 'Medicine' is commented out
-		
+
 		MICROBIOLOGYEVENTS:
 			Column exclusions:
 				- Removes: comments
-		
+
 		LABEVENTS:
 			Column selection:
 				- Keeps only: labevent_id, subject_id, hadm_id, itemid, order_provider_id, charttime
 			Note: Row filtering for null hadm_id and order_provider_id is commented out
-		
+
 		PRESCRIPTIONS:
 			Column exclusions:
 				- Removes: pharmacy_id, starttime, stoptime, drug_type, formulary_drug_cd
-		
+
 		OMR (Outpatient Medication Reconciliation):
 			Inclusions:
 				- seq_num: 1, 2, or 3
