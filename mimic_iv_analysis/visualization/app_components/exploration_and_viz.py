@@ -38,7 +38,7 @@ class ExplorationAndViz:
 
 		# Introductory text
 		st.info("This section enables exploration and visualization of the loaded dataset.")
-		
+
 
 		st.markdown("<h2 class='sub-header'>Data Exploration & Visualization</h2>", unsafe_allow_html=True)
 
@@ -46,7 +46,11 @@ class ExplorationAndViz:
 
 		cols = st.columns([1, 2])
 		with cols[0]:
-			st.session_state.n_rows_for_visualization = st.number_input("Number of Rows for Visualization", min_value=1, max_value=st.session_state.n_rows_loaded, value=min(30, st.session_state.n_rows_loaded))
+			if st.session_state.n_rows_loaded is not None and st.session_state.n_rows_loaded > 0:
+				st.session_state.n_rows_for_visualization = st.number_input("Number of Rows for Visualization", min_value=1, max_value=st.session_state.n_rows_loaded, value=min(30, st.session_state.n_rows_loaded))
+			else:
+				st.warning("Please load the dataset first to determine the number of rows.")
+				st.session_state.n_rows_for_visualization = 0
 
 		# Compute a sample from the DataFrame
 		preview_df = ExplorationAndViz.compute_dataframe_sample(df=st.session_state.df, exception_flag=_poe_preview_exception_handling() )
@@ -92,7 +96,7 @@ class ExplorationAndViz:
 				lambda: df.head(n_rows).compute(),
 				lambda: df.iloc[:n_rows].compute()
 			]
-			
+
 			for method in methods_to_try:
 				try:
 					result = method()
@@ -100,7 +104,7 @@ class ExplorationAndViz:
 						return result
 				except Exception:
 					continue
-			
+
 			st.error("Unable to compute DataFrame sample with any available method")
 			return pd.DataFrame()
 
@@ -110,7 +114,7 @@ class ExplorationAndViz:
 	@staticmethod
 	def display_data_preview(df: pd.DataFrame):
 		"""Displays a preview of the loaded DataFrame."""
-		
+
 		st.markdown("<h2 class='sub-header'>Data Preview</h2>", unsafe_allow_html=True)
 
 		with st.spinner('Computing preview from Dask DataFrame...'):
@@ -180,18 +184,18 @@ class ExplorationAndViz:
 		try:
 			# Persist DataFrame for multiple operations to avoid recomputation
 			df_persisted = df.persist()
-			
+
 			with st.spinner('Computing efficient statistics from Dask DataFrame...'):
 				# Basic info using Dask's efficient methods (no full computation)
 				num_rows = len(df_persisted)  # Dask can compute this efficiently
 				num_cols = len(df_persisted.columns)
-				
+
 				# Use Dask's lazy computation for missing values
 				missing_values_delayed = df_persisted.isnull().sum().sum()
-				
+
 				# Compute only what we need
 				missing_total = missing_values_delayed.compute()
-				
+
 				# Display basic statistics
 				col1, col2 = st.columns(2)
 				with col1:
@@ -210,7 +214,7 @@ class ExplorationAndViz:
 
 				# Display column information using Dask meta
 				ExplorationAndViz.display_dask_column_info(df_persisted)
-				
+
 		except Exception as e:
 			st.error(f"Error computing Dask statistics: {str(e)}")
 			st.info("Falling back to sample-based statistics...")
@@ -223,7 +227,7 @@ class ExplorationAndViz:
 		"""Display statistics for pandas DataFrame."""
 		try:
 			sample_text = " (Sample)" if is_sample else ""
-			
+
 			col1, col2 = st.columns(2)
 			with col1:
 				st.markdown("<div class='info-box'>", unsafe_allow_html=True)
@@ -240,7 +244,7 @@ class ExplorationAndViz:
 
 			# Display column information
 			ExplorationAndViz.display_pandas_column_info(df, is_sample)
-			
+
 		except Exception as e:
 			st.error(f"Error generating pandas statistics: {str(e)}")
 
@@ -252,9 +256,9 @@ class ExplorationAndViz:
 			if df.npartitions <= 0:
 				return 0.0
 
-			sample_df = df.get_partition(0).compute()				
+			sample_df = df.get_partition(0).compute()
 			sample_memory = sample_df.memory_usage(deep=True).sum()
-			
+
 			# Estimate total memory based on sample
 			total_rows      = len(df)
 			estimated_total = (sample_memory / st.session_state.n_rows_for_visualization) * total_rows / (1024 * 1024)
@@ -270,20 +274,20 @@ class ExplorationAndViz:
 			# Use Dask meta for dtypes (no computation needed)
 			dtypes_dict = dict(df.dtypes)
 			columns     = list(df.columns)
-			
+
 			# Compute missing values efficiently using delayed operations
 			import dask
 			missing_counts_delayed  = [df[col].isnull().sum() for col in columns]
 			non_null_counts_delayed = [df[col].count() for col in columns]
-			
+
 			# Compute all at once for efficiency
 			with st.spinner('Computing column statistics...'):
 				missing_counts, non_null_counts = dask.compute(missing_counts_delayed, non_null_counts_delayed)
-				
+
 				total_rows = len(df)
-				missing_percentages = [(missing / total_rows * 100) if total_rows > 0 else 0 
+				missing_percentages = [(missing / total_rows * 100) if total_rows > 0 else 0
 										for missing in missing_counts]
-				
+
 				# Create column info DataFrame
 				col_info = pd.DataFrame({
 					'Column'            : columns,
@@ -291,10 +295,10 @@ class ExplorationAndViz:
 					'Non-Null Count'    : non_null_counts,
 					'Missing Values (%)': [round(pct, 2) for pct in missing_percentages],
 				})
-				
+
 				st.dataframe(col_info, use_container_width=True)
 				st.info("Unique value counts skipped for performance with large Dask DataFrames.")
-				
+
 		except Exception as e:
 			st.error(f"Error generating Dask column info: {str(e)}")
 
@@ -304,7 +308,7 @@ class ExplorationAndViz:
 		st.markdown("<h3>Column Information</h3>", unsafe_allow_html=True)
 		try:
 			sample_text = " (Sample)" if is_sample else ""
-			
+
 			# Ensure dtype objects are converted to strings
 			dtype_strings = pd.Series(df.dtypes, index=df.columns).astype(str).values
 			col_info = pd.DataFrame({
@@ -313,13 +317,13 @@ class ExplorationAndViz:
 				'Non-Null Count': df.count().values,
 				'Missing Values (%)': (df.isnull().sum() / len(df) * 100).values.round(2),
 			})
-			
+
 			if is_sample:
-				col_info.columns = [col + sample_text if 'Count' in col or 'Values' in col else col 
+				col_info.columns = [col + sample_text if 'Count' in col or 'Values' in col else col
 									for col in col_info.columns]
-				
+
 			st.dataframe(col_info, use_container_width=True)
-			
+
 		except Exception as e:
 			st.error(f"Error generating pandas column info: {str(e)}")
 

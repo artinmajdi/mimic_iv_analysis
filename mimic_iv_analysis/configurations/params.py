@@ -226,12 +226,15 @@ class TableNames(enum.Enum):
     OUTPUTEVENTS     = 'outputevents'
     PROCEDUREEVENTS  = 'procedureevents'
 
+    # Temporary Tables
+    LABEVENTS_ADMISSIONS_MERGED = 'labevents_admissions_merged'
+
 
 _HOSP_TABLES = frozenset([
     'admissions', 'd_hcpcs', 'd_icd_diagnoses', 'd_icd_procedures', 'd_labitems',
     'diagnoses_icd', 'drgcodes', 'emar', 'emar_detail', 'hcpcsevents', 'labevents',
     'microbiologyevents', 'omr', 'patients', 'pharmacy', 'poe', 'poe_detail',
-    'prescriptions', 'procedures_icd', 'provider', 'services', 'transfers' ])
+    'prescriptions', 'procedures_icd', 'provider', 'services', 'transfers' ,'labevents_admissions_merged' ])
 
 _ICU_TABLES = frozenset([
     'caregiver', 'chartevents', 'datetimeevents', 'd_items', 'icustays',
@@ -580,7 +583,7 @@ _DATETIME_COLUMNS = [
     'verifiedtime'
     ]
 
-TABLES_W_SUBJECT_ID_COLUMN =  {'merged_table', 'patients', 'admissions', 'transfers', 'diagnoses_icd', 'poe', 'poe_detail', 'microbiologyevents', 'labevents', 'prescriptions', 'omr', 'pharmacy', 'services', 'emar', 'emar_detail'}
+TABLES_W_SUBJECT_ID_COLUMN =  {'merged_table', 'patients', 'admissions', 'transfers', 'diagnoses_icd', 'poe', 'poe_detail', 'microbiologyevents', 'labevents', 'prescriptions', 'omr', 'pharmacy', 'services', 'emar', 'emar_detail', 'labevents_admissions_merged'}
 
 
 # Attach constants to the TableNames class

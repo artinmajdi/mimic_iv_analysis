@@ -222,7 +222,7 @@ class MIMICDashboardApp:
 		st.session_state.selected_module = None
 		st.session_state.selected_table = None
 		st.session_state.df = None
-		st.session_state.n_rows_loaded = 0  # Cached DataFrame length to avoid repeated computation
+		st.session_state.n_rows_loaded = None  # Cached DataFrame length to avoid repeated computation
 		st.session_state.available_tables = {}
 		st.session_state.file_paths = {}
 		st.session_state.file_sizes = {}

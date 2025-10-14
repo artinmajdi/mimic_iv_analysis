@@ -25,7 +25,8 @@ import pyarrow.parquet as pq
 import pyarrow.compute as pc
 import dask.dataframe as dd
 import dask
-from dask.distributed import Client, as_completed
+from dask.tokenize import TokenizationError
+from dask.distributed import Client, as_completed, get_client
 import humanize
 from tqdm import tqdm
 
@@ -43,6 +44,32 @@ from mimic_iv_analysis.core import DaskUtils
 
 
 subject_id: str = ColumnNames.SUBJECT_ID.value
+
+# Top-level helper for Dask map_partitions to ensure deterministic tokenization
+def _safe_merge_partition_for_dask(partition: pd.DataFrame, admissions_pd: pd.DataFrame, meta_columns: Optional[List[str]] = None) -> pd.DataFrame:
+    """Top-level function used by Dask map_partitions.
+
+    Ensures deterministic hashing (no nested closures) and consistent columns
+    even on errors. Removes temporary buffered time columns from outputs.
+    """
+    try:
+
+        result = DataLoader._temporal_merge_partition(partition, admissions_pd)
+        if result is None or result.empty:
+            return pd.DataFrame(columns=meta_columns or [])
+
+        # Drop buffer columns if present
+        result = result.drop(columns=['admittime_buffered', 'dischtime_buffered'], errors='ignore')
+
+        # Enforce exact column order and presence to match Dask meta
+        if meta_columns is not None:
+            result = result.reindex(columns=meta_columns)
+
+        return result
+
+    except Exception as e:
+        logger.warning(f"Error in map_partitions merge: {e}")
+        return pd.DataFrame(columns=meta_columns or [])
 
 @dataclass
 class ConversionMetrics:
@@ -1007,32 +1034,32 @@ class DataLoader:
 	def merge_labevents_and_admission(cls, n_rows: int | None = None) -> Tuple[pd.DataFrame | dd.DataFrame, pd.DataFrame | dd.DataFrame]:
 		""" Load and merge tables with optimized Dask multiprocessing operations.
 
-		Note: To merge the **labevents** table with the **admissions** table, The website states you can join the **labevents** table to the **admissions** table using `subject_id`, `admittime`, and `dischtime`. This is because the **labevents** table does not contain `admittime` and `dischtime` columns. The join is performed by linking the `subject_id` from the **labevents** table with the `subject_id` from the **admissions** table, and then using the `charttime` from the **labevents** table to determine if the lab test occurred between the `admittime` and `dischtime` of a specific hospitalization record in the **admissions** table.
+			Note: To merge the **labevents** table with the **admissions** table, The website states you can join the **labevents** table to the **admissions** table using `subject_id`, `admittime`, and `dischtime`. This is because the **labevents** table does not contain `admittime` and `dischtime` columns. The join is performed by linking the `subject_id` from the **labevents** table with the `subject_id` from the **admissions** table, and then using the `charttime` from the **labevents** table to determine if the lab test occurred between the `admittime` and `dischtime` of a specific hospitalization record in the **admissions** table.
 
-		# AI prompt:
-			Complete the `merge_labevents_and_admission` function  to merge the two tables (admission and labevents) according to the following specifications: (an example of the first few rows of these two tables is attached).
+			# AI prompt:
+				Complete the `merge_labevents_and_admission` function  to merge the two tables (admission and labevents) according to the following specifications: (an example of the first few rows of these two tables is attached).
 
-			1. Merge Strategy:
-			- Ignore the `hadm_id` column in the labevents table
-			- Use the common `subject_id` column between both tables
-			- Match labevents records to admissions based on the following temporal logic:
-			- The `chartime` from labevents must fall between `admittime` and `dischtime` from admissions (with a 24-hour buffer)
-			- This ensures lab tests are correctly associated with their corresponding hospitalization records
+				1. Merge Strategy:
+				- Ignore the `hadm_id` column in the labevents table
+				- Use the common `subject_id` column between both tables
+				- Match labevents records to admissions based on the following temporal logic:
+				- The `chartime` from labevents must fall between `admittime` and `dischtime` from admissions (with a 24-hour buffer)
+				- This ensures lab tests are correctly associated with their corresponding hospitalization records
 
-			2. Implementation Requirements:
-			- Use built-in pandas and dask functionalities for optimal performance
-			- Implement dask multiprocessing if needed for efficiency
-			- Do not repartition the tables as they've already been repartitioned when saved to parquet
+				2. Implementation Requirements:
+				- Use built-in pandas and dask functionalities for optimal performance
+				- Implement dask multiprocessing if needed for efficiency
+				- Do not repartition the tables as they've already been repartitioned when saved to parquet
 
-			3. Function Output:
-			- Return a merged dataframe containing all relevant columns from both tables
-			- Ensure the merge operation maintains data integrity and proper alignment
-			- Handle edge cases where lab tests might fall outside hospitalization periods
+				3. Function Output:
+				- Return a merged dataframe containing all relevant columns from both tables
+				- Ensure the merge operation maintains data integrity and proper alignment
+				- Handle edge cases where lab tests might fall outside hospitalization periods
 
-			4. Performance Considerations:
-			- Optimize for memory efficiency
-			- Minimize data shuffling during operations
-			- Preserve the existing partition structure
+				4. Performance Considerations:
+				- Optimize for memory efficiency
+				- Minimize data shuffling during operations
+				- Preserve the existing partition structure
 		"""
 
 		def _dask_method(labevents_df: dd.DataFrame, admissions_df: dd.DataFrame):
@@ -1059,49 +1086,67 @@ class DataLoader:
 			logger.info("Converting admissions table to pandas for efficient temporal lookups...")
 			admissions_pd = admissions_df.compute()
 
-			merged_results = []
-			total_merged_count = 0
+			# Use existing distributed client; outer scope will create and manage lifecycle
+			try:
+				client = get_client()
+			except Exception:
+				client = None
 
-			# Process each labevents partition separately to control memory usage
-			# TODO: see if I can run this for loop in parallel to speed it up
-			for i in tqdm(range(n_partitions_lab), desc="Processing labevents partitions"):
-				try:
-					# Get one partition at a time
-					labevents_partition = labevents_df.get_partition(i)
-					labevents_pd_partition = labevents_partition.compute()
+			# Build meta for resulting merged partitions (union of labevents and admissions columns)
+			labs_meta = labevents_df._meta
+			adm_meta = admissions_pd.drop(columns=['admittime_buffered', 'dischtime_buffered'], errors='ignore')
 
-					if labevents_pd_partition.empty:
-						continue
+			# Deterministic, alphabetically sorted union to stabilize schema ordering
+			merged_cols = sorted(list(pd.Index(labs_meta.columns).union(adm_meta.columns)))
 
-					# Perform temporal merge on this partition
-					partition_merged = cls._temporal_merge_partition(labevents_pd_partition, admissions_pd)
+			# Prefer dtypes from labevents where available, otherwise fall back to admissions
+			dtypes = {**adm_meta.dtypes.to_dict(), **labs_meta.dtypes.to_dict()}
+			meta_df = pd.DataFrame({c: pd.Series(dtype=dtypes.get(c, 'object')) for c in merged_cols})
 
-					if not partition_merged.empty:
-						merged_results.append(partition_merged)
-						total_merged_count += len(partition_merged)
 
-					# Log progress every 10 partitions
-					if (i + 1) % 10 == 0 or i == n_partitions_lab - 1:
-						logger.info(f"Processed partition {i+1}/{n_partitions_lab}, merged records so far: {total_merged_count:,}")
+			# Parallel merge across partitions using Dask map_partitions with a top-level helper
+			logger.info("Parallelizing temporal merge across labevents partitions via Dask map_partitions")
+			try:
+				results_dd = labevents_df.map_partitions(
+					_safe_merge_partition_for_dask,
+					admissions_pd,
+					list(meta_df.columns),
+					meta=meta_df
+				)
+			except TokenizationError as e:
+				logger.warning(f"Deterministic tokenization failed ({e}); falling back to to_delayed/from_delayed")
+				parts = labevents_df.to_delayed()
+				delayed_results = [
+					dask.delayed(_safe_merge_partition_for_dask)(part, admissions_pd, list(meta_df.columns))
+					for part in parts
+				]
+				results_dd = dd.from_delayed(delayed_results, meta=meta_df)
 
-				except Exception as e:
-					logger.warning(f"Error processing labevents partition {i}: {e}")
-					continue
+			# Coalesce partitions for downstream operations
+			merged_df = results_dd.repartition(npartitions=min(8, max(1, n_partitions_lab)))
 
-			# Combine all merged results
-			if merged_results:
-				logger.info("Combining merged partition results...")
-				merged_df = pd.concat(merged_results, ignore_index=True)
+			# Persist and display progress across partitions using distributed client
+			logger.info("Persisting merged partitions to execute in parallel and enable progress tracking")
+			persisted_df = merged_df.persist()
+			try:
+				# Distributed progress bar output to terminal
+				if client is not None:
+					client.progress(persisted_df)
+			except Exception:
+				# Manual progress via futures as a fallback
+				logger.info("Progress display failed; falling back to manual tracking")
+				futures = get_client().compute(list(persisted_df.to_delayed()))
+				total = len(futures)
+				completed = 0
+				for _ in as_completed(futures):
+					completed += 1
+					if completed % 10 == 0 or completed == total:
+						logger.info(f"Merged partitions progress: {completed}/{total}")
 
-				# Convert back to Dask for consistency
-				merged_df = dd.from_pandas(merged_df, npartitions=min(8, max(1, len(merged_df) // 50000)))
+			logger.info("All partitions merged and persisted in memory")
 
-				logger.info(f"Temporal merge completed successfully. Total merged records: {total_merged_count:,}")
-			else:
-				logger.warning("No records were successfully merged")
-				merged_df = pd.DataFrame()
-
-			return merged_df
+			# Return the persisted DataFrame to avoid recomputation downstream
+			return persisted_df
 
 		def _get_tables():
 
@@ -1115,8 +1160,6 @@ class DataLoader:
 			# show the number of paritions
 			print('labevents_df.npartitions:', labevents_df.npartitions)
 			print('admissions_df.npartitions:', admissions_df.npartitions)
-
-			study_tables = [a for a in loader.study_tables_list if a !=TableNames.LABEVENTS.value and a in TABLES_W_SUBJECT_ID_COLUMN]
 
 			common_subject_ids = loader.get_unique_subject_ids(table_name=TableNames.MERGED)
 
@@ -1141,6 +1184,8 @@ class DataLoader:
 			labevents_df  = labevents_df[labevents_df[ColumnNames.SUBJECT_ID.value].isin(common_subject_ids)]
 			admissions_df = admissions_df[admissions_df[ColumnNames.SUBJECT_ID.value].isin(common_subject_ids)]
 
+			labevents_df = labevents_df.drop(columns=[ColumnNames.HADM_ID.value, ColumnNames.ORDER_PROVIDER_ID.value])
+
 			logger.info(f"Filtered labevents to {len(labevents_df):,} rows and admissions to {len(admissions_df):,} rows")
 
 			return labevents_df, admissions_df
@@ -1160,6 +1205,29 @@ class DataLoader:
 					df[col_name] = dd.to_datetime(df[col_name], errors='coerce')
 
 			return labevents_df, admissions_df
+
+		def save_merged_parquet(df: dd.DataFrame, loader: DataLoader):
+
+			parquet_converter = ParquetConverter(loader)
+			target_parquet_path=loader.mimic_path / 'hosp' / 'labevents_admissions_merged.parquet'
+			logger.info(f'file path: {target_parquet_path}')
+
+			parquet_converter.save_as_parquet(table_name=TableNames.LABEVENTS_ADMISSIONS_MERGED, df=df, target_parquet_path=target_parquet_path)
+
+			# Save a CSV without materializing the entire dataframe in memory
+			# Use Dask's native to_csv with single_file=True for a single consolidated file
+			target_csv_path = target_parquet_path.with_suffix('.csv')
+			logger.info(f'Saving CSV to: {target_csv_path}')
+
+			# Compute and save the CSV in a single operation to avoid Futures mixing
+			# df.compute().to_csv(target_csv_path, index=False)
+
+			# Build the CSV write graph without immediate execution to avoid mixing Futures
+			df.to_csv(str(target_csv_path), index=False, single_file=True, compute=True)
+			# csv_graph = df.to_csv(str(target_csv_path), index=False, single_file=True, compute=False)
+			# import dask
+			# # Execute the write with the currently active scheduler/client
+			# dask.compute(csv_graph)
 
 		loader = DataLoader(apply_filtering=True)
 
@@ -1185,14 +1253,20 @@ class DataLoader:
 
 			labevents_df, admissions_df = _convert_datetime_columns(labevents_df, admissions_df)
 
-			merged_df = _dask_method(labevents_df, admissions_df)
+			# Create a distributed client and keep it alive through saving to avoid worker removal recomputation warnings
+			logger.info("Starting local Dask distributed client for multi-core parallelism")
+			client = Client(processes=True, n_workers=min(os.cpu_count() or 4, 8), threads_per_worker=1)
+			try:
+				merged_df = _dask_method(labevents_df, admissions_df)
+
+				logger.info(f"Completed temporal merge of labevents and admissions tables with Dask optimization. Total merged records: {len(merged_df):,}")
+				# Saving the merged file as parquet
+
+				save_merged_parquet(df=merged_df, loader=loader)
+			finally:
+				# Close client after all work is completed to avoid mid-graph worker removal warnings
+				client.close()
 			# merged_df = loader.test_basic_merge(labevents_df.compute(), admissions_df.compute())
-
-
-		logger.info(f"Completed temporal merge of labevents and admissions tables with Dask optimization. Total merged records: {len(merged_df):,}")
-
-		return merged_df
-
 
 	@staticmethod
 	def _temporal_merge_partition(labevents_partition: pd.DataFrame, admissions_df: pd.DataFrame) -> pd.DataFrame:
@@ -1210,68 +1284,60 @@ class DataLoader:
 
 		try:
 			# Ensure datetime columns are properly formatted
-			for col in [ColumnNames.CHARTTIME.value]:
-				if col in labevents_partition.columns:
-					labevents_partition[col] = pd.to_datetime(labevents_partition[col], errors='coerce')
+			if ColumnNames.CHARTTIME.value in labevents_partition.columns:
+				labevents_partition[ColumnNames.CHARTTIME.value] = pd.to_datetime(labevents_partition[ColumnNames.CHARTTIME.value], errors='coerce')
 
 			for col in [ColumnNames.ADMITTIME.value, ColumnNames.DISCHTIME.value, 'admittime_buffered', 'dischtime_buffered']:
 				if col in admissions_df.columns:
 					admissions_df[col] = pd.to_datetime(admissions_df[col], errors='coerce')
 
-			merged_results = []
+			# Drop rows with NaT charttime early
+			labevents_partition = labevents_partition.dropna(subset=[ColumnNames.CHARTTIME.value])
+			if labevents_partition.empty:
+				return pd.DataFrame()
 
-			# Group by subject_id for efficient processing
-			for subject_id, lab_group in labevents_partition.groupby(ColumnNames.SUBJECT_ID.value):
+			results = []
+
+			# Vectorized per-subject processing using cartesian merge and filtering
+			for sid, lab_group in labevents_partition.groupby(ColumnNames.SUBJECT_ID.value):
 				try:
-					# Get admissions for this subject
-					adm_group = admissions_df[
-						admissions_df[ColumnNames.SUBJECT_ID.value] == subject_id
-					]
-
+					adm_group = admissions_df[admissions_df[ColumnNames.SUBJECT_ID.value] == sid]
 					if adm_group.empty:
 						continue
 
-					# For each lab event, find matching admissions
-					for _, lab_row in lab_group.iterrows():
-						charttime = lab_row[ColumnNames.CHARTTIME.value]
+					# Add stable index for each lab row to enable grouping after cartesian merge
+					lab_group = lab_group.copy()
+					lab_group['_lab_ix'] = lab_group.index
 
-						if pd.isna(charttime):
-							continue
+					# Ignore hadm_id from labevents to avoid duplicate semantics; use admissions hadm_id
+					# if ColumnNames.HADM_ID.value in lab_group.columns:
+					# 	lab_group = lab_group.drop(columns=[ColumnNames.HADM_ID.value])
 
-						# Find admissions where charttime falls within buffered admission period
-						matching_admissions = adm_group[
-							(adm_group['admittime_buffered'] <= charttime) &
-							(adm_group['dischtime_buffered'] >= charttime)
-						]
+					# Cartesian merge within subject_id (inner join on subject_id)
+					cross = lab_group.merge(adm_group, on=[ColumnNames.SUBJECT_ID.value], how='inner')
 
-						# If multiple matches, take the one with closest admission time
-						if not matching_admissions.empty:
-							if len(matching_admissions) > 1:
-								# Calculate time differences and select closest admission
-								time_diffs = abs(matching_admissions[ColumnNames.ADMITTIME.value] - charttime)
-								closest_idx = time_diffs.idxmin()
-								matching_admission = matching_admissions.loc[[closest_idx]]
-							else:
-								matching_admission = matching_admissions
+					# Filter rows where charttime falls within buffered admission window
+					mask = (cross['admittime_buffered'] <= cross[ColumnNames.CHARTTIME.value]) & (cross['dischtime_buffered'] >= cross[ColumnNames.CHARTTIME.value])
+					candidates = cross.loc[mask].copy()
+					if candidates.empty:
+						continue
 
-							# Merge the lab event with the matching admission
-							for _, adm_row in matching_admission.iterrows():
-								merged_row = pd.concat([lab_row, adm_row], axis=0)
-								# Remove duplicate subject_id column
-								merged_row = merged_row[~merged_row.index.duplicated(keep='first')]
-								merged_results.append(merged_row)
+					# Select nearest admission by absolute time difference to admittime
+					candidates.loc[:, '_time_diff'] = (candidates[ColumnNames.ADMITTIME.value] - candidates[ColumnNames.CHARTTIME.value]).abs()
+					idx = candidates.groupby('_lab_ix')['_time_diff'].idxmin()
+					best = candidates.loc[idx]
+
+					# Cleanup helper columns
+					best = best.drop(columns=['_lab_ix', 'admittime_buffered', 'dischtime_buffered'], errors='ignore')
+					results.append(best)
 
 				except Exception as e:
-					logger.warning(f"Error processing subject {subject_id} in partition: {e}")
+					logger.warning(f"Error processing subject {sid} in partition: {e}")
 					continue
 
-			if merged_results:
-				result_df = pd.DataFrame(merged_results)
-				# Clean up temporary columns
-				result_df = result_df.drop(columns=['admittime_buffered', 'dischtime_buffered'], errors='ignore')
-				return result_df
-			else:
-				return pd.DataFrame()
+			if results:
+				return pd.concat(results, ignore_index=True)
+			return pd.DataFrame()
 
 		except Exception as e:
 			logger.error(f"Critical error in temporal merge partition: {e}")
@@ -1346,8 +1412,6 @@ class DataLoader:
 			import traceback
 			traceback.print_exc()
 			return None
-
-
 
 
 	def load_filtered_study_tables_by_subjects(self, subject_ids: List[int], use_dask: bool = True) -> Dict[str, pd.DataFrame | dd.DataFrame]:
@@ -1948,8 +2012,8 @@ class HighPerformanceParquetConverter:
 
 				logger.info(f"✅ Successfully converted {table_name.value}")
 				logger.info(f"📊 Performance: {metrics.throughput_mb_per_sec:.2f} MB/s, "
-						  f"Compression: {metrics.compression_ratio:.2f}, "
-						  f"Duration: {metrics.duration_seconds:.2f}s")
+							f"Compression: {metrics.compression_ratio:.2f}, "
+							f"Duration: {metrics.duration_seconds:.2f}s")
 
 				return metrics
 
@@ -1971,7 +2035,8 @@ class HighPerformanceParquetConverter:
 			ConversionMetrics with detailed performance information
 		"""
 		try:
-			loop = asyncio.get_event_loop()
+			# Prefer get_running_loop to avoid deprecation when no loop exists
+			loop = asyncio.get_running_loop()
 		except RuntimeError:
 			loop = asyncio.new_event_loop()
 			asyncio.set_event_loop(loop)
@@ -2268,7 +2333,7 @@ class ParquetConverter:
 				dask_builtin_converter(table_name=table_name, df=df, target_parquet_path=target_parquet_path)
 
 		except Exception as e:
-			logger.warning(f"High-performance conversion failed for {table_name.value}: {e}")
+			logger.warning(f"High-performance conversion failed for {table_name}: {e}")
 			logger.info("Falling back to legacy conversion method...")
 			# Fall through to legacy method
 			dask_builtin_converter(table_name=table_name, df=df, target_parquet_path=target_parquet_path)
@@ -2511,8 +2576,6 @@ class ParquetConverter:
 				_convert_one_table(TableNames(tn))
 		else:
 			_convert_one_table(TableNames(table_name))
-
-
 
 
 def main():
