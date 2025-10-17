@@ -537,7 +537,6 @@ class DataLoader:
 			logger.info(f"Completed chunked processing. Total unique subject_ids: {len(unique_ids):,}")
 			return unique_ids
 
-
 	@staticmethod
 	def _handle_na_values_in_dataframe(df: pd.DataFrame | dd.DataFrame) -> pd.DataFrame | dd.DataFrame:
 		"""Handle NA values in integer columns by ensuring proper nullable integer dtypes.
@@ -574,7 +573,6 @@ class DataLoader:
 
 		# Handle pandas DataFrame
 		return _convert_integer_columns_with_na(df)
-
 
 	def _get_file_path(self, table_name: TableNames | str) -> Path:
 		"""Get the file path for a table with priority: parquet > csv > csv.gz"""
@@ -950,7 +948,7 @@ class DataLoader:
 
 		# Get tables
 		patients_df        = tables_dict[TableNames.PATIENTS.value] # 2.8MB
-		admissions_df      = tables_dict[TableNames.ADMISSIONS.value] # 19.9MB
+		cohort_admission_df = tables_dict[TableNames.COHORT_ADMISSION.value] # 19.9MB
 		diagnoses_icd_df   = tables_dict[TableNames.DIAGNOSES_ICD.value] # 33.6MB
 		d_icd_diagnoses_df = tables_dict[TableNames.D_ICD_DIAGNOSES.value] # 876KB
 		poe_df             = tables_dict[TableNames.POE.value] # 606MB
@@ -958,19 +956,12 @@ class DataLoader:
 		transfers_df       = tables_dict.get(TableNames.TRANSFERS.value) # 46MB
 		prescriptions_df   = tables_dict.get(TableNames.PRESCRIPTIONS.value) # 606MB
 
-		# Get labevents table if include_labevents is True
-		if self.include_labevents:
-			labevents_df       = tables_dict.get(TableNames.LABEVENTS.value) # 2.6GB
-			d_labitems_df      = tables_dict.get(TableNames.D_LABITEMS.value) # 30KB
-
-		# adms_labevents_df = admissions_df.merge(labevents_df, on=[subject_id, ColmnNames.HADM_ID.value], how='inner')
-
 		persisted_intermediates = {}  # Track intermediate results for cleanup
 
 		try:
 			# Merge tables with persist() for intermediate results: -- subject_id --
-			df12 = patients_df.merge(admissions_df, on=subject_id, how='inner')
-			df12 = _dask_persist(df12, 'patients_admissions')
+			df12 = patients_df.merge(cohort_admission_df, on=subject_id, how='inner')
+			df12 = _dask_persist(df12, 'patients_cohort_admission')
 
 			# Merge with Transfers: -- subject_id, hadm_id --
 			df123 = df12.merge(transfers_df, on=[subject_id, ColumnNames.HADM_ID.value], how='inner')
@@ -1030,13 +1021,13 @@ class DataLoader:
 
 	# TODO: now that this is resolved. add it to the rest of the merged table.
 	@classmethod
-	def merge_labevents_and_admission(cls, n_rows: int | None = None) -> Tuple[pd.DataFrame | dd.DataFrame, pd.DataFrame | dd.DataFrame]:
+	def create_admission_cohort(cls) -> pd.DataFrame | dd.DataFrame:
 		""" Load and merge tables with optimized Dask multiprocessing operations.
 
 			Note: To merge the **labevents** table with the **admissions** table, The website states you can join the **labevents** table to the **admissions** table using `subject_id`, `admittime`, and `dischtime`. This is because the **labevents** table does not contain `admittime` and `dischtime` columns. The join is performed by linking the `subject_id` from the **labevents** table with the `subject_id` from the **admissions** table, and then using the `charttime` from the **labevents** table to determine if the lab test occurred between the `admittime` and `dischtime` of a specific hospitalization record in the **admissions** table.
 
 			# AI prompt:
-				Complete the `merge_labevents_and_admission` function  to merge the two tables (admission and labevents) according to the following specifications: (an example of the first few rows of these two tables is attached).
+				Complete the `create_admission_cohort` function  to create the admission cohort according to the following specifications:
 
 				1. Merge Strategy:
 				- Ignore the `hadm_id` column in the labevents table
@@ -1061,7 +1052,7 @@ class DataLoader:
 				- Preserve the existing partition structure
 		"""
 
-		def _dask_method(labevents_df: dd.DataFrame, admissions_df: dd.DataFrame):
+		def _dask_method(labevents_df: dd.DataFrame, admissions_df: dd.DataFrame, d_labitems: dd.DataFrame):
 
 			# Add 24-hour buffer to admission and discharge times
 			buffer_hours = pd.Timedelta(hours=24)
@@ -1124,6 +1115,9 @@ class DataLoader:
 			# Coalesce partitions for downstream operations
 			merged_df = results_dd.repartition(npartitions=min(8, max(1, n_partitions_lab)))
 
+			# Merge with d_labitems: -- itemid --
+			merged_df = merged_df.merge(d_labitems, on=[ColumnNames.ITEMID.value], how='left')
+
 			# Persist and display progress across partitions using distributed client
 			logger.info("Persisting merged partitions to execute in parallel and enable progress tracking")
 			persisted_df = merged_df.persist()
@@ -1152,13 +1146,17 @@ class DataLoader:
 			# Load tables with optimized settings
 			labevents_df  = loader.fetch_table( table_name=TableNames.LABEVENTS, use_dask=True, apply_filtering=loader.apply_filtering )
 			admissions_df = loader.fetch_table( table_name=TableNames.ADMISSIONS, use_dask=True, apply_filtering=loader.apply_filtering )
+			d_labitems = loader.fetch_table( table_name=TableNames.D_LABITEMS, use_dask=True, apply_filtering=loader.apply_filtering )
 
 			labevents_df[ColumnNames.SUBJECT_ID.value]  = labevents_df[ColumnNames.SUBJECT_ID.value].astype('Int64')
 			admissions_df[ColumnNames.SUBJECT_ID.value] = admissions_df[ColumnNames.SUBJECT_ID.value].astype('Int64')
+			d_labitems[ColumnNames.ITEMID.value]        = d_labitems[ColumnNames.ITEMID.value].astype('Int64')
+			labevents_df[ColumnNames.ITEMID.value]      = labevents_df[ColumnNames.ITEMID.value].astype('Int64')
 
 			# show the number of paritions
 			print('labevents_df.npartitions:', labevents_df.npartitions)
 			print('admissions_df.npartitions:', admissions_df.npartitions)
+			print('d_labitems.npartitions:', d_labitems.npartitions)
 
 			common_subject_ids = loader.get_unique_subject_ids(table_name=TableNames.MERGED)
 
@@ -1187,7 +1185,7 @@ class DataLoader:
 
 			logger.info(f"Filtered labevents to {len(labevents_df):,} rows and admissions to {len(admissions_df):,} rows")
 
-			return labevents_df, admissions_df
+			return labevents_df, admissions_df, d_labitems
 
 		def _convert_datetime_columns(labevents_df: dd.DataFrame, admissions_df: dd.DataFrame) -> pd.DataFrame:
 			"""Convert datetime columns to proper datetime format."""
@@ -1208,10 +1206,10 @@ class DataLoader:
 		def save_merged_parquet(df: dd.DataFrame, loader: DataLoader):
 
 			parquet_converter = ParquetConverter(loader)
-			target_parquet_path=loader.mimic_path / 'hosp' / 'labevents_admissions_merged.parquet'
+			target_parquet_path=loader.mimic_path / 'hosp' / (TableNames.COHORT_ADMISSION.value + '.parquet')
 			logger.info(f'file path: {target_parquet_path}')
 
-			parquet_converter.save_as_parquet(table_name=TableNames.LABEVENTS_ADMISSIONS_MERGED, df=df, target_parquet_path=target_parquet_path)
+			parquet_converter.save_as_parquet(table_name=TableNames.COHORT_ADMISSION, df=df, target_parquet_path=target_parquet_path)
 
 			# Save a CSV without materializing the entire dataframe in memory
 			# Use Dask's native to_csv with single_file=True for a single consolidated file
@@ -1248,15 +1246,15 @@ class DataLoader:
 			'optimization.cull': True,
 		}):
 
-			labevents_df, admissions_df = _get_tables()
+			labevents_df, admissions_df, d_labitems = _get_tables()
 
-			labevents_df, admissions_df = _convert_datetime_columns(labevents_df, admissions_df)
+			labevents_df, admissions_df = _convert_datetime_columns(labevents_df=labevents_df, admissions_df=admissions_df)
 
 			# Create a distributed client and keep it alive through saving to avoid worker removal recomputation warnings
 			logger.info("Starting local Dask distributed client for multi-core parallelism")
 			client = Client(processes=True, n_workers=min(os.cpu_count() or 4, 8), threads_per_worker=1)
 			try:
-				merged_df = _dask_method(labevents_df, admissions_df)
+				merged_df = _dask_method(labevents_df=labevents_df, admissions_df=admissions_df, d_labitems=d_labitems)
 
 				logger.info(f"Completed temporal merge of labevents and admissions tables with Dask optimization. Total merged records: {len(merged_df):,}")
 				# Saving the merged file as parquet
@@ -1657,9 +1655,6 @@ class HighPerformanceParquetConverter:
 		# Thread-safe locks for concurrent operations
 		self._conversion_lock = threading.RLock()
 		self._metrics_lock    = threading.Lock()
-
-
-
 
 	@contextmanager
 	def _performance_monitor(self, table_name: str):
@@ -2580,9 +2575,9 @@ class ParquetConverter:
 def main():
 
 	# args = args.parse_args()
-	# ParquetConverter.example_save_to_parquet(table_name=TableNames[args.table_name])
+	ParquetConverter.example_save_to_parquet(table_name='pharmacy')
 	# DataLoader.example_export_merge_table()
-	DataLoader.merge_labevents_and_admission()
+	# DataLoader.create_admission_cohort()
 
 if __name__ == '__main__':
 	main()

@@ -10,6 +10,7 @@
 		}
 	],
 	"settings": {
-		"basedpyright.disableLanguageServices": false
+		"basedpyright.disableLanguageServices": false,
+		"editor.fontFamily": "'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace"
 	}
 }

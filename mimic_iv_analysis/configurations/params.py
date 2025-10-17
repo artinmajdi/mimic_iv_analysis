@@ -190,6 +190,7 @@ class TableNames(enum.Enum):
 
     # Special Tables
     MERGED = 'merged_table'
+    COHORT_ADMISSION = 'cohort_admission'
 
     # HOSP Module Tables
     ADMISSIONS         = 'admissions'
@@ -226,15 +227,12 @@ class TableNames(enum.Enum):
     OUTPUTEVENTS     = 'outputevents'
     PROCEDUREEVENTS  = 'procedureevents'
 
-    # Temporary Tables
-    LABEVENTS_ADMISSIONS_MERGED = 'labevents_admissions_merged'
-
 
 _HOSP_TABLES = frozenset([
     'admissions', 'd_hcpcs', 'd_icd_diagnoses', 'd_icd_procedures', 'd_labitems',
     'diagnoses_icd', 'drgcodes', 'emar', 'emar_detail', 'hcpcsevents', 'labevents',
     'microbiologyevents', 'omr', 'patients', 'pharmacy', 'poe', 'poe_detail',
-    'prescriptions', 'procedures_icd', 'provider', 'services', 'transfers' ,'labevents_admissions_merged' ])
+    'prescriptions', 'procedures_icd', 'provider', 'services', 'transfers' ,'cohort_admission'])
 
 _ICU_TABLES = frozenset([
     'caregiver', 'chartevents', 'datetimeevents', 'd_items', 'icustays',
@@ -310,7 +308,7 @@ _COLUMN_TO_TABLES = {
     'interpretation'        : ['microbiologyevents'],
     'intime'                : ['transfers'],
     'isolate_num'           : ['microbiologyevents'],
-    'itemid'                : ['labevents'],
+    'itemid'                : ['labevents', 'd_labitems'],
     'labevent_id'           : ['labevents'],
     'language'              : ['admissions'],
     'lockout_interval'      : ['pharmacy'],
@@ -368,6 +366,7 @@ _TABLE_TO_COLUMNS = {
     'patients'          : ['subject_id', 'gender', 'anchor_age', 'anchor_year', 'anchor_year_group', 'dod'],
     'transfers'         : ['subject_id', 'hadm_id', 'transfer_id', 'eventtype', 'careunit', 'intime', 'outtime'],
     'diagnoses_icd'     : ['subject_id', 'hadm_id', 'seq_num', 'icd_code', 'icd_version'],
+    'd_labitems'        : ['itemid', 'label', 'fluid', 'category'],
     'procedures_icd'    : ['subject_id', 'hadm_id', 'seq_num', 'icd_code', 'icd_version'],
     'labevents'         : ['labevent_id', 'subject_id', 'hadm_id', 'specimen_id', 'itemid', 'charttime', 'storetime', 'value', 'valuenum', 'valueuom', 'ref_range_lower', 'ref_range_upper', 'flag', 'priority', 'comments', 'order_provider_id'],
     'prescriptions'     : ['subject_id', 'hadm_id', 'pharmacy_id', 'poe_id', 'poe_seq', 'order_provider_id', 'starttime', 'stoptime', 'drug_type', 'drug', 'formulary_drug_cd', 'gsn', 'ndc', 'prod_strength', 'form_rx', 'dose_unit_rx', 'dose_val_rx', 'form_unit_disp', 'form_val_disp', 'doses_per_24_hrs', 'route'],
@@ -410,14 +409,14 @@ _COLUMN_TYPES = {
     'expiration_value'    : 'int64',   # INTEGER - pharmacy
     'icd_version'         : 'int64',   # INTEGER - diagnoses_icd, procedures_icd
     'pharmacy_id'         : 'int64',   # INTEGER - prescriptions, pharmacy, emar
-    'category'            : 'int64',   # INTEGER - d_hcpcs
 
     # Float/Double columns
-    'basal_rate'          : 'float64', # DOUBLE - pharmacy
-    'dilution_value'      : 'float64', # DOUBLE - microbiologyevents
+    'basal_rate'          : 'string', # DOUBLE - pharmacy
     'doses_per_24_hrs'    : 'string', # DOUBLE - prescriptions, pharmacy # sold actually be float64 but some rows are of string type (eg 2.1-4)
-    'duration'            : 'float64', # DOUBLE - pharmacy
-    'one_hr_max'          : 'float64', # DOUBLE - pharmacy
+    'duration'            : 'string', # DOUBLE - pharmacy
+    'one_hr_max'          : 'string', # DOUBLE - pharmacy
+
+    'dilution_value'      : 'float64', # DOUBLE - microbiologyevents
     'parent_field_ordinal': 'float64', # DOUBLE - emar_detail
     'ref_range_lower'     : 'float64', # DOUBLE - labevents
     'ref_range_upper'     : 'float64', # DOUBLE - labevents
@@ -430,6 +429,7 @@ _COLUMN_TYPES = {
     'admit_provider_id'     : 'string', # VARCHAR - admissions
     'anchor_year_group'     : 'string', # VARCHAR - patients
     'careunit'              : 'string', # VARCHAR - transfers
+    'category'              : 'string',   # STRING - d_labitems
     'comments'              : 'string', # VARCHAR - labevents, microbiologyevents
     'curr_service'          : 'string', # VARCHAR - services
     'description'           : 'string', # VARCHAR - drgcodes
@@ -460,6 +460,7 @@ _COLUMN_TYPES = {
     'form_unit_disp'        : 'string', # VARCHAR - prescriptions
     'form_val_disp'         : 'string', # VARCHAR - prescriptions
     'frequency'             : 'string', # VARCHAR - pharmacy
+    'fluid'                 : 'string',   # STRING - d_labitems
     'gender'                : 'string', # VARCHAR - patients
     'gsn'                   : 'string', # VARCHAR - prescriptions
     'hcpcs_cd'              : 'string', # VARCHAR - hcpcsevents
@@ -467,6 +468,7 @@ _COLUMN_TYPES = {
     'infusion_type'         : 'string', # VARCHAR - pharmacy
     'insurance'             : 'string', # VARCHAR - admissions
     'interpretation'        : 'string', # VARCHAR - microbiologyevents
+    'label'                 : 'string',   # STRING - d_labitems
     'language'              : 'string', # VARCHAR - admissions
     'lockout_interval'      : 'string', # VARCHAR - pharmacy
     'marital_status'        : 'string', # VARCHAR - admissions
@@ -570,12 +572,12 @@ _DATETIME_COLUMNS = [
     'edouttime',
     'edregtime',
     'entertime',
-    'expirationdate',
+    # 'expirationdate',
     'intime',
     'ordertime',
     'outtime',
     'scheduletime',
-    'starttime',
+    # 'starttime',
     'stoptime',
     'storedate',
     'storetime',
@@ -583,7 +585,7 @@ _DATETIME_COLUMNS = [
     'verifiedtime'
     ]
 
-TABLES_W_SUBJECT_ID_COLUMN =  {'merged_table', 'patients', 'admissions', 'transfers', 'diagnoses_icd', 'poe', 'poe_detail', 'microbiologyevents', 'labevents', 'prescriptions', 'omr', 'pharmacy', 'services', 'emar', 'emar_detail', 'labevents_admissions_merged'}
+TABLES_W_SUBJECT_ID_COLUMN =  {'merged_table', 'patients', 'admissions', 'transfers', 'diagnoses_icd', 'poe', 'poe_detail', 'microbiologyevents', 'labevents', 'prescriptions', 'omr', 'pharmacy', 'services', 'emar', 'emar_detail', 'cohort_admission'}
 
 
 # Attach constants to the TableNames class
@@ -687,15 +689,13 @@ TableNames.get_tables_with_column = classmethod(get_tables_with_column)
 # ============================================================================
 DEFAULT_STUDY_TABLES_LIST = [
 				TableNames.PATIENTS.value,  # 2.8MB
-				TableNames.ADMISSIONS.value, # 19.9MB
+				TableNames.COHORT_ADMISSION.value, # 19.9MB
 				TableNames.DIAGNOSES_ICD.value, # 33.6MB
 				TableNames.TRANSFERS.value, # 46MB
 				TableNames.D_ICD_DIAGNOSES.value, # 876KB
 				TableNames.POE.value, # 606MB
 				TableNames.POE_DETAIL.value, # 55MB
-                TableNames.PRESCRIPTIONS.value, # 606MB
-                TableNames.D_LABITEMS.value, # 30KB
-                TableNames.LABEVENTS.value, # 2.6GB
+                TableNames.PRESCRIPTIONS.value # 606MB
 			]
 
 
