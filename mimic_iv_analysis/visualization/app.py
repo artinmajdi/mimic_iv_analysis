@@ -17,6 +17,32 @@ from mimic_iv_analysis.visualization.app_components import FeatureEngineeringTab
 
 from mimic_iv_analysis.visualization.app_components.exploration_and_viz import ExplorationAndViz
 
+# TODO: Dec 22 2026: check this version to the version 1.12.3 and see why the new version gives the error below when Pankaj runs it in his comptuer
+"""
+	Error Code:
+	AttributeError: 'NoneType' object has no attribute 'suffix'
+	File "/Users/pankajvyas/MIMIC_Project/.venv/lib/python3.12/site-packages/mimic_iv_analysis/visualization/app.py", line 296, in <module>
+		main()
+	File "/Users/pankajvyas/MIMIC_Project/.venv/lib/python3.12/site-packages/mimic_iv_analysis/visualization/app.py", line 292, in main
+		app.run()
+	File "/Users/pankajvyas/MIMIC_Project/.venv/lib/python3.12/site-packages/mimic_iv_analysis/visualization/app.py", line 208, in run
+		self._show_tabs()
+	File "/Users/pankajvyas/MIMIC_Project/.venv/lib/python3.12/site-packages/mimic_iv_analysis/visualization/app.py", line 92, in _show_tabs
+		self.sidebar.render()
+	File "/Users/pankajvyas/MIMIC_Project/.venv/lib/python3.12/site-packages/mimic_iv_analysis/visualization/app_components/sidebar.py", line 294, in render
+		_parquet_conversion()
+	File "/Users/pankajvyas/MIMIC_Project/.venv/lib/python3.12/site-packages/mimic_iv_analysis/visualization/app_components/sidebar.py", line 150, in _parquet_conversion
+		parquet_update_convert_merged_table()
+	File "/Users/pankajvyas/MIMIC_Project/.venv/lib/python3.12/site-packages/mimic_iv_analysis/visualization/app_components/sidebar.py", line 122, in parquet_update_convert_merged_table
+		tables_to_convert = _get_tables_that_need_conversion(force_update=False)
+							^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+	File "/Users/pankajvyas/MIMIC_Project/.venv/lib/python3.12/site-packages/mimic_iv_analysis/visualization/app_components/sidebar.py", line 114, in _get_tables_that_need_conversion
+		if file_path.suffix != '.parquet':
+		^^^^^^^^^^^^^^^^
+"""
+# TODO: Dec 22 2026: Check what happened to everything I did for adding labevents and why its not part of the merged table anymore.
+
+
 # TODO: fix the merge table loading and then update the local parquet file.
 # TODO: see why it saves the parquet in only one partition and if i increase it, will it improve the performance?
 # TODO: Add the prescriptions , labevents, and d_labitems into the study tables and merging scheme
